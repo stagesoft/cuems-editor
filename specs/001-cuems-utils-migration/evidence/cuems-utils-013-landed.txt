@@ -1,0 +1,49 @@
+<!--
+SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
+# cuems-utils 013 landed
+
+Measured 2026-10-01 against `../cuems-utils`. All five checks passed.
+`hardware_outputs.xsd` was not part of the gate.
+
+```
+SHA: 6213b1603d0a508b6ac7dfb5f46593ba4d870193
+subject: docs(planning): prompt the editor to amend 001 once 013 is the library it imports
+```
+
+1. public partition — pass
+
+```
+../cuems-utils/.venv/bin/python -c "from cuemsutils.tools.NodeList import partition_by_adoption"
+# partition_ok <function NetworkMap.partition_by_adoption at 0x7f99decd4f40>
+```
+
+2. axis A, one device element — pass
+
+```
+grep -n 'name="device"' ../cuems-utils/src/cuemsutils/xml/schemas/project_mappings.xsd
+# 64:            <xs:element name="device" minOccurs="0" maxOccurs="unbounded" type="cms:DeviceClassType">
+```
+
+3. axis D, one cue element — pass
+
+```
+grep -n 'name="Cue"' ../cuems-utils/src/cuemsutils/xml/schemas/script.xsd
+# 127:      <xs:element name="Cue" type="cms:CueClassType">
+```
+
+4. the reshape tool exists — pass
+
+```
+grep -n 'cuems-reshape-devices' ../cuems-utils/pyproject.toml
+# 57:cuems-reshape-devices = "cuemsutils.xml.reshape_devices:main"
+```
+
+5. the editor section of the guide exists — pass
+
+```
+test -f ../cuems-utils/specs/013-device-class-reshape/migration-guide.md
+# guide_ok
+```

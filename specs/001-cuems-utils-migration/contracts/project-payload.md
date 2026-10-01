@@ -27,10 +27,12 @@ import:
 |---|---|
 | (a) | `schemaLocation` is absent. It was present. |
 | (b) | Each `Media.duration` is `{"CTimecode": "HH:MM:SS.mmm"}`, not a bare string. |
+| (c) | A hardware cue's key is `Cue`, with `class` inside. A hardware cue output's key is `CueOutput`, with `class` likewise. `ActionCue`, `FadeCue`, and `CueList` stay their own keys. |
 
-Everything else stays: every other key, key order (the absent key is the only removal), and
-the string form of cue booleans (`"True"` / `"False"`, not JSON `true` / `false`).
-`doc_version` is not a key. A third difference fails `tests/test_project_payload.py`.
+Everything else stays: every other key, key order aside from the absent key and the renamed cue
+keys, and the string form of cue booleans (`"True"` / `"False"`, not JSON `true` / `false`).
+`doc_version` is not a key. An unlisted difference fails `tests/test_project_payload.py`.
+A fourth difference is that failure. Delta (c) is listed, so it is not.
 
 The capture's fixture set is this repository's `tests/fixtures/` (today `script_minimal.xml`).
 It is not taken from `cuems-utils` `tests/golden/xml`. Those files may hold a superseded state.

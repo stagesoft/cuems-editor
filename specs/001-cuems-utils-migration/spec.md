@@ -44,7 +44,7 @@ WHAT MUST BE TRUE WHEN DONE:
   CuemsParser is a deprecated alias for CuemsScript.from_json.
 
 - load_xml/save_xml (CuemsDBProject.py:895/:883) use CuemsScript.load/save, and the load path
-  returns script.to_wire(). The payload obeys the AMENDED hard constraint: exactly two
+  returns script.to_wire(). The payload obeys the AMENDED hard constraint: exactly three
   enumerated deltas, nothing else moved, and NOT unconditional byte-identity. Prove it by
   byte-comparison against a payload captured BEFORE the migration. Never by inspection, and never
   by checksum against `cuems-utils` `tests/golden/xml`: those files may hold a superseded state and
@@ -146,10 +146,10 @@ in this repository is a regression, not coverage.
    (first install) and 012 (uuid4 convergence) have landed on their branches.
 2. **This feature is the ecosystem's critical path.** `cuems-utils` 010's gate T049 cannot record zero
    while this repository's imports exist.
-3. **The adoption partition's public path is cuems-utils 013, in implementation.** On `0.1.0rc16`
-   the function is only `NetworkMap.partition_by_adoption` inside `cuemsutils.xml`. Feature 013
-   re-exports that same function from `cuemsutils.tools.NodeList` and does not cut a new version.
-   This spec pins that commit and calls it. Both results are tuples of bare node objects.
+3. **cuems-utils 013 has landed** at `6213b1603d0a508b6ac7dfb5f46593ba4d870193`
+   (`evidence/cuems-utils-013-landed.txt`). The public partition is
+   `from cuemsutils.tools.NodeList import partition_by_adoption`. Axis A and axis D also change
+   documents this feature loads and the wire `to_wire()` emits. 013 does not cut a new version.
 4. **The hardware inventory is deferred to `cuems-utils` 014**, by name.
 
 ---
@@ -319,7 +319,7 @@ This supersedes `00-runnable-flow.md` §0 and §7, which were measured 2026-09-2
 | `cuems-engine` | 01 | landed as its `008-cuems-utils-migration`, 64/64 | `1662a99`, cut 2026-10-01, not pushed |
 | **`cuems-editor`** | **02** | **this feature** | — |
 | `cuems-frontend` | 05 | not started; deliberately after `cuems-utils` 013 | — |
-| `cuems-utils` | — | 011, 012 landed on their branches; 013 in implementation; 014 not begun | none — tags last (D27) |
+| `cuems-utils` | — | 011, 012 landed on their branches; 013 landed at `6213b1603d0a508b6ac7dfb5f46593ba4d870193`; 014 not begun | none — tags last (D27) |
 
 What `cuems-utils` 011/012 mean here, as constraints on this spec:
 
@@ -483,22 +483,27 @@ retired names are absent from the editor's modules, following `cuems-engine`'s
 
 ---
 
-### User Story 3 — Projects open and save exactly as before, except for two named changes (Priority: P1)
+### User Story 3 — Projects open and save exactly as before, except for three named changes (Priority: P1)
 
 An operator opens an existing project, edits a cue and saves. The client action is `project_load`.
-The UI receives the `{"type":"project"}` frame, byte for byte as before 008, except for two deltas:
+The UI receives the `{"type":"project"}` frame, byte for byte as before 008, except for three deltas:
 
 - **(a)** `schemaLocation` is absent;
-- **(b)** `Media.duration` arrives as `{"CTimecode": "HH:MM:SS.mmm"}`.
+- **(b)** `Media.duration` arrives as `{"CTimecode": "HH:MM:SS.mmm"}`;
+- **(c)** a hardware cue's wire key is `Cue`, with `class` inside (`audio`, `video`, `dmx`, or any
+  other string the document carried). A hardware cue output's key is `CueOutput`, with `class`
+  likewise. `ActionCue`, `FadeCue`, and `CueList` stay their own keys.
 
-Key order and the string boolean form are unchanged.
+Key order otherwise is unchanged. Cue booleans stay `"True"` / `"False"`.
 
 **Why this priority**: the payload is a contract with a UI this repository cannot deploy in lockstep
-with (Principle I). A silent third delta shows up as wrong behaviour during a show.
+with (Principle I). A silent fourth delta shows up as wrong behaviour during a show. Delta (c) is
+why milestone 1 still must not be deployed: a pre-05 UI mis-reads `Cue`. There is no local rewrite
+that puts `AudioCue` back.
 
 **Independent Test**: capture the `{"type":"project"}` value for a fixture set **before any source
 change** and commit it. After the migration, compare byte-for-byte and assert that the only
-differences are (a) and (b). Schema truth is the XSD under
+differences are (a), (b), and (c). Schema truth is the XSD under
 `cuems-utils/src/cuemsutils/xml/schemas/`, enforced by the library's public load and save. Do not
 compare against `tests/golden/xml`: those files may be superseded and are restated after the
 system refactoring.
@@ -623,9 +628,11 @@ form of merged nodes.
 
 1. **Given** a converted `network_map`, **When** nodes merge into the mappings payload, **Then**
    `node_role` is carried. A test shows it was dropped before the fix.
-2. **Given** a merged node, **When** `initial_mappings` is serialised, **Then** `adopted`, `online`,
-   the role and the uuid have the same wire form as before the migration (F6). Any difference is an
-   enumerated delta.
+2. **Given** a merged node captured against cuems-utils `6213b1603d0a508b6ac7dfb5f46593ba4d870193`,
+   **When** `initial_mappings` is serialised, **Then** `adopted`, `online`, the role and the uuid
+   keep their wire form, and the mappings half carries `devices` / `device` / `class` (and
+   `defaults` / `default` / `class` / `direction`) as `to_wire()` emitted them (FR-031). A node
+   with `device class="lighting"` still has `class` after the merge.
 3. **Given** `node_status` and a node's `online`, **When** both are served, **Then** they stay two
    distinct facts on two distinct messages.
 4. **Given** `cuems-nodeconf` stops while Settings is open, **When** the next message is built,
@@ -707,6 +714,12 @@ recorded bump history (FR-047, FR-047a).
   itself enforces. If that load refuses a source `duplicate()` used to copy, the project is
   recorded. The editor does not add a second refusal.
 - **Old UIs sending zero media durations**: inbound handling keeps accepting them (Principle I).
+  The payload that carries `"00:00:00.000"` uses cue key `Cue` and a `class`.
+- **A half-migrated library**: some documents still use `<audio>` or `AudioCue`, others use
+  `<device class="audio">` or `Cue`. That mix is an operator error. `cuems-reshape-devices` is
+  run over the whole library in one pass. The editor does not normalise the mix and does not
+  put `AudioCue` back on the wire. It serves what the library returned. A half-migrated library
+  fails the strict load on the old file.
 - **`initial_template` between 0a and 0b**: after FR-001 lands but before FR-008 does, the server
   still calls the deleted `create_script()`. So 0a alone does not make the constructor run. FR-001's
   smoke test covers import. The listening-state check (FR-003) is expected to pass only once FR-008
@@ -751,7 +764,11 @@ recorded bump history (FR-047, FR-047a).
     release that still shipped `cuemsutils.create_script`. It is then committed as the baseline
     capture (FR-010). The release used MUST be recorded by version and checksum.
   - Every difference between that baseline and the new payload MUST be enumerated as a wire delta.
-    This covers keys, key order, value types and placeholder values. The deltas go in
+    This covers keys, key order, value types and placeholder values, including delta (c):
+    `generate_example(SchemaName.SCRIPT)` emits hardware cues as `Cue` with `class`, and hardware
+    cue outputs as `CueOutput` with `class`. That delta is listed. It is not stripped to keep the
+    old envelope, and it is not a reason to reshape the example locally or to wait on 013 (the
+    import has landed). The call does not import `cuemsutils.xml`. The deltas go in
     `tests/ws-command-responses.txt` and the frontend hand-over. The consumer of `initial_template`
     is `cuems-frontend` `src/app/services/projects/projects.service.ts`: line 159 reads
     `localStorage` key `initial_template`, line 240 accepts `type === 'initial_template'`, and
@@ -771,11 +788,10 @@ recorded bump history (FR-047, FR-047a).
   `hardware_outputs` and `default_mappings`; this call does not use them and does not wait on 014.
 
   The version pin stays `cuemsutils>=0.1.0rc16,<0.1.1`. Feature 013 does not cut a new version.
-  The pin that makes the import exist is a commit SHA, recorded in
-  `specs/001-cuems-utils-migration/evidence/cuems-utils-013-pin.txt` as `git -C ../cuems-utils
-  rev-parse HEAD` plus that commit's subject. The editor task that deletes `NetworkMap` does not
-  start until that import succeeds on the sibling checkout. The SHA is written when it exists; it
-  is not invented.
+  The pin is `6213b1603d0a508b6ac7dfb5f46593ba4d870193`, recorded in
+  `specs/001-cuems-utils-migration/evidence/cuems-utils-013-landed.txt`. The editor task that
+  deletes `NetworkMap` requires `evidence/cuems-utils-013-pin.txt` to name that same SHA. There
+  is no "not pinnable" branch.
 
   An upstream report under `specs/001-cuems-utils-migration/upstream-reports/` cites
   `cuems-engine`'s `UR-1` and names that SHA as the commit this editor pins. It does not ask for
@@ -791,8 +807,12 @@ recorded bump history (FR-047, FR-047a).
   the `project_load` action) MUST be captured and committed for a recorded fixture set. So MUST
   the `initial_mappings` and `initial_template` payloads.
 - **FR-011**: After migration, the `{"type":"project"}` value MUST be byte-identical to that capture except for
-  delta (a), `schemaLocation` absent, and delta (b), `Media.duration` wrapped. A test MUST assert
-  this. `doc_version` MUST NOT appear on the wire. Schema validity is the XSD under
+  delta (a), `schemaLocation` absent, delta (b), `Media.duration` wrapped, and delta (c), a
+  hardware cue's wire key `Cue` with `class` inside and a hardware cue output's key `CueOutput`
+  with `class` likewise. `ActionCue`, `FadeCue`, and `CueList` stay their own keys. Key order
+  otherwise is unchanged. Cue booleans stay `"True"` / `"False"`. A test MUST assert this.
+  `doc_version` MUST NOT appear on the wire. A local rewrite that puts `AudioCue` back is the
+  wire-dict manipulation FR-012 forbids. Schema validity is the XSD under
   `cuems-utils/src/cuemsutils/xml/schemas/`, as enforced by the library's public load and save.
   `cuems-utils` `tests/golden/xml` MUST NOT be a pass condition: those files may hold a superseded
   state and are restated after the system refactoring. A contradiction with the XSD is recorded so
@@ -804,10 +824,15 @@ recorded bump history (FR-047, FR-047a).
   JSON→object entry. `load_xml` and `save_xml` use `XmlReaderWriter`, not `CuemsParser`, and MUST
   go through the library's public load and save. The parser in `repair_durations.py` is FR-023.
 - **FR-014**: Opening a project MUST NOT write to its files.
-- **FR-015**: `_fix_media_durations` MUST remain and operate on the loaded object.
-  `_clean_dangling_targets` and `_nullify_dangling_refs` MUST be deleted. Before deletion, each MUST
-  be checked against 008's repair path, and anything it does that the library does not MUST be kept
-  and named.
+- **FR-015**: `_fix_media_durations` MUST remain and operate on the loaded object. It finds media
+  cues with `isinstance` against `AudioCue`, `VideoCue`, and `DmxCue`, which still works after
+  axis D, and it also visits a `MediaCue` whose `class` is none of those three. It assigns
+  `CTimecode` on that object. It MUST NOT read or write the wire dict, including the guide's
+  `if 'Cue' in item` snippet. `_clean_dangling_targets`, `_nullify_dangling_refs`, and
+  `_collect_cue_ids` MUST be deleted and MUST NOT be replaced by a collapsed `CUE_TYPES` list.
+  The library dangling rule is by cue identity. Before deletion, each walk MUST be checked
+  against 008's repair path, and anything it does that the library does not MUST be kept and
+  named.
 - **FR-016**: The save-time FadeCue validation MUST keep its current behaviour and message. It still
   runs before the object is built, in `update()` and `new()` only.
 - **FR-017**: `tests/test_dangling_targets.py` MUST be either retired with a recorded reason that
@@ -881,9 +906,17 @@ recorded bump history (FR-047, FR-047a).
 - **FR-029**: In-memory comparisons of `adopted`/`online` MUST work with the typed values. No
   comparison against the string `"True"` may remain on a typed value.
 - **FR-030**: The node model MUST NOT be re-implemented or re-tested here (FR-030a-i).
-- **FR-031**: A test MUST pin the `initial_mappings` wire form of a **merged** node (F6b): role, uuid,
-  `adopted`, `online` and key presence. Any difference from the pre-migration capture is an
-  enumerated delta, or it is fixed.
+- **FR-031**: A test MUST pin the `initial_mappings` wire form of a **merged** node: role, uuid,
+  `adopted`, `online` and key presence. The capture is taken against cuems-utils
+  `6213b1603d0a508b6ac7dfb5f46593ba4d870193`, and that SHA is named in the evidence README. The
+  mappings half carries `devices` / `device` / `class` and `defaults` / `default` / `class` /
+  `direction` as `to_wire()` emitted them. Any other difference from that capture is an
+  enumerated delta, or it is fixed. A test MUST feed a post-013 mapping node, including
+  `device class="lighting"`, and assert `class` is still in the merged value. That test fails
+  first against a merge that only copies `audio`, `video`, and `dmx`. The editor MUST NOT
+  normalise a mix of `<audio>` and `<device class="audio">`. "Output blocks stay" means those
+  blocks are copied through. It does not mean a lookup of the three old keys. The merge comment
+  is not one of the fourteen deprecated-surface call sites.
 - **FR-032**: `nodeconf_available` MUST stay a live sample, taken each time a message carrying it
   is built. It MUST NOT become a field of any schema: not `project_mappings`, not `network_map`.
   - **Milestone 1:** its injection points into `mappings_dict` (refresh path and serve path) stay
@@ -1014,8 +1047,9 @@ recorded bump history (FR-047, FR-047a).
 - **FR-047**: The **payload version** MUST be sent to every client as the **first** message on
   connect, before any `initial_*` message. It is an integer.
   - **Version 1** is the wire as of the coordinated `xml-refactor-merge-candidate` tag. That wire
-    includes every delta this feature enumerates: the `{"type":"project"}` frame (a) and (b), the `initial_template`
-    deltas, and the untangling.
+    includes every delta this feature enumerates: the `{"type":"project"}` frame (a), (b), and (c),
+    the `initial_template` deltas (including the cue-key change), and the untangling. Delta (c) is
+    part of version 1. It is not a bump to 2: version 1 has not shipped.
   - A connection with no payload-version message is, by definition, **version 0**: the wire before
     this feature.
   - Its message `type` and shape are recorded in `tests/ws-command-responses.txt`. A test asserts
@@ -1040,8 +1074,9 @@ recorded bump history (FR-047, FR-047a).
   and is never on the wire. It loads in one of three ways: converted in memory, repaired with a
   report, or refused.
 - **`project` frame**: the wire projection of a script, message type `project`, sent in reply to
-  the client action `project_load`. It is a contract with the UI, with exactly two sanctioned
-  deltas. There is no message type `project_load`.
+  the client action `project_load`. It is a contract with the UI, with exactly three sanctioned
+  deltas: (a) `schemaLocation` absent, (b) `Media.duration` wrapped, (c) hardware cues and their
+  outputs keyed `Cue` and `CueOutput` with `class`. There is no message type `project_load`.
 - **Repair report**: the library's per-load record of the document, its repairs, the conversions run
   and whether the file on disk is stale. It is forwarded by this repository and rendered by the UI.
 - **Network map node**: a node's identity (uuid4 or sentinel), role, adoption state and discovery
@@ -1050,8 +1085,9 @@ recorded bump history (FR-047, FR-047a).
   from `online`.
 - **`nodeconf_available`**: a live observation about a daemon. It belongs to no schema.
 - **Upstream report**: a recorded library gap that this repository does not work around silently.
-- **Pre-migration capture**: the committed payload baseline that makes the two-delta claim
-  falsifiable.
+- **Pre-migration capture**: the committed payload baseline that makes the three-delta claim
+  falsifiable. The mappings capture is taken against cuems-utils
+  `6213b1603d0a508b6ac7dfb5f46593ba4d870193`, not against `e9ed8af`.
 
 ## Success Criteria *(mandatory)*
 
@@ -1068,7 +1104,8 @@ recorded bump history (FR-047, FR-047a).
   is a seventh file and is not part of that count. The seven F2 failures pass.
   `test_nodelist_actions.py` has at most the one sanctioned edit.
 - **SC-004**: For every project in the recorded fixture set, the opened payload differs from the
-  pre-migration capture in exactly two enumerated ways and no others. Schema acceptance is the
+  pre-migration capture in exactly three enumerated ways — (a), (b), and (c) — and no others.
+  Schema acceptance is the
   XSD's, through the library's public load and save. A checksum of `tests/golden/xml` is not part
   of this result.
 - **SC-005**: Opening any project changes **0** bytes on disk.

@@ -18,11 +18,13 @@ constitutional violation that the editor does not start. Two milestones on one b
 
 1. **Milestone 1 — census zero.** The process imports. `src/` has no `cuemsutils.xml`,
    `create_script`, `CuemsParser`, or `XmlReaderWriter`. Scripts load and save through `CuemsScript`.
-   The `project` payload differs from a pre-migration capture by exactly two enumerated deltas.
+   The `project` payload differs from a pre-migration capture by exactly three enumerated deltas:
+   (a) `schemaLocation` absent, (b) `Media.duration` wrapped, (c) hardware cues and outputs keyed
+   `Cue` and `CueOutput` with `class`.
    Pass B of the duration tool is retired. The node merge follows `node_role` and the library's
-   wire form. The pin is bounded and `debian/` is on this branch. This unblocks `cuems-utils` T049.
-   It is not a controller deploy: `to_wire()` always wraps `Media.duration`, and the old UI has no
-   handshake yet.
+   wire form, including `devices` / `device` / `class`. The pin is bounded and `debian/` is on this branch. This unblocks `cuems-utils` T049.
+   It is not a controller deploy: `to_wire()` wraps `Media.duration` and emits `Cue`, and the old UI has no
+   handshake yet. A pre-05 UI mis-reads `Cue`. Do not rewrite `AudioCue` back.
 2. **Milestone 2 — the coordinated wire.** The repair report reaches the session, and a save of a
    repaired script is refused until that session acknowledges that report. The original is copied
    to `trash/` before the first overwrite. Payload version 1 is the first message on connect.
@@ -88,7 +90,7 @@ Constitution v1.0.0. Checked, **not amended**.
 
 | Principle | Status | How |
 |---|---|---|
-| **I. The Wire Is A Contract** | ✅ | The `{"type":"project"}` frame stays byte-identical to a capture taken before the source change, except delta (a) `schemaLocation` absent and delta (b) `Media.duration` as `{"CTimecode": "..."}`. Key order and the string boolean form are unchanged. `doc_version` is not on the wire. New families are named in [contracts/ws-messages.md](contracts/ws-messages.md) with an audience, and land in `tests/ws-command-responses.txt`. Untangling waits on payload version 1 and `cuems-frontend` 05 (FR-050). The upstream golden corpus is compared and contradictions are recorded for `cuems-utils`; it is not an editor pass condition (Complexity Tracking) |
+| **I. The Wire Is A Contract** | ✅ | The `{"type":"project"}` frame stays byte-identical to a capture taken before the source change, except delta (a) `schemaLocation` absent, delta (b) `Media.duration` as `{"CTimecode": "..."}`, and delta (c) hardware cues and outputs keyed `Cue` and `CueOutput` with `class`. Key order otherwise and the string boolean form are unchanged. `doc_version` is not on the wire. New families are named in [contracts/ws-messages.md](contracts/ws-messages.md) with an audience, and land in `tests/ws-command-responses.txt`. Untangling waits on payload version 1 and `cuems-frontend` 05 (FR-050). The upstream golden corpus is compared and contradictions are recorded for `cuems-utils`; it is not an editor pass condition (Complexity Tracking) |
 | **II. Sessions Are Isolated, The Event Loop Is Shared** | ✅ | Repair acknowledgment is keyed by session and by project. The refusal decision runs on the loop; `CopyMoveVersioned.move` and `CuemsScript.save` run on the executor. `network_map_error` is broadcast to all sessions. Today `reload_network_map_nodes` writes `self.mappings_dict` from the executor (`CuemsWsServer.notify_all_node_list_update`, `CuemsWsUser.nodelist_get`). The executor returns the loaded lists; the loop thread assigns them (R8) |
 | **III. User Data Has A Recovery Story** | ✅ | Load does not write. The first save of a document whose report says the file differs copies the original into `trash/` with `CopyMoveVersioned` and refuses the save if the copy fails. Pass B stops writing scripts. Library `save` is atomic (R4). `delete_from_trash` is carried, not touched |
 | **IV. Tests Gate The Risky Paths, Honestly** | ✅ | Import smoke fails before FR-001. The `node_type` merge, the timecode guard, the `initial_template` delta, and `network_map_error` each have a test that fails against the pre-change behaviour first. `test_dangling_targets.py` is retired with the library coverage named. No node-model test is added |
@@ -105,7 +107,7 @@ specs/001-cuems-utils-migration/
 ├── spec.md, plan.md, research.md (R1–R14), data-model.md, quickstart.md
 ├── contracts/
 │   ├── public-surface.md      # allowed imports + the census guard
-│   ├── project-payload.md     # the two deltas, one projection, load is a read
+│   ├── project-payload.md     # three deltas, one projection, load is a read
 │   ├── ws-messages.md         # new families, audiences, payload version
 │   ├── repair-tool.md         # pass A stays, pass B is gone
 │   └── package-relations.md   # pin, debian/, tag message
@@ -133,7 +135,7 @@ src/cuemseditor/
 tests/
 ├── test_import_smoke.py            # NEW — fails before FR-001
 ├── test_public_surface.py          # NEW — census guard
-├── test_project_payload.py         # NEW — two deltas against the editor capture
+├── test_project_payload.py         # NEW — three deltas against the editor capture
 ├── test_node_merge.py              # NEW — node_role reaches the wire; fails against node_type first
 ├── test_dangling_targets.py        # RETIRED, reason recorded
 ├── test_repair_durations.py        # pass B tests retired; structured-duration test added
@@ -280,7 +282,7 @@ Phase numbers match `tasks.md`. Census zero is phase 9. It follows the pin (phas
 | 2 — Foundational | evidence README: captures are immutable, `doc_version` is not a wire key | 1 |
 | 3 — User Story 1 | FR-001 only; smoke test shown failing first; suite baseline whose colour means something. Listening is still blocked | 1 |
 | 4 — User Story 2 | `initial_template` test failing first; `generate_example(SchemaName.SCRIPT)`; enumerated deltas, including the frontend file and line; listening-state check | 1 |
-| 5 — User Story 3 | four `CuemsParser` sites plus load and save; `load_with_report` / `save` / one `to_wire()`; object duration fix; delete dangling walks; retire `test_dangling_targets.py`; two-delta test against the editor capture; golden-versus-XSD contradictions recorded, not asserted | 1 |
+| 5 — User Story 3 | four `CuemsParser` sites plus load and save; `load_with_report` / `save` / one `to_wire()`; object duration fix, including a `MediaCue` whose class is not `audio`, `video`, or `dmx`; delete dangling walks and do not port a collapsed `CUE_TYPES`; retire `test_dangling_targets.py`; three-delta test against the editor capture; golden-versus-XSD contradictions recorded, not asserted | 1 |
 | 6 — User Story 5 | retire pass B; structured-duration test failing first; `CLAUDE.md` note; save one listed project and confirm the tool drops it | 1 |
 | 7 — User Story 6 | `node_role`; `partition_by_adoption` from `cuemsutils.tools.NodeList` after the 013 commit is pinned; two tuples of bare nodes; `to_wire()` merge; collision test failing first, then the handler; executor assignment moved to the loop; the one `test_nodelist_actions.py` edit in the same commit as the `NetworkMap` removal | 1 |
 | 8 — User Story 7 | `pyproject.toml`; import `debian/`; bookworm chroot build; consolidation record; tag message drafted, not ready, and the five adoption commits named for the PR | 1 |

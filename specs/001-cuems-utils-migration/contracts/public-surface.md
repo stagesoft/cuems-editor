@@ -18,8 +18,10 @@ on the commit before task zero.
 2. Any import of `cuemsutils.config` or a submodule.
 3. Any import of `cuemsutils.create_script` or `cuemsutils.timeoutloop`.
 4. The names `CuemsParser`, `XmlReaderWriter`, `create_script`, `get_nodes_by_adoption`,
-   `_select_adopted`, `def partition_by_adoption`, `node_type`, and `NodeType.` anywhere in
-   `src/`, including comments and docstrings.
+   `_select_adopted`, `def partition_by_adoption`, `CUE_TYPES`, `'AudioCue' in`, `'VideoCue' in`,
+   `'DmxCue' in`, `node_type`, and `NodeType.` anywhere in
+   `src/`, including comments and docstrings. `isinstance` against `AudioCue`, `VideoCue`, or
+   `DmxCue` is not one of those substrings.
 5. Any use of the name `partition_by_adoption` that is not
    `from cuemsutils.tools.NodeList import partition_by_adoption` or a call of that imported
    name. The function returns two tuples of bare node objects. The editor does not define it.

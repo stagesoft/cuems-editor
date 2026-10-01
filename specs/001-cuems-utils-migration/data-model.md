@@ -63,15 +63,16 @@ There is no fourth outcome and no lenient reader.
 The `value` of `{"type":"project"}`. Produced by one call to `script.to_wire()` in the open
 path. No later step adds, removes, or reorders keys to achieve an object-level result.
 
-Against a capture taken before the migration, exactly two differences are sanctioned:
+Against a capture taken before the migration, exactly three differences are sanctioned:
 
 | Delta | Old | New |
 |---|---|---|
 | (a) | `schemaLocation` present | key absent |
 | (b) | `Media.duration` a string `HH:MM:SS.mmm` | `{"CTimecode": "HH:MM:SS.mmm"}` |
+| (c) | hardware cue key `AudioCue`, `VideoCue`, or `DmxCue`; output key `AudioCueOutput`, `VideoCueOutput`, or `DmxCueOutput` | key `Cue` or `CueOutput`, with `class` inside (`audio`, `video`, `dmx`, or any other string the document carried). `ActionCue`, `FadeCue`, and `CueList` stay their own keys |
 
-Key order is unchanged aside from the absent key. Cue booleans stay the strings `"True"` and
-`"False"`. `doc_version` does not appear. Any other difference fails the test. Schema truth is
+Key order is unchanged aside from the absent key and the renamed cue keys. Cue booleans stay the strings `"True"` and
+`"False"`. `doc_version` does not appear. Any unlisted difference fails the test. Schema truth is
 the XSD under `cuems-utils/src/cuemsutils/xml/schemas/`, enforced by the public load and save.
 `tests/golden/xml` may be a superseded snapshot and is not a checksum target (R12). A
 contradiction with the XSD is regenerated in `cuems-utils` after the system refactoring.
@@ -143,7 +144,8 @@ The editor compares a JSON identity to a map identity only through `coerce_ident
 not compare `node_role` to a string and does not compare `adopted` to `"True"` once the value
 is the typed object. The merge into mapping nodes copies **wire** fields from `to_wire()` so
 the `initial_mappings` payload keeps the string booleans. Output blocks on the mapping node
-are not part of the network-map node; they stay from the mapping side.
+are copied through, including `devices` / `device` / `class`. They are not looked up as
+`audio`, `video`, or `dmx`.
 
 `node_type` is not a field. A merge list that still names it drops the role.
 

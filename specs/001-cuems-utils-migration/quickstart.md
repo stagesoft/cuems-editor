@@ -86,8 +86,9 @@ hatch test tests/test_project_payload.py
 
 The test fails unless, for every named fixture:
 
-- the new `value` differs from the committed capture only by `schemaLocation` absent and
-  `Media.duration` wrapped as `{"CTimecode": ...}`;
+- the new `value` differs from the committed capture only by `schemaLocation` absent,
+  `Media.duration` wrapped as `{"CTimecode": ...}`, and hardware cues and outputs keyed `Cue`
+  and `CueOutput` with `class`;
 - opening the project changes no byte of its `script.xml` (checksum before and after).
 
 Do not regenerate the editor capture to turn this green. Do not compare against
