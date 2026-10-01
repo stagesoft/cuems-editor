@@ -333,23 +333,29 @@ payload-version bump, and a frontend edit this feature does not own).
 
 ---
 
-## R12 — Goldens are checked by `MANIFEST.sha256`
+## R12 — The XSD is the schema; golden XML may be superseded
 
-**Probe**: `../cuems-utils/tests/golden/MANIFEST.sha256`. Script goldens carry `doc_version="2"`
-(for example `tests/golden/xml/cuems-editor__script_minimal.xml`). Reader JSON carries
-`"duration": {"CTimecode": "..."}`. `doc_version` is not a key in those reader JSON files.
+**Probe**: `../cuems-utils/src/cuemsutils/xml/schemas/` holds `script.xsd`, `settings.xsd`,
+`network_map.xsd`, `project_mappings.xsd`, `project_settings.xsd`, and `hardware_outputs.xsd`.
+`../cuems-utils/tests/golden/xml/` and `MANIFEST.sha256` are a recorded snapshot. Script goldens
+still carry `doc_version="2"` (for example `tests/golden/xml/cuems-editor__script_minimal.xml`).
+That snapshot can lag the schema while the system refactoring is in progress.
 
 **Decision**: the two-delta test compares the editor's `project` value to a capture committed
-before the migration, and separately checks the relevant golden files against
-`MANIFEST.sha256`. A mismatch fails the test. Nobody regenerates a golden or the capture to
-make it pass. At most one re-baseline of the *editor's* capture is allowed, and it is a
-recorded diff (FR-040). The library's goldens are not a re-baseline target at all.
+in this repository before the migration. It does not check `MANIFEST.sha256`. Schema acceptance
+is whatever the library's public load and save enforce, and those follow the XSD. This
+repository does not edit `tests/golden/`. If a golden contradicts the XSD during the system
+refactoring, it is regenerated in `cuems-utils`, and the corpus is restated after that
+refactoring is done. The editor's own capture is still not regenerated to make a test pass.
+At most one re-baseline of that capture is allowed, and it is a recorded diff (FR-040).
 
-**Rationale**: a capture taken on the day can repeat a mistake. A golden moves only when
-upstream records a re-base. Checksum comparison does not depend on a human reading the JSON.
+**Rationale**: matching a superseded golden would freeze the wire to a state the schema has
+already left. The XSD is the single source of truth. The editor capture still proves the two
+named deltas against what this process sends today.
 
-**Alternatives rejected**: vendor the goldens into this repository (a second corpus); compare
-by eye; call the library's pytest as this package's test (couples the suites).
+**Alternatives rejected**: treat `MANIFEST.sha256` as a pass condition (it can fail for a stale
+file); vendor the goldens into this repository; regenerate a golden from the editor to turn
+`tests/test_project_payload.py` green; compare the payload by eye.
 
 ---
 

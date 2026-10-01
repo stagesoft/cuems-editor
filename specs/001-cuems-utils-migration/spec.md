@@ -45,9 +45,11 @@ WHAT MUST BE TRUE WHEN DONE:
 
 - load_xml/save_xml (CuemsDBProject.py:895/:883) use CuemsScript.load/save, and the load path
   returns script.to_wire(). The payload obeys the AMENDED hard constraint: exactly two
-  enumerated deltas, nothing else moved, and NOT unconditional byte-identity. Prove it two ways
-  — byte-comparison against a payload captured BEFORE the migration, and against cuems-utils'
-  golden corpus recorded BY CHECKSUM. Never by inspection. The projection appears ONCE, at the
+  enumerated deltas, nothing else moved, and NOT unconditional byte-identity. Prove it by
+  byte-comparison against a payload captured BEFORE the migration. Never by inspection, and never
+  by checksum against `cuems-utils` `tests/golden/xml`: those files may hold a superseded state and
+  are restated after the system refactoring. The XSD files under
+  `cuems-utils/src/cuemsutils/xml/schemas/` are the schema. The projection appears ONCE, at the
   UI boundary: zero code paths may manipulate the wire dict to achieve an object-level result.
 
 - The three raw-dict pre-parse fixups are resolved case by case, not by category.
@@ -76,10 +78,11 @@ WHAT MUST BE TRUE WHEN DONE:
   is what makes that legible.
 
 - An unrepairable document gets a structured failure on the same channel as the report, naming
-  the document AND the failing field, AND a next step (restore from a conversion backup, correct
-  the field by hand, or remove the document). The project stays listed, the session survives,
-  only that document refuses to open. A lenient read-only fallback is REJECTED — it reintroduces
-  the permissive path 008 removed and creates a second reader for documents the strict path rejects.
+  the document AND the failing field, AND the full menu of next steps (restore from a conversion
+  backup, correct the field by hand, and remove the document). The editor does not pick one.
+  The project stays listed, the session survives, only that document refuses to open. A lenient
+  read-only fallback is REJECTED — it reintroduces the permissive path 008 removed and creates a
+  second reader for documents the strict path rejects.
 
 - The save-after-repair ordering is honoured (D21b). Saving a repaired script overwrites the
   corrupt original with NO BACKUP. Wherever this repository calls load_with_report and later
@@ -219,6 +222,20 @@ in this repository is a regression, not coverage.
   A.** It lands **through** this migration, with no separate merge. The coordinated tag carries it in
   all three repositories. The tag message names the three adoption branches as included, and the PR
   reviews them as part of this feature (FR-039a).
+- Q: On an unrepairable document, does the failure name one next step or the full menu? → A: **The
+  full menu, always.** `next_steps` is
+  `restore_from_conversion_backup`, `correct_field_by_hand`, and `remove_document`, in that order.
+  The editor does not pick among them (FR-020, analysis I1, 2026-10-01).
+- Q: Does the branch window before the save gate (a repaired script can be saved with no
+  acknowledgment) ship? → A: **No.** US1–US8 ship together under one candidate tag. Census zero is
+  a source announcement to `cuems-utils` T049, not a package and not a controller deploy. The
+  unacknowledged-save window never lands on its own (analysis C1, 2026-10-01).
+- Q: Are `cuems-utils` `tests/golden/xml` the schema authority for this migration? → A: **No.** The
+  XSD files in `cuems-utils/src/cuemsutils/xml/schemas/` are the single source of truth. The golden
+  XML may already be a superseded snapshot. It is restated after the whole system refactoring. If a
+  contradiction with the XSD appears during that work, the golden is regenerated in `cuems-utils`.
+  This repository does not edit those files, and a golden checksum is not a pass condition here
+  (FR-011, FR-040, 2026-10-01).
 
 ---
 
@@ -476,15 +493,20 @@ with (Principle I). A silent third delta shows up as wrong behaviour during a sh
 
 **Independent Test**: capture the `project_load` payload for a fixture set **before any source
 change** and commit it. After the migration, compare byte-for-byte and assert that the only
-differences are (a) and (b). Separately, compare the result against `cuems-utils`' golden corpus by
-recorded checksum.
+differences are (a) and (b). Schema truth is the XSD under
+`cuems-utils/src/cuemsutils/xml/schemas/`, enforced by the library's public load and save. Do not
+compare against `tests/golden/xml`: those files may be superseded and are restated after the
+system refactoring.
 
 **Acceptance Scenarios**:
 
 1. **Given** a pre-migration capture, **When** the same project loads after migration, **Then** the
    payload differs only by (a) and (b). This is asserted by a test, not by inspection.
-2. **Given** `cuems-utils`' goldens, **When** compared by checksum, **Then** they match. No golden or
-   capture is regenerated to make the comparison pass.
+2. **Given** the XSD under `cuems-utils/src/cuemsutils/xml/schemas/`, **When** a document is opened
+   through the public load, **Then** acceptance or refusal is that schema's. A golden under
+   `tests/golden/xml` that disagrees with the XSD is recorded for regeneration in `cuems-utils`. It
+   is not a failure of this editor, and this repository does not rewrite it. The editor's own
+   pre-migration capture is not regenerated to make the two-delta comparison pass.
 3. **Given** a project is opened and closed without saving, **When** the file on disk is inspected,
    **Then** it is byte-identical to before. A load is a read.
 4. **Given** a save from the UI, **When** it is written, **Then** it goes through the library's save
@@ -505,9 +527,9 @@ structured report of what was repaired and whether the file on disk is now stale
 saves, they have already seen that report.
 
 If the script cannot be repaired, the operator gets a structured failure. It names the document and
-the failing field, and gives a next step: restore from a conversion backup, correct the field by hand,
-or remove the document. The project stays listed, the session survives, and only that document
-refuses to open.
+the failing field, and always offers the full menu of next steps: restore from a conversion backup,
+correct the field by hand, and remove the document. The editor does not pick one. The project stays
+listed, the session survives, and only that document refuses to open.
 
 **Why this priority**: D21/D21b. A repair that reaches disk unseen is a constitutional violation
 (Principle III). It ranks below P1 because rendering the report is `cuems-frontend`'s half.
@@ -522,7 +544,8 @@ acknowledgment gate (FR-021) and assert that the original is preserved first (FR
 1. **Given** a repairable document, **When** it loads, **Then** a report message is emitted. It is
    never absent, and never `None` in place of an empty report.
 2. **Given** an unrepairable document, **When** it loads, **Then** a failure message names the
-   document, the field and a next step. There is no lenient fallback reader.
+   document, the field, and all three next steps (`restore_from_conversion_backup`,
+   `correct_field_by_hand`, `remove_document`). There is no lenient fallback reader.
 3. **Given** a repaired, unsaved document, **When** it is opened again, **Then** it is repaired and
    reported identically. The report's "stale on disk" flag is set.
 4. **Given** a repaired document that the saving session has not acknowledged, **When** a save is
@@ -748,8 +771,11 @@ recorded bump history (FR-047, FR-047a).
   committed for a recorded fixture set. So MUST the `initial_mappings` and `initial_template` payloads.
 - **FR-011**: After migration, `project_load` MUST be byte-identical to that capture except for
   delta (a), `schemaLocation` absent, and delta (b), `Media.duration` wrapped. A test MUST assert
-  this. It MUST also be checked against `cuems-utils`' golden corpus by checksum. `doc_version` MUST
-  NOT appear on the wire.
+  this. `doc_version` MUST NOT appear on the wire. Schema validity is the XSD under
+  `cuems-utils/src/cuemsutils/xml/schemas/`, as enforced by the library's public load and save.
+  `cuems-utils` `tests/golden/xml` MUST NOT be a pass condition: those files may hold a superseded
+  state and are restated after the system refactoring. A contradiction with the XSD is recorded so
+  the golden can be regenerated in `cuems-utils`. This repository does not edit that corpus.
 - **FR-012**: The wire projection MUST happen exactly once, at the UI boundary. No code path may
   manipulate the wire dict to achieve an object-level result.
 - **FR-013**: All five `CuemsParser` call sites MUST be replaced by the library's public
@@ -773,8 +799,10 @@ recorded bump history (FR-047, FR-047a).
 - **FR-019**: Script loads MUST use the library's report-returning load, and MUST forward the report
   as a WebSocket message to the requesting session.
 - **FR-020**: An unrepairable document MUST produce a structured failure on the same channel. It names
-  the document, the field and one of the three next steps. The session and the project listing MUST
-  survive. There MUST be no lenient fallback reader.
+  the document and the field, and `next_steps` MUST be exactly
+  `["restore_from_conversion_backup", "correct_field_by_hand", "remove_document"]`, in that order.
+  The editor does not choose one step: it cannot know which the operator can carry out. The session
+  and the project listing MUST survive. There MUST be no lenient fallback reader.
 - **FR-021**: Saving a document whose current load produced a non-empty repair report MUST be refused
   by the save handler until the **saving session** has acknowledged **that report**.
   - The acknowledgment is a new inbound action, and it carries an identifier for the report.
@@ -899,8 +927,13 @@ recorded bump history (FR-047, FR-047a).
 
 **Characterization discipline (cross-cutting)**
 
-- **FR-040**: No golden, capture or payload fixture may be regenerated to make a test pass. A re-base
-  is a recorded, argued, diffed event. At most one per feature is sanctioned.
+- **FR-040**: This repository's captures and payload fixtures MUST NOT be regenerated to make a test
+  pass. A re-base of the editor capture is a recorded, argued, diffed event. At most one per feature
+  is sanctioned. `cuems-utils` `tests/golden/` is a different corpus. It may be stale relative to the
+  XSD in `cuems-utils/src/cuemsutils/xml/schemas/`, which is the schema. Goldens are regenerated in
+  that repository when a contradiction with the XSD arises, and they are restated after the system
+  refactoring. This feature does not perform that rewrite, and it does not treat a golden checksum
+  as something to satisfy.
 - **FR-041**: `tests/test_nodelist_actions.py` MUST stay green from FR-001 onward. Its only permitted
   edit is the `TestNodeconfAvailableFlag._reload` helper's mock of the removed `NetworkMap` import
   (F4). That edit MUST:
@@ -1000,11 +1033,13 @@ recorded bump history (FR-047, FR-047a).
 - **SC-003**: All six test files collect and run, up from four. The seven F2 failures pass.
   `test_nodelist_actions.py` has at most the one sanctioned edit.
 - **SC-004**: For every project in the recorded fixture set, the opened payload differs from the
-  pre-migration capture in exactly two enumerated ways and no others. It matches the library's
-  goldens by checksum.
+  pre-migration capture in exactly two enumerated ways and no others. Schema acceptance is the
+  XSD's, through the library's public load and save. A checksum of `tests/golden/xml` is not part
+  of this result.
 - **SC-005**: Opening any project changes **0** bytes on disk.
 - **SC-006**: Every repairable document opened produces a report the operator receives. Every
-  unrepairable document produces a named failure with a next step, and the session survives.
+  unrepairable document produces a named failure whose `next_steps` are all three recovery
+  options, and the session survives.
 - **SC-007**: The repair tool reads 100% of the recorded corrupt fixture set, corrects the database
   and lists every project that needs a save, with **0** script files changed. Exactly **1** document
   rewriter exists ecosystem-wide, and it is not in this repository.
@@ -1067,8 +1102,9 @@ Of the flow's US8 items:
   `tests/conftest.py`'s fallback, or from an installed package at the same version. The measurements
   above used the former (`cuemsutils` hatch `test.py3.11` environment, Python 3.11, with `src/`
   precedence). Note: the `../cuems-utils/.venv` lacks `pynng` and cannot run this suite.
-- The fixture set for the pre-migration capture is drawn from this repository's `tests/fixtures/`.
-  Where needed, it is supplemented by documents from `cuems-utils`' corpus, recorded by name and
-  checksum.
+- The fixture set for the pre-migration capture is drawn from this repository's `tests/fixtures/`
+  (today `script_minimal.xml`). It is not supplemented from `cuems-utils` `tests/golden/xml`. Those
+  files may be superseded. The XSD files in `cuems-utils/src/cuemsutils/xml/schemas/` are the schema,
+  and the goldens are restated after the system refactoring.
 - The concurrent-edit policy stays "last writer wins, then notify". This feature does not change it.
 - Commits are GPG-signed. On `gpg failed to sign`, the commit is retried, never bypassed.

@@ -71,9 +71,10 @@ Against a capture taken before the migration, exactly two differences are sancti
 | (b) | `Media.duration` a string `HH:MM:SS.mmm` | `{"CTimecode": "HH:MM:SS.mmm"}` |
 
 Key order is unchanged aside from the absent key. Cue booleans stay the strings `"True"` and
-`"False"`. `doc_version` does not appear. Any other difference fails the test. The same bytes
-are checked against `cuems-utils` `tests/golden/MANIFEST.sha256` for the golden files the
-capture corresponds to (R12).
+`"False"`. `doc_version` does not appear. Any other difference fails the test. Schema truth is
+the XSD under `cuems-utils/src/cuemsutils/xml/schemas/`, enforced by the public load and save.
+`tests/golden/xml` may be a superseded snapshot and is not a checksum target (R12). A
+contradiction with the XSD is regenerated in `cuems-utils` after the system refactoring.
 
 ## Load report and session acknowledgment
 

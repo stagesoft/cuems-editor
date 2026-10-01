@@ -15,7 +15,8 @@ export SPECIFY_FEATURE=001-cuems-utils-migration
 ```
 
 Shapes under test are in [contracts/](contracts/). Do not treat a reading of the JSON as the
-check. Captures and goldens are compared, not inspected.
+check. The editor capture is compared, not inspected. `cuems-utils` golden XML is not that
+check: the XSD under `cuems-utils/src/cuemsutils/xml/schemas/` is the schema.
 
 ## 0. Environment
 
@@ -80,10 +81,12 @@ The test fails unless, for every named fixture:
 
 - the new `value` differs from the committed capture only by `schemaLocation` absent and
   `Media.duration` wrapped as `{"CTimecode": ...}`;
-- the corresponding files under `../cuems-utils/tests/golden/` match `MANIFEST.sha256`;
 - opening the project changes no byte of its `script.xml` (checksum before and after).
 
-Do not regenerate the capture or a golden to turn this green.
+Do not regenerate the editor capture to turn this green. Do not compare against
+`../cuems-utils/tests/golden/`. Those XML files may be superseded. The XSD files in
+`../cuems-utils/src/cuemsutils/xml/schemas/` are the schema. A golden that contradicts the XSD
+is regenerated in `cuems-utils` and restated after the system refactoring.
 
 ## 5. Silent-wrong sites, failing first (SC-008)
 

@@ -32,9 +32,12 @@ Everything else stays: every other key, key order (the absent key is the only re
 the string form of cue booleans (`"True"` / `"False"`, not JSON `true` / `false`).
 `doc_version` is not a key. A third difference fails `tests/test_project_payload.py`.
 
-The capture's fixture set is named in the test. Where a fixture is taken from `cuems-utils`
-`tests/golden/`, the test records the golden's path and checks `tests/golden/MANIFEST.sha256`.
-The test does not rewrite the golden or the capture.
+The capture's fixture set is this repository's `tests/fixtures/` (today `script_minimal.xml`).
+It is not taken from `cuems-utils` `tests/golden/xml`. Those files may hold a superseded state.
+The XSD files in `cuems-utils/src/cuemsutils/xml/schemas/` are the schema, enforced by the
+library's public load and save. A golden that contradicts that XSD is regenerated in
+`cuems-utils` and the corpus is restated after the system refactoring. This test does not
+check `MANIFEST.sha256` and does not rewrite a golden or the editor capture.
 
 ## Handover for delta (a)
 

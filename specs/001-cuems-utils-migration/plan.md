@@ -135,7 +135,7 @@ src/cuemseditor/
 tests/
 ├── test_import_smoke.py            # NEW — fails before FR-001
 ├── test_public_surface.py          # NEW — census guard
-├── test_project_payload.py         # NEW — two deltas + golden checksum
+├── test_project_payload.py         # NEW — two deltas against the editor capture
 ├── test_node_merge.py              # NEW — node_role reaches the wire; fails against node_type first
 ├── test_dangling_targets.py        # RETIRED, reason recorded
 ├── test_repair_durations.py        # pass B tests retired; structured-duration test added
@@ -202,9 +202,11 @@ overwrites the file the session loaded:
   `trash/` with `CopyMoveVersioned.move` (project and date recoverable from the name). If the
   move fails, the save is refused and `CuemsScript.save` is not called.
 
-This gate is milestone 2. Between milestone 1 and milestone 2 the branch can save a repaired
-script without it. That window is not a release: the tag message stays unready until
-`cuems-frontend` 05 consumes the report (FR-049). The window is in Complexity Tracking.
+This gate is milestone 2 on the branch. Until that phase, a checkout can save a repaired script
+without the acknowledgment. That checkout is not a release. US1–US8 ship together under one
+candidate tag, and census zero is only the source announcement to `cuems-utils` T049. The
+unacknowledged-save window never lands on a controller by itself (spec clarification 2026-10-01).
+The tag message stays unready until `cuems-frontend` 05 consumes the report (FR-049).
 
 `duplicate` does not overwrite the source, so the gate and the trash copy do not apply to it.
 The duplicate reply still carries the source report, as an optional key old readers ignore (R9).
@@ -267,7 +269,7 @@ Order is load-bearing. Census zero is the end of phase 7, not phase 8.
 | 1 — evidence | import-failure record; capture `project`, `initial_mappings`, `initial_template` before any source change after the import line; reconstruct `create_script()` from the last release that shipped it | 1 |
 | 2 — task zero | FR-001 only; smoke test shown failing first; suite baseline whose colour means something | 1 |
 | 3 — template stand-in | `generate_example(SchemaName.SCRIPT)`; enumerated deltas; listening-state check | 1 |
-| 4 — script I/O | five parser sites; `load_with_report` / `save` / one `to_wire()`; object duration fix; delete dangling walks; retire `test_dangling_targets.py`; two-delta test and golden checksum | 1 |
+| 4 — script I/O | five parser sites; `load_with_report` / `save` / one `to_wire()`; object duration fix; delete dangling walks; retire `test_dangling_targets.py`; two-delta test against the editor capture. Schema is the XSD; `tests/golden/xml` is not a checksum target | 1 |
 | 5 — repair tool | retire pass B; structured-duration test failing first; `CLAUDE.md` note | 1 |
 | 6 — nodes | `node_role`; local partition; `to_wire()` merge; collision message; executor assignment moved to the loop; the one `test_nodelist_actions.py` edit in the same commit as the `NetworkMap` removal | 1 |
 | 7 — pin | `pyproject.toml`; import `debian/`; consolidation record; tag message drafted, not ready; announce census zero to the `cuems-utils` flow | 1 |
@@ -279,7 +281,6 @@ Order is load-bearing. Census zero is the end of phase 7, not phase 8.
 |---|---|---|
 | Principle III: `CuemsDBProject.delete_from_trash` calls `shutil.rmtree` inside a DB transaction. A rollback restores the row and not the directory | Pre-existing. This feature does not call that function. Successor is a later feature, named here so the ratification list is not dropped | Fixing it inside this migration mixes an unrelated data-loss bug into the census |
 | Principle V: `cli.py:29` imports `ProjectMappings` from `cuemsutils.tools.ConfigManager`'s module namespace. The class is defined under `cuemsutils.xml` and is not in `tools.__all__`. Its only use is `get_mappings()` reading `default_mappings.xml` (F7) | The read is the one `cuems-utils` 014 moves. Migrating it now means migrating it again. It is outside the T049 grep, so it does not block milestone 1 | A local replacement reader would be a second consumer of a file 014 deletes |
-| Principle III: from milestone 1 until the milestone 2 save gate, a user-initiated save can overwrite a repaired script without the acknowledgment | `to_wire()` cannot be shipped to the old UI, and the ack action has no sender until `cuems-frontend` 05. The tag message stays unready (FR-049), so this is not a released state. Retired by phase 8 before that message is marked ready | Turning the gate on in milestone 1 would make every repaired project unsavable from the deployed UI, which FR-048 forbids as a milestone-1 requirement on the frontend |
 | Principle V: `_partition_by_adoption` reads `adopted` locally | `partition_by_adoption` has no public path (R5). The method's docstring names the upstream report, which cites the engine's UR-1. It ports no node model | Importing `cuemsutils.xml.settings.NetworkMap` (Q14). Blocking the editor until the library ships a partition (spec Q1 rejected option A alone) |
 | `script_file_name` (`cli.py` `'script.xml'`) vs `CuemsProjectManager`'s docstring example `'cue_script.xml'`, and vs the engine's hardcoded `"script.xml"` | Recorded only. A library walker that hardcodes the name is `cuems-utils` 012's trap, not this feature's | "Fixing" the name here would desynchronise the editor from libraries it already opens |
 
@@ -290,3 +291,7 @@ Order is load-bearing. Census zero is the end of phase 7, not phase 8.
 - Principle IV, "the import smoke test does not exist yet": phase 2 adds it, failing first.
 - Principle V, the six shipped imports of `cuemsutils.xml` / `create_script`: phases 2–6 remove
   them. The census is the milestone-1 exit.
+- Principle III, the branch window before the save gate: a checkout between milestone 1 and US4
+  can overwrite a repaired script with no acknowledgment. It does not ship. US1–US8 land under
+  one candidate tag, and census zero is a source announcement, not a package (spec clarification
+  2026-10-01). The gate is in the same release as the wire change that makes a repair observable.

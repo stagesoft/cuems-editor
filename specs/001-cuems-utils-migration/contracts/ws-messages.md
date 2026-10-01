@@ -80,7 +80,7 @@ Sent instead of `type: project` when `load_with_report` raises `ValidationError`
 | `cue_id` | string or `null` (document-scoped, including a too-new document) |
 | `field` | string or `null` |
 | `message` | `str(violation)`, library text, not rewritten |
-| `next_steps` | `["restore_from_conversion_backup", "correct_field_by_hand", "remove_document"]` |
+| `next_steps` | always all three, in this order: `["restore_from_conversion_backup", "correct_field_by_hand", "remove_document"]` |
 
 The session is not closed. No second read is attempted with a permissive parser.
 
