@@ -164,20 +164,26 @@ on that object.
 makes that `patch()` raise `AttributeError` on two tests. The assertions of those tests are
 about `nodeconf_available`, not about the partition.
 
-**Decision**: spec Q1 option C. A private `_partition_by_adoption(network_map)` reads `adopted`
-and returns the library node objects. It writes nothing. Its docstring names the upstream
-report, which cites `cuems-engine`'s UR-1 and asks for a public non-mutating partition. The
-public-surface test forbids both names in editor modules. The `test_nodelist_actions.py` edit
-is confined to that helper's mock, lands in the same commit as the import removal, and changes
-no assertion (FR-041).
+**Decision (superseded for implementation, 2026-10-01)**: the measurement above still holds for
+`0.1.0rc16` as published. cuems-utils 013 is implementing the public re-export now and does not
+cut a new version. The editor does not add `_select_adopted`. T036 starts when
+`from cuemsutils.tools.NodeList import partition_by_adoption` succeeds on `../cuems-utils`.
+That commit's SHA and subject are written to `evidence/cuems-utils-013-pin.txt` and named in
+the upstream report. The call is `adopted, unadopted = partition_by_adoption(network_map)`.
+Both results are tuples of bare node objects; an empty side is `()`. The editor does not unwrap
+or re-wrap. The public-surface test allows that import and those calls, and still rejects
+`get_nodes_by_adoption`, `def partition_by_adoption`, `_select_adopted`, and `cuemsutils.xml`.
+The `test_nodelist_actions.py` edit patches `partition_by_adoption` to return `(), ()`, lands
+in the same commit as the import removal, and changes no assertion (FR-041).
 
-**Rationale**: the context block's "becomes `partition_by_adoption`" contradicts the block's own
-Q14 paragraph. The spec resolved the contradiction. A local read of a bool is not a node model;
-re-testing `NodeRole` or uuid shape here would be.
+**Rationale**: a local read was the stand-in while the function lived only in `cuemsutils.xml`.
+Once 013 publishes the same function object from `NodeList`, a second reader would diverge from
+the library (empty `node_list` raises `ValueError`; a missing `"node"` key is skipped). The
+version floor stays `0.1.0rc16` because 013 does not bump it; the commit SHA is the pin.
 
 **Alternatives rejected**: import `NetworkMap` anyway (Q14, and the symbol disappears in the
-release after rc16); block the editor until the library ships the method (option A, rejected
-in clarify); two readers, one per call site (the engine's UR-1 failure mode).
+release after rc16); keep `_select_adopted` after the public import exists; two readers, one
+per call site (the engine's UR-1 failure mode).
 
 ---
 

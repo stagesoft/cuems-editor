@@ -146,9 +146,10 @@ in this repository is a regression, not coverage.
    (first install) and 012 (uuid4 convergence) have landed on their branches.
 2. **This feature is the ecosystem's critical path.** `cuems-utils` 010's gate T049 cannot record zero
    while this repository's imports exist.
-3. **The adoption partition has no public path.** The block says *"becomes `partition_by_adoption`"*.
-   That method is internal (`UR-1`, open). The block's own last paragraph forbids reaching it. This
-   spec resolves the contradiction (Option C, ratified in Clarifications).
+3. **The adoption partition's public path is cuems-utils 013, in implementation.** On `0.1.0rc16`
+   the function is only `NetworkMap.partition_by_adoption` inside `cuemsutils.xml`. Feature 013
+   re-exports that same function from `cuemsutils.tools.NodeList` and does not cut a new version.
+   This spec pins that commit and calls it. Both results are tuples of bare node objects.
 4. **The hardware inventory is deferred to `cuems-utils` 014**, by name.
 
 ---
@@ -165,10 +166,11 @@ in this repository is a regression, not coverage.
   candidate tag therefore waits on `cuems-frontend` 05. The census-zero milestone that unblocks
   `cuems-utils` T049 does **not** wait (FR-048).
 - Q: How should the editor work out which nodes are adopted, now that `get_nodes_by_adoption` is
-  deprecated and `partition_by_adoption` is internal? → A: **Option C.** File an upstream report
-  citing `cuems-engine`'s `UR-1`. Meanwhile, compute the split locally as a read-only selection over
-  `ConfigManager.network_map`. The local selection's docstring names the report as its successor
-  (FR-009).
+  deprecated and `partition_by_adoption` is internal? → A: **Option C, superseded the same day.**
+  The first resolution was an upstream report plus a local read. cuems-utils 013 is implementing
+  the public re-export now, so the local read is not written. Once
+  `from cuemsutils.tools.NodeList import partition_by_adoption` succeeds on the sibling checkout,
+  that commit is pinned and the editor calls it (FR-009).
 - Q: Once `create_script()` is gone, what should the `initial_template` message contain? → A:
   **Option A.**
   - **Milestone 1:** send `ConfigManager.generate_example(SchemaName.SCRIPT)`. Every difference from
@@ -317,7 +319,7 @@ This supersedes `00-runnable-flow.md` §0 and §7, which were measured 2026-09-2
 | `cuems-engine` | 01 | landed as its `008-cuems-utils-migration`, 64/64 | `1662a99`, cut 2026-10-01, not pushed |
 | **`cuems-editor`** | **02** | **this feature** | — |
 | `cuems-frontend` | 05 | not started; deliberately after `cuems-utils` 013 | — |
-| `cuems-utils` | — | 011, 012 landed on their branches; 013/014 not begun | none — tags last (D27) |
+| `cuems-utils` | — | 011, 012 landed on their branches; 013 in implementation; 014 not begun | none — tags last (D27) |
 
 What `cuems-utils` 011/012 mean here, as constraints on this spec:
 
@@ -417,23 +419,25 @@ All eight stories are in this feature (Clarifications, Q4). They land in two mil
 `feat/xml-refactor`:
 
 - **Milestone 1 — census zero.** Stories 1–3 and 5–7 take the census to zero and keep every existing
-  payload intact, with no `cuems-frontend` change. This unblocks `cuems-utils` T049, and it MUST NOT
-  wait on the UI.
+  payload intact, with no `cuems-frontend` change. The adoption call (US6) waits until the
+  cuems-utils 013 commit is pinned; the census file is written after that call. The other stories
+  do not wait on 013. This unblocks `cuems-utils` T049, and it MUST NOT wait on the UI.
 - **Milestone 2 — the coordinated wire.** Stories 4 and 8 are UI-coordinated. They are built on the
   same branch, and the candidate tag is cut only when `cuems-frontend` 05 consumes them.
 
 ### User Story 1 — The editor starts again (Priority: P1)
 
 An operator restarts `cuems-editor.service` on a controller running the current `cuemsutils`. Today it
-dies at import. After this story, it reaches its listening state and serves clients exactly as it did
-before 008.
+dies at import. After this story the modules import. Listening on `:9092` is acceptance scenario 2:
+it also needs the template replacement (FR-008), and that check is completed in User Story 2.
 
 **Why this priority**: it blocks everything. No other story can be verified while the process cannot
 import, and seven of today's nine non-passing tests are this story (F2).
 
-**Independent Test**: import every `cuemseditor` module against the declared `cuemsutils`. Start the
-server against a temporary library and confirm it accepts a WebSocket connection. Run the full suite
-and confirm all six test files collect.
+**Independent Test**: import every `cuemseditor` module against the declared `cuemsutils`. The
+listening check is scenario 2 and is recorded when User Story 2 replaces `create_script()`. Run the
+suite and confirm the six pre-feature test files collect. `tests/test_import_smoke.py` is a seventh
+file, added by the smoke test, and is not part of that six.
 
 **Acceptance Scenarios**:
 
@@ -473,15 +477,16 @@ retired names are absent from the editor's modules, following `cuems-engine`'s
 3. **Given** a client connects, **When** it receives `initial_template`, **Then** the payload is the
    the library's generated example (FR-008). Every difference from the pre-008 payload is
    enumerated as a wire delta, not discovered.
-4. **Given** the adoption partition is needed, **When** the editor computes it, **Then** it does so by
-   a read-only local selection, and an upstream report records the library's gap (FR-009).
+4. **Given** the adoption partition is needed, **When** the editor computes it, **Then** it calls
+   `partition_by_adoption` imported from `cuemsutils.tools.NodeList` on the pinned cuems-utils 013
+   commit, and the upstream report names that commit (FR-009).
 
 ---
 
 ### User Story 3 — Projects open and save exactly as before, except for two named changes (Priority: P1)
 
-An operator opens an existing project, edits a cue and saves. The UI receives the same `project_load`
-payload as before 008, byte for byte, except for two deltas:
+An operator opens an existing project, edits a cue and saves. The client action is `project_load`.
+The UI receives the `{"type":"project"}` frame, byte for byte as before 008, except for two deltas:
 
 - **(a)** `schemaLocation` is absent;
 - **(b)** `Media.duration` arrives as `{"CTimecode": "HH:MM:SS.mmm"}`.
@@ -491,7 +496,7 @@ Key order and the string boolean form are unchanged.
 **Why this priority**: the payload is a contract with a UI this repository cannot deploy in lockstep
 with (Principle I). A silent third delta shows up as wrong behaviour during a show.
 
-**Independent Test**: capture the `project_load` payload for a fixture set **before any source
+**Independent Test**: capture the `{"type":"project"}` value for a fixture set **before any source
 change** and commit it. After the migration, compare byte-for-byte and assert that the only
 differences are (a) and (b). Schema truth is the XSD under
 `cuems-utils/src/cuemsutils/xml/schemas/`, enforced by the library's public load and save. Do not
@@ -699,7 +704,8 @@ recorded bump history (FR-047, FR-047a).
   012's trap, not this feature's work.
 - **A legacy project under `duplicate()`**: it stays deliberately unvalidated (CLAUDE.md). The
   migration MUST NOT make `duplicate()` stricter than it is today, beyond what the library's load
-  itself enforces. Any project that duplicated before and no longer does is recorded.
+  itself enforces. If that load refuses a source `duplicate()` used to copy, the project is
+  recorded. The editor does not add a second refusal.
 - **Old UIs sending zero media durations**: inbound handling keeps accepting them (Principle I).
 - **`initial_template` between 0a and 0b**: after FR-001 lands but before FR-008 does, the server
   still calls the deleted `create_script()`. So 0a alone does not make the constructor run. FR-001's
@@ -746,30 +752,45 @@ recorded bump history (FR-047, FR-047a).
     capture (FR-010). The release used MUST be recorded by version and checksum.
   - Every difference between that baseline and the new payload MUST be enumerated as a wire delta.
     This covers keys, key order, value types and placeholder values. The deltas go in
-    `tests/ws-command-responses.txt` and the frontend hand-over (FR-018).
+    `tests/ws-command-responses.txt` and the frontend hand-over. The consumer of `initial_template`
+    is `cuems-frontend` `src/app/services/projects/projects.service.ts`: line 159 reads
+    `localStorage` key `initial_template`, line 240 accepts `type === 'initial_template'`, and
+    line 243 writes that key back. Delta (a) of the `project` frame stays FR-018
+    (`projects.service.ts:120`).
   - A test MUST assert that the payload differs from the baseline by exactly those deltas.
 - **FR-008a**: In milestone 2, `initial_template` MUST be retired in favour of the descriptor's
   per-type constructible empty instances (FR-045). The retirement lands only behind the
   payload-version handshake (FR-047, FR-050).
-- **FR-009**: The adoption partition (0c) MUST be obtained without importing `cuemsutils.xml`
-  (Option C, Clarifications). Two things are required:
-  - **An upstream report**, filed under `specs/001-cuems-utils-migration/upstream-reports/`. It
-    follows `cuems-engine`'s `UR-n-*.md` convention, cites the engine's `UR-1`, and asks for a public,
-    non-mutating adoption partition.
-  - **An interim local selection**, which MUST be:
-    - a read-only selection over the object `ConfigManager.network_map` returns: it reads `adopted`,
-      writes nothing, and ports no model;
-    - documented in its docstring as interim, with the report named as its successor.
+- **FR-009**: The adoption partition (0c) MUST be the public function
+  `from cuemsutils.tools.NodeList import partition_by_adoption`, called as
+  `adopted, unadopted = partition_by_adoption(network_map)` on the object
+  `ConfigManager.network_map` returns. Both results are tuples of bare node objects. An empty
+  side is `()`. The function unwraps each `{"node": <node>}` entry itself; the editor MUST NOT
+  unwrap, re-wrap, or read `adopted` to decide the split. It MUST NOT define `_select_adopted`
+  or any other local partition. It MUST NOT import `cuemsutils.xml`. Feature 014 replaces
+  `hardware_outputs` and `default_mappings`; this call does not use them and does not wait on 014.
 
-  The public-surface test (FR-006) MUST assert that `get_nodes_by_adoption` and
-  `partition_by_adoption` are both absent from the editor's modules. This follows `cuems-engine`'s
-  `tests/test_public_surface.py`.
+  The version pin stays `cuemsutils>=0.1.0rc16,<0.1.1`. Feature 013 does not cut a new version.
+  The pin that makes the import exist is a commit SHA, recorded in
+  `specs/001-cuems-utils-migration/evidence/cuems-utils-013-pin.txt` as `git -C ../cuems-utils
+  rev-parse HEAD` plus that commit's subject. The editor task that deletes `NetworkMap` does not
+  start until that import succeeds on the sibling checkout. The SHA is written when it exists; it
+  is not invented.
+
+  An upstream report under `specs/001-cuems-utils-migration/upstream-reports/` cites
+  `cuems-engine`'s `UR-1` and names that SHA as the commit this editor pins. It does not ask for
+  a second function.
+
+  The public-surface test (FR-006) MUST allow the name `partition_by_adoption` only as that
+  import and as calls of the imported name. It MUST reject `get_nodes_by_adoption`,
+  `def partition_by_adoption`, `_select_adopted`, and any `cuemsutils.xml` import.
 
 **Payload contract (US3)**
 
-- **FR-010**: Before any source change after FR-001, the `project_load` payload MUST be captured and
-  committed for a recorded fixture set. So MUST the `initial_mappings` and `initial_template` payloads.
-- **FR-011**: After migration, `project_load` MUST be byte-identical to that capture except for
+- **FR-010**: Before any source change after FR-001, the `{"type":"project"}` value (the reply to
+  the `project_load` action) MUST be captured and committed for a recorded fixture set. So MUST
+  the `initial_mappings` and `initial_template` payloads.
+- **FR-011**: After migration, the `{"type":"project"}` value MUST be byte-identical to that capture except for
   delta (a), `schemaLocation` absent, and delta (b), `Media.duration` wrapped. A test MUST assert
   this. `doc_version` MUST NOT appear on the wire. Schema validity is the XSD under
   `cuems-utils/src/cuemsutils/xml/schemas/`, as enforced by the library's public load and save.
@@ -778,8 +799,10 @@ recorded bump history (FR-047, FR-047a).
   the golden can be regenerated in `cuems-utils`. This repository does not edit that corpus.
 - **FR-012**: The wire projection MUST happen exactly once, at the UI boundary. No code path may
   manipulate the wire dict to achieve an object-level result.
-- **FR-013**: All five `CuemsParser` call sites MUST be replaced by the library's public
-  JSON→object entry. Script load and save MUST go through the library's public load and save.
+- **FR-013**: The four `CuemsParser(...).parse()` call sites in `CuemsDBProject.py` (`update`,
+  `new`, `duplicate`, `update_projects_existed_media`) MUST be replaced by the library's public
+  JSON→object entry. `load_xml` and `save_xml` use `XmlReaderWriter`, not `CuemsParser`, and MUST
+  go through the library's public load and save. The parser in `repair_durations.py` is FR-023.
 - **FR-014**: Opening a project MUST NOT write to its files.
 - **FR-015**: `_fix_media_durations` MUST remain and operate on the loaded object.
   `_clean_dangling_targets` and `_nullify_dangling_refs` MUST be deleted. Before deletion, each MUST
@@ -904,7 +927,14 @@ recorded bump history (FR-047, FR-047a).
     `python3-cuemsutils (>= 0.1.0rc16), python3-cuemsutils (<< 0.1.1~)`, alongside
     `${python3:Depends}`. This follows `cuems-nodeconf`'s `debian/control:18-19`.
   - A `debian/changelog` entry MUST record the migration.
-  - CLAUDE.md's `debuild` build instruction MUST work from the working branch.
+  - The package MUST be built for Debian 12 (bookworm), which is the controller target. The
+    development machine this feature is written on is Debian 13 (trixie): `/usr/bin/python3` is
+    3.13 and `python3` on `PATH` is a pyenv 3.11.9 shim. A host `debuild` on that machine is not a
+    bookworm build, and cuems-utils `debian/README.source` records that a `PATH` interpreter is
+    baked into `pyvenv.cfg`. The proof is `dpkg-buildpackage` inside an unprivileged bookworm
+    chroot (`mmdebstrap --mode=unshare`), the same shape as
+    `cuems-nodeconf/tests/packaging/release-gate-demo.sh`. `CLAUDE.md`'s `debuild` line stays the
+    instruction for a bookworm host. It is not the trixie command.
 - **FR-038a**: `debian/bookworm` MUST NOT be deleted, retired or force-moved by this feature. It
   remains the packaging-automation branch.
   - Every `debian/` change made on the working branch MUST be listed in a consolidation record at
@@ -984,7 +1014,7 @@ recorded bump history (FR-047, FR-047a).
 - **FR-047**: The **payload version** MUST be sent to every client as the **first** message on
   connect, before any `initial_*` message. It is an integer.
   - **Version 1** is the wire as of the coordinated `xml-refactor-merge-candidate` tag. That wire
-    includes every delta this feature enumerates: `project_load` (a) and (b), the `initial_template`
+    includes every delta this feature enumerates: the `{"type":"project"}` frame (a) and (b), the `initial_template`
     deltas, and the untangling.
   - A connection with no payload-version message is, by definition, **version 0**: the wire before
     this feature.
@@ -1009,8 +1039,9 @@ recorded bump history (FR-047, FR-047a).
 - **Script document**: a project's `script.xml`, which is user data. It has a `doc_version` on disk
   and is never on the wire. It loads in one of three ways: converted in memory, repaired with a
   report, or refused.
-- **`project_load` payload**: the wire projection of a script. It is a contract with the UI, with
-  exactly two sanctioned deltas.
+- **`project` frame**: the wire projection of a script, message type `project`, sent in reply to
+  the client action `project_load`. It is a contract with the UI, with exactly two sanctioned
+  deltas. There is no message type `project_load`.
 - **Repair report**: the library's per-load record of the document, its repairs, the conversions run
   and whether the file on disk is stale. It is forwarded by this repository and rendered by the UI.
 - **Network map node**: a node's identity (uuid4 or sentinel), role, adoption state and discovery
@@ -1030,7 +1061,11 @@ recorded bump history (FR-047, FR-047a).
   Today it fails 100% of the time.
 - **SC-002**: The deprecated-surface census over this repository's shipped code records **0** hits,
   down from 6. That unblocks `cuems-utils` T049.
-- **SC-003**: All six test files collect and run, up from four. The seven F2 failures pass.
+- **SC-003**: The six test files that exist before this feature (`test_media.py`,
+  `test_nodelist_actions.py`, `test_probe_duration.py`, `test_dangling_targets.py`,
+  `test_repair_durations.py`, `test_validate_fade_durations.py`) collect and run. They are the
+  files that failed to collect while `CuemsWsServer` could not import. `tests/test_import_smoke.py`
+  is a seventh file and is not part of that count. The seven F2 failures pass.
   `test_nodelist_actions.py` has at most the one sanctioned edit.
 - **SC-004**: For every project in the recorded fixture set, the opened payload differs from the
   pre-migration capture in exactly two enumerated ways and no others. Schema acceptance is the
@@ -1059,7 +1094,7 @@ overrides the default; it does not discover the question.
 
 | # | Question | Default in this spec |
 |---|---|---|
-| **Q1** | Adoption partition: A (report and block), B (local selection), or C (report **and** local selection as interim)? | **Resolved 2026-10-01: C** (Clarifications, FR-009) |
+| **Q1** | Adoption partition: A (report and block), B (local selection), or C (report **and** local selection as interim)? | **Resolved 2026-10-01, then superseded: pin the 013 commit and call `NodeList.partition_by_adoption`** (Clarifications, FR-009) |
 | **Q2** | `initial_template` after `create_script` is gone? | **Resolved 2026-10-01**: `generate_example(SCRIPT)` with enumerated deltas in milestone 1; retired behind the handshake in milestone 2 (FR-008, FR-008a) |
 | **Q3** | How is D21b enforced structurally? | **Resolved 2026-10-01**: per-session acknowledgment gate, plus the original preserved in `trash/` on first save (FR-021, FR-021a) |
 | **Q4** | Are US4 and US8 in this feature or split into a successor? | **Resolved 2026-10-01: in this feature** (Clarifications). Two milestones, one coordinated tag (FR-048–FR-050) |
@@ -1095,9 +1130,10 @@ Of the flow's US8 items:
 
 ## Assumptions
 
-- `cuems-utils` stays at `0.1.0rc16` for the life of this feature. A library change that this feature
-  needs (UR-1) arrives as an upstream report, never as a local
-  patch or vendored copy.
+- The version ceiling stays `cuemsutils>=0.1.0rc16,<0.1.1`. Feature 013 does not cut a new
+  version, so the adoption function is pinned by the cuems-utils commit SHA in
+  `evidence/cuems-utils-013-pin.txt`, resolved from the sibling `../cuems-utils` checkout. It is
+  not vendored and not reimplemented locally.
 - The test environment resolves `cuemsutils` from the sibling `../cuems-utils/src` checkout, through
   `tests/conftest.py`'s fallback, or from an installed package at the same version. The measurements
   above used the former (`cuemsutils` hatch `test.py3.11` environment, Python 3.11, with `src/`

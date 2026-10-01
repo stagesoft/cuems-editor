@@ -125,8 +125,11 @@ These are not one field and not one message.
 
 ### Network-map node (library object)
 
-Read from `ConfigManager.network_map["node_list"][i]["node"]`. The wrapper stays until the
-editor unwraps it once inside `_partition_by_adoption`.
+Read from `ConfigManager.network_map["node_list"][i]["node"]` only as the library's own input
+shape. On cuemsutils `0.1.0rc16` the entry is `{"node": <node>}`. The editor does not unwrap it.
+`partition_by_adoption`, imported from `cuemsutils.tools.NodeList` after the cuems-utils 013
+commit is pinned, returns `(adopted, unadopted)`: two tuples of those bare node objects. An
+empty side is `()`. Feature 014 does not own `node_list`.
 
 | Field | Type on the object | On the wire, via `to_wire()` |
 |---|---|---|

@@ -18,7 +18,11 @@ on the commit before task zero.
 2. Any import of `cuemsutils.config` or a submodule.
 3. Any import of `cuemsutils.create_script` or `cuemsutils.timeoutloop`.
 4. The names `CuemsParser`, `XmlReaderWriter`, `create_script`, `get_nodes_by_adoption`,
-   `partition_by_adoption`, `node_type`, and `NodeType.` anywhere in `src/`.
+   `_select_adopted`, `def partition_by_adoption`, `node_type`, and `NodeType.` anywhere in
+   `src/`, including comments and docstrings.
+5. Any use of the name `partition_by_adoption` that is not
+   `from cuemsutils.tools.NodeList import partition_by_adoption` or a call of that imported
+   name. The function returns two tuples of bare node objects. The editor does not define it.
 
 `tests/` may mention a forbidden name only inside `test_public_surface.py`'s ban list, or in a
 retired-test record. A test import that deliberately exercises a retired path carries a
@@ -34,13 +38,15 @@ pass B.
 | `cuemsutils.errors.LoadReport`, `Outcome`, `ValidationError` | report forwarding and the unrepairable path |
 | `cuemsutils.errors.node_identity_collision_message` | distinguish a duplicate node identity from a transient read error |
 | `cuemsutils.tools.ConfigManager.ConfigManager`, `SchemaName` | descriptor, `generate_example(SchemaName.SCRIPT)`, `network_map`, `save_network_map`, `save_settings`, `save_project_mappings`, `save_project_settings` |
+| `cuemsutils.tools.NodeList.partition_by_adoption` | adopted and unadopted tuples, after the 013 commit pin |
 | `cuemsutils.tools.coerce_identity` | JSON identity compared with a map identity |
 | `cuemsutils.helpers.new_uuid` | already used; the `CuemsWsServer` import joins it |
 | `cuemsutils.tools.CTimecode.CTimecode` | duration fix and the repair tool's comparison; already used by the fade gate |
 | `cuemsutils.tools.CopyMoveVersioned.CopyMoveVersioned` | move the pre-repair script into `trash/` before the first overwrite; already imported by `CuemsDBProject` |
 
-Not imported: `cuemsutils.xml.descriptor`, `cuemsutils.tools.NodeList` as a model to re-test,
-`Uuid` as a type to reconstruct. Nodes stay the objects `network_map` returned.
+Not imported: `cuemsutils.xml.descriptor`. `cuemsutils.tools.NodeList` is imported for
+`partition_by_adoption` only. `NodeRole`, `NodeIndex`, and `Uuid` are not re-tested here.
+Nodes stay the objects the partition function returned.
 
 ## Known exception, carried
 
@@ -54,4 +60,7 @@ second such import fails the test. See plan.md Complexity Tracking.
 ## Anti-vacuity
 
 The test fails if it scans zero files under `src/`, or if after milestone 1 it finds zero
-`cuemsutils` imports at all. A wrong root would otherwise turn the census green.
+`cuemsutils` imports at all. A wrong root would otherwise turn the census green. It also fails
+if `src/cuemseditor/CuemsWsServer.py` does not contain
+`from cuemsutils.tools.NodeList import partition_by_adoption`. Until T036 that line is absent,
+so the first run stays red.

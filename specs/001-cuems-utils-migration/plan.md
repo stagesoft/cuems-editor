@@ -36,7 +36,7 @@ step, the constructor still cannot run.
 
 | Context block | Plan does | Why |
 |---|---|---|
-| `:470` becomes `partition_by_adoption` | read-only selection over `ConfigManager.network_map`, plus an upstream report citing the engine's UR-1 | the method is internal (`cuemsutils.xml`); Q14 forbids the import (R5, spec Q1) |
+| `:470` becomes `partition_by_adoption` | `from cuemsutils.tools.NodeList import partition_by_adoption` once the 013 commit is pinned; both results are tuples of bare nodes | the function is internal on `0.1.0rc16`; 013 publishes it without a version bump (R5, FR-009) |
 | Fold pass B into `cuems-convert-documents` | pass B is retired; the tool writes no script | that tool converts document *shape*, not DB-sourced durations (R7, spec Q5). No upstream change |
 | `test_nodelist_actions.py` unedited (flow exit 9) | one recorded edit of the `NetworkMap` mock, assertions unchanged | removing the import makes `patch()` raise (spec F4, FR-041) |
 | Payload spoken of as `project_load` | the frame the UI receives is `{"type":"project"}` | `send_project` already uses that type (R11) |
@@ -88,15 +88,13 @@ Constitution v1.0.0. Checked, **not amended**.
 
 | Principle | Status | How |
 |---|---|---|
-| **I. The Wire Is A Contract** | ✅ | `project` stays byte-identical to a capture taken before the source change, except delta (a) `schemaLocation` absent and delta (b) `Media.duration` as `{"CTimecode": "..."}`. Key order and the string boolean form are unchanged. `doc_version` is not on the wire. New families are named in [contracts/ws-messages.md](contracts/ws-messages.md) with an audience, and land in `tests/ws-command-responses.txt`. Untangling waits on payload version 1 and `cuems-frontend` 05 (FR-050) |
-| **II. Sessions Are Isolated, The Event Loop Is Shared** | ✅ | Repair acknowledgment is keyed by session and by project. `network_map_error` is broadcast to all sessions. Today `reload_network_map_nodes` writes `self.mappings_dict` from the executor (`CuemsWsServer.notify_all_node_list_update`, `CuemsWsUser.nodelist_get`). The executor returns the loaded lists; the loop thread assigns them (R8) |
+| **I. The Wire Is A Contract** | ✅ | The `{"type":"project"}` frame stays byte-identical to a capture taken before the source change, except delta (a) `schemaLocation` absent and delta (b) `Media.duration` as `{"CTimecode": "..."}`. Key order and the string boolean form are unchanged. `doc_version` is not on the wire. New families are named in [contracts/ws-messages.md](contracts/ws-messages.md) with an audience, and land in `tests/ws-command-responses.txt`. Untangling waits on payload version 1 and `cuems-frontend` 05 (FR-050). The upstream golden corpus is compared and contradictions are recorded for `cuems-utils`; it is not an editor pass condition (Complexity Tracking) |
+| **II. Sessions Are Isolated, The Event Loop Is Shared** | ✅ | Repair acknowledgment is keyed by session and by project. The refusal decision runs on the loop; `CopyMoveVersioned.move` and `CuemsScript.save` run on the executor. `network_map_error` is broadcast to all sessions. Today `reload_network_map_nodes` writes `self.mappings_dict` from the executor (`CuemsWsServer.notify_all_node_list_update`, `CuemsWsUser.nodelist_get`). The executor returns the loaded lists; the loop thread assigns them (R8) |
 | **III. User Data Has A Recovery Story** | ✅ | Load does not write. The first save of a document whose report says the file differs copies the original into `trash/` with `CopyMoveVersioned` and refuses the save if the copy fails. Pass B stops writing scripts. Library `save` is atomic (R4). `delete_from_trash` is carried, not touched |
-| **IV. Tests Gate The Risky Paths, Honestly** | ✅ | Import smoke fails before FR-001. The `node_type` merge and the timecode guard each have a test that fails against the old shape first. `test_dangling_targets.py` is retired with the library coverage named. No node-model test is added |
-| **V. cuemsutils Is Consumed Through Its Public Surface** | ✅ | Census over `src/` goes to zero. The adoption split is a read of `adopted` on the object `ConfigManager.network_map` returns, documented as interim, with the upstream report named. The pin is `>=0.1.0rc16,<0.1.1`. The `cli.py:29` `ProjectMappings` import is carried to `cuems-utils` 014 |
+| **IV. Tests Gate The Risky Paths, Honestly** | ✅ | Import smoke fails before FR-001. The `node_type` merge, the timecode guard, the `initial_template` delta, and `network_map_error` each have a test that fails against the pre-change behaviour first. `test_dangling_targets.py` is retired with the library coverage named. No node-model test is added |
+| **V. cuemsutils Is Consumed Through Its Public Surface** | ✅ | Census over `src/` goes to zero `cuemsutils.xml` imports. The adoption split is `partition_by_adoption` imported from `cuemsutils.tools.NodeList` on the pinned 013 commit. The version pin stays `>=0.1.0rc16,<0.1.1`. The `cli.py:29` `ProjectMappings` import is carried to `cuems-utils` 014 |
 
-**Post-design re-check (2026-10-01)**: unchanged verdict. The interim reader is the UR-1
-workaround. It does not re-implement the node model: it reads one bool and returns the library's
-node objects.
+**Post-design re-check (2026-10-01)**: unchanged verdict, with the adoption path updated the same day. The split is the public `NodeList.partition_by_adoption` once the 013 commit is recorded. It returns two tuples of bare node objects. The editor does not re-implement the node model and does not define a local helper.
 
 ## Project Structure
 
@@ -127,7 +125,7 @@ src/cuemseditor/
 │                        # merge_node_data / reload_network_map_nodes; initial_* builders
 ├── CuemsWsUser.py       # project_load/save/duplicate; repair_acknowledge; schema_descriptor;
 │                        # config_save; nodelist_*; node_status left as a cluster_status relay
-├── CuemsDBProject.py    # five CuemsParser sites; load_xml/save_xml; duration fix on the object;
+├── CuemsDBProject.py    # four CuemsParser sites; load_xml/save_xml; duration fix on the object;
 │                        # dangling walks deleted; fade check unchanged
 ├── repair_durations.py  # pass A stays; pass B deleted; TIMECODE_SHAPE deleted
 └── cli.py               # ProjectMappings import carried (F7); script_file_name recorded only
@@ -196,11 +194,14 @@ overwrites the file the session loaded:
 - The session stores `report_id`, `outcome`, `file_differs_from_loaded`, and `acknowledged`
   for the project it loaded. A non-`CLEAN` report with `acknowledged == false` makes
   `project_save` return `repair_save_refused`. Another session's acknowledgment does not count.
-  Unload, session close, or a new load of the document clears the flag.
+  Unload, session close, or a new load of the document clears the flag. That decision reads
+  session state on the event-loop thread.
 - `repair_acknowledge` is a new inbound action carrying that `report_id`.
 - When `file_differs_from_loaded` is true, the first overwrite moves the on-disk script into
   `trash/` with `CopyMoveVersioned.move` (project and date recoverable from the name). If the
-  move fails, the save is refused and `CuemsScript.save` is not called.
+  move fails, the save is refused and `CuemsScript.save` is not called. The move and the save
+  run on the server executor, as `received_project` already does for `project.update`. They are
+  not called from the async handler body.
 
 This gate is milestone 2 on the branch. Until that phase, a checkout can save a repaired script
 without the acknowledgment. That checkout is not a release. US1–US8 ship together under one
@@ -216,11 +217,16 @@ The duplicate reply still carries the source report, as an optional key old read
 Milestone 1 keeps serving `initial_mappings` as the entangled payload, so nothing is removed
 from a message the current UI reads. Inside it:
 
-- `NetworkMap` is gone. `_partition_by_adoption` reads `adopted` on each `node_list` entry and
-  returns the library's node objects. Its docstring names `upstream-reports/` as the successor.
-  The public-surface test forbids both `get_nodes_by_adoption` and `partition_by_adoption`.
+- `NetworkMap` is gone. `adopted, unadopted = partition_by_adoption(network_map)` with
+  `from cuemsutils.tools.NodeList import partition_by_adoption`. Both results are tuples of bare
+  node objects; an empty side is `()`. The input `node_list` stays a list of `{"node": <node>}`;
+  the function unwraps it. The editor does not. This call starts only after
+  `evidence/cuems-utils-013-pin.txt` records the cuems-utils commit on which the import succeeds.
+  The version pin stays `>=0.1.0rc16,<0.1.1` because 013 does not cut a new version. Feature 014
+  does not own this list. `get_nodes_by_adoption` and a local `_select_adopted` stay absent.
 - `merge_node_data` copies status from `node.to_wire()` (`"True"` / `"False"`, string uuid,
-  key `node_role`) and keeps output blocks from the existing mapping node. Identities are
+  key `node_role`) and keeps output blocks from the existing mapping node. The library side is
+  one of those tuples, so a missing `"node"` key is not a reason to skip the item. Identities are
   compared with `coerce_identity`. The `node_type` test fails against the old list first (R6).
 - `node_status` stays a relay of the engine's `cluster_status`. `alive` is not `online`.
 - `nodeconf_available` stays a live sample injected at both current sites. It is not a field of
@@ -235,7 +241,9 @@ Milestone 2, only after `payload_version` is the first frame: `initial_mappings`
 outputs only; a `node_list` message carries the adopted and unadopted arrays with
 `nodeconf_available` beside them, pushed by `watch_network_map` and pulled by `nodelist_get`.
 The frontend hand-over names `settings.component.ts`, `audio-mixer.component.ts:80`,
-`video-mixer.component.ts:94`, and `projects.service.ts:120` (`schemaLocation`).
+`video-mixer.component.ts:94`, `projects.service.ts:120` (`schemaLocation`), and
+`projects.service.ts:159`, `:240`, and `:243` (`initial_template`, including the
+`localStorage` key).
 
 `schema_descriptor` returns `ConfigManager.get_schema_descriptor(SchemaName)`. `config_save`
 writes through `save_network_map`, `save_settings`, `save_project_mappings`, or
@@ -255,25 +263,31 @@ an unsaved project keeps short durations on disk and that the engine plays from 
 
 `pyproject.toml` declares `cuemsutils>=0.1.0rc16,<0.1.1`. `debian/` comes from
 `origin/debian/bookworm` at `72f952a`, with `Depends: python3-cuemsutils (>= 0.1.0rc16),
-python3-cuemsutils (<< 0.1.1~)`. `debian/bookworm` is not deleted. Every `debian/` change is
+python3-cuemsutils (<< 0.1.1~)`. The package is built inside an unprivileged bookworm
+chroot (`mmdebstrap --mode=unshare`), not with `debuild` on the Debian 13 development
+host. `debian/bookworm` is not deleted. Every `debian/` change is
 listed in `debian-consolidation.md` for the maintainer to apply there. The tag message names
 `feat/nodelist-adoption-api` @ `886f649`, `cuems-engine`'s `feat/nodelist-modify-dispatch`, and
 `cuems-nodeconf`'s `feat/nodelist-modify-hardening`. This feature does not create the tag.
 
-## Phasing (input to `/speckit-tasks`)
+## Phasing
 
-Order is load-bearing. Census zero is the end of phase 7, not phase 8.
+Phase numbers match `tasks.md`. Census zero is phase 9. It follows the pin (phase 8) and is not part of the coordinated wire (phases 10 and 11).
 
 | Phase | Content | Milestone |
 |---|---|---|
-| 1 — evidence | import-failure record; capture `project`, `initial_mappings`, `initial_template` before any source change after the import line; reconstruct `create_script()` from the last release that shipped it | 1 |
-| 2 — task zero | FR-001 only; smoke test shown failing first; suite baseline whose colour means something | 1 |
-| 3 — template stand-in | `generate_example(SchemaName.SCRIPT)`; enumerated deltas; listening-state check | 1 |
-| 4 — script I/O | five parser sites; `load_with_report` / `save` / one `to_wire()`; object duration fix; delete dangling walks; retire `test_dangling_targets.py`; two-delta test against the editor capture. Schema is the XSD; `tests/golden/xml` is not a checksum target | 1 |
-| 5 — repair tool | retire pass B; structured-duration test failing first; `CLAUDE.md` note | 1 |
-| 6 — nodes | `node_role`; local partition; `to_wire()` merge; collision message; executor assignment moved to the loop; the one `test_nodelist_actions.py` edit in the same commit as the `NetworkMap` removal | 1 |
-| 7 — pin | `pyproject.toml`; import `debian/`; consolidation record; tag message drafted, not ready; announce census zero to the `cuems-utils` flow | 1 |
-| 8 — coordinated wire | ack gate and trash copy; report and failure messages; payload version first; untangle `node_list`; descriptor and `config_save`; retire `initial_template`; frontend hand-over by file and line. Tag message marked ready only when `cuems-frontend` 05 consumes this phase | 2 |
+| 1 — Setup | import-failure record; capture the `project` frame, `initial_mappings`, and `initial_template` before any source change after the import line; reconstruct `create_script()` from the last release that shipped it | 1 |
+| 2 — Foundational | evidence README: captures are immutable, `doc_version` is not a wire key | 1 |
+| 3 — User Story 1 | FR-001 only; smoke test shown failing first; suite baseline whose colour means something. Listening is still blocked | 1 |
+| 4 — User Story 2 | `initial_template` test failing first; `generate_example(SchemaName.SCRIPT)`; enumerated deltas, including the frontend file and line; listening-state check | 1 |
+| 5 — User Story 3 | four `CuemsParser` sites plus load and save; `load_with_report` / `save` / one `to_wire()`; object duration fix; delete dangling walks; retire `test_dangling_targets.py`; two-delta test against the editor capture; golden-versus-XSD contradictions recorded, not asserted | 1 |
+| 6 — User Story 5 | retire pass B; structured-duration test failing first; `CLAUDE.md` note; save one listed project and confirm the tool drops it | 1 |
+| 7 — User Story 6 | `node_role`; `partition_by_adoption` from `cuemsutils.tools.NodeList` after the 013 commit is pinned; two tuples of bare nodes; `to_wire()` merge; collision test failing first, then the handler; executor assignment moved to the loop; the one `test_nodelist_actions.py` edit in the same commit as the `NetworkMap` removal | 1 |
+| 8 — User Story 7 | `pyproject.toml`; import `debian/`; bookworm chroot build; consolidation record; tag message drafted, not ready, and the five adoption commits named for the PR | 1 |
+| 9 — Milestone 1 exit | census zero announced to the `cuems-utils` flow. Not a controller deploy | 1 |
+| 10 — User Story 4 | ack gate and trash copy on the executor; report and failure messages | 2 |
+| 11 — User Story 8 | payload version first; untangle `node_list`; descriptor and `config_save`; retire `initial_template`; frontend hand-over by file and line | 2 |
+| 12 — Polish | quickstart exit list, including *not performed* rows; carried constitution violations left untouched | 1 and 2 |
 
 ## Complexity Tracking
 
@@ -281,7 +295,8 @@ Order is load-bearing. Census zero is the end of phase 7, not phase 8.
 |---|---|---|
 | Principle III: `CuemsDBProject.delete_from_trash` calls `shutil.rmtree` inside a DB transaction. A rollback restores the row and not the directory | Pre-existing. This feature does not call that function. Successor is a later feature, named here so the ratification list is not dropped | Fixing it inside this migration mixes an unrelated data-loss bug into the census |
 | Principle V: `cli.py:29` imports `ProjectMappings` from `cuemsutils.tools.ConfigManager`'s module namespace. The class is defined under `cuemsutils.xml` and is not in `tools.__all__`. Its only use is `get_mappings()` reading `default_mappings.xml` (F7) | The read is the one `cuems-utils` 014 moves. Migrating it now means migrating it again. It is outside the T049 grep, so it does not block milestone 1 | A local replacement reader would be a second consumer of a file 014 deletes |
-| Principle V: `_partition_by_adoption` reads `adopted` locally | `partition_by_adoption` has no public path (R5). The method's docstring names the upstream report, which cites the engine's UR-1. It ports no node model | Importing `cuemsutils.xml.settings.NetworkMap` (Q14). Blocking the editor until the library ships a partition (spec Q1 rejected option A alone) |
+| Principle V: adoption split | On `0.1.0rc16` the function is only `NetworkMap.partition_by_adoption` inside `cuemsutils.xml`. Feature 013 publishes `from cuemsutils.tools.NodeList import partition_by_adoption` without a version bump. T036 waits for that commit SHA in `evidence/cuems-utils-013-pin.txt` and calls it. Both results are tuples of bare nodes. No local helper is added | Importing `cuemsutils.xml.settings.NetworkMap` (Q14). Defining `_select_adopted` after the public import exists |
+| Principle I: `cuems-utils` `tests/golden/xml` is not an editor pass condition | The corpus may hold a superseded state. Schema truth is the XSD under `cuems-utils/src/cuemsutils/xml/schemas/`. Principle I still requires the corpus to be compared: contradictions are recorded for regeneration in `cuems-utils`. This repository does not edit the golden and does not assert `MANIFEST.sha256` | Treating a superseded golden checksum as a gate (a claim that cannot be true). Skipping the comparison entirely |
 | `script_file_name` (`cli.py` `'script.xml'`) vs `CuemsProjectManager`'s docstring example `'cue_script.xml'`, and vs the engine's hardcoded `"script.xml"` | Recorded only. A library walker that hardcodes the name is `cuems-utils` 012's trap, not this feature's | "Fixing" the name here would desynchronise the editor from libraries it already opens |
 
 ## Complexity Tracking — resolved, so they are not carried

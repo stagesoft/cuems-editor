@@ -35,8 +35,24 @@ python3-cuemsutils (>= 0.1.0rc16), python3-cuemsutils (<< 0.1.1~)
 ```
 
 That is the `cuems-nodeconf` `debian/control` pair. `debian/changelog` gains an entry for this
-migration. `CLAUDE.md`'s `debuild -b -uc -us -nc` instruction is run from the working branch
-once `debian/` is there.
+migration. `CLAUDE.md`'s `debuild -b -uc -us -nc` line is the instruction for a bookworm
+host. It is not the command for this development machine.
+
+Measured 2026-10-01 on the machine this feature is written on: Debian 13 (trixie),
+`/usr/bin/python3` → 3.13.5, `python3` on `PATH` → pyenv 3.11.9
+(`~/.pyenv/shims/python3`), `debuild` not installed, `dpkg-buildpackage` installed,
+`mmdebstrap` not installed but apt candidate `1.5.7-1+deb13u1` is in the trixie archive,
+`kernel.unprivileged_userns_clone = 1`, and this user has subuid/subgid ranges. Docker is
+usable and is not the build. A host `debuild` would target trixie, and cuems-utils
+`debian/README.source` records that a `PATH` interpreter is baked into `pyvenv.cfg`.
+
+The decoupled build is the one `cuems-nodeconf/tests/packaging/release-gate-demo.sh` already
+runs: `mmdebstrap --mode=unshare --variant=apt` a bookworm chroot, then
+`dpkg-buildpackage -b -us -uc -rfakeroot` inside it, with `dh-virtualenv` and Python installed
+in the chroot rather than on the host. The built package's `pyvenv.cfg` must say
+`home = /usr/bin`, and the chroot's `python3` must be bookworm's 3.11. The capability check
+says that chroot can be created here. Installing `mmdebstrap` from the archive is part of
+doing it.
 
 Every `debian/` change made on `feat/xml-refactor` is listed in
 `specs/001-cuems-utils-migration/debian-consolidation.md` by commit and file, plus anything on

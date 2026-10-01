@@ -42,14 +42,17 @@ committed before any source change other than the import line. The `project` cap
 
 ```bash
 hatch test
-# expect: all six test files collect
+# expect: the six pre-feature test files collect
+# (test_media, test_nodelist_actions, test_probe_duration, test_dangling_targets,
+#  test_repair_durations, test_validate_fade_durations)
+# plus tests/test_import_smoke.py, which this phase adds and which is not part of that six
 # the seven TestNetworkMapWatcher / TestNodeconfAvailableFlag failures caused by the import
 # pass, with no edit to tests/test_nodelist_actions.py yet
 ```
 
 `hatch run python -c "import cuemseditor.CuemsWsServer"` succeeds. The process still does not
-listen until `create_script()` is replaced (phase 3). Record that distinction: import is not
-the listening-state check (FR-003).
+listen until `create_script()` is replaced (tasks phase 4, User Story 2). Record that
+distinction: import is not the listening-state check (FR-003).
 
 ## 3. Census and public surface (milestone 1 exit)
 
@@ -57,8 +60,12 @@ the listening-state check (FR-003).
 grep -rnE 'cuemsutils\.(xml|timeoutloop|create_script)' src
 # expect: no output. Down from 6 hits.
 
-grep -rnE 'CuemsParser|XmlReaderWriter|create_script|get_nodes_by_adoption|partition_by_adoption' src
+grep -rnE 'CuemsParser|XmlReaderWriter|create_script|get_nodes_by_adoption|_select_adopted' src
 # expect: no output
+
+grep -n 'partition_by_adoption' src/cuemseditor/CuemsWsServer.py
+# expect: the import `from cuemsutils.tools.NodeList import partition_by_adoption`
+# and the call. No definition. No cuemsutils.xml.
 
 grep -rnE 'node_type|NodeType\.' src
 # expect: no output
@@ -113,7 +120,8 @@ hatch test tests/test_repair_durations.py
 ```
 
 Then save one listed project through the editor's save path, re-run the tool, and confirm that
-project has left the list and that its script checksum changed only on that save.
+project has left the list and that its script checksum changed only on that save. That
+round-trip is a test in `tests/test_repair_durations.py`, not only this checklist.
 
 ```bash
 # the ecosystem's other rewriter is the library's; this repository has none
@@ -149,6 +157,12 @@ grep cuemsutils pyproject.toml
 grep cuemsutils debian/control
 # expect: python3-cuemsutils (>= 0.1.0rc16) and python3-cuemsutils (<< 0.1.1~)
 ```
+
+Do not run `debuild` on a Debian 13 host. `/usr/bin/python3` there is 3.13, and `python3` on
+`PATH` may be a pyenv shim. Build inside an unprivileged bookworm chroot
+(`mmdebstrap --mode=unshare`, then `dpkg-buildpackage -b -us -uc` inside it), as
+`cuems-nodeconf/tests/packaging/release-gate-demo.sh` does. The package's `pyvenv.cfg` must
+say `home = /usr/bin`. See `contracts/package-relations.md`.
 
 `debian/bookworm` still exists on the remote. `debian-consolidation.md` lists the commits to
 apply there. The tag file under `../.xml-refactor-tag-messages/` exists and, until
