@@ -45,3 +45,12 @@ aborting the run.
 fixture's two media; dry-run lists the same; a pre-013 script is `SKIPPED_INVALID` naming
 `cuems-reshape-devices`; saving a listed project through `CuemsDBProject.update` takes it off the
 list and is the only write to its file.
+
+## `tests/test_initial_template.py` (T060)
+
+**Retired, skipped module.** It compared `initial_template` (the library's generated example,
+milestone 1) with the `v0.1.0rc14` `create_script()` baseline, delta by delta, and its red run is
+`initial-template-failing-first.txt`. At payload version 1 the message is not sent; a new script is
+built from `schema_descriptor("script")`'s `instance`, pinned by `tests/test_schema_descriptor.py`.
+The delta list stays in `tests/ws-command-responses.txt` because a pre-05 UI may still hold the
+milestone-1 template in `localStorage`.

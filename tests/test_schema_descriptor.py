@@ -68,7 +68,7 @@ def test_schema_descriptor_carries_the_library_descriptor(user, schema):
     value = frames[0]['value']
     assert value['schema'] == schema
     library = ConfigManager(load_all=False).get_schema_descriptor(SchemaName(schema))
-    assert [t['key'] for t in value['types']] == [t.key for t in library]
+    assert [t['key'] for t in value['types']] == [str(t.key) for t in library]
     for served, own in zip(value['types'], library):
         assert set(served) == {'key', 'fields', 'instance'}
         assert [f['name'] for f in served['fields']] == [f.name for f in own.fields]

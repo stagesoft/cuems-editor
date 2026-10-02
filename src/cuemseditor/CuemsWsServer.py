@@ -24,7 +24,7 @@ from cuemseditor.CuemsErrors import *
 from cuemseditor.node_reads import IdentityCollision, NodeLists, collided_identity
 
 from cuemsutils.tools.CommunicatorServices import Communicator
-from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
+from cuemsutils.tools.ConfigManager import ConfigManager
 from cuemsutils.tools.NodeList import partition_by_adoption
 from cuemsutils.tools import coerce_identity
 from cuemsutils.errors import node_identity_collision_message
@@ -92,9 +92,6 @@ class CuemsWsServer():
         # every key that schema does not declare: nodeconf_available, and the
         # network-map fields merged into each node (node_role).
         self.mappings_dict = mappings_dict.to_wire() if hasattr(mappings_dict, 'to_wire') else mappings_dict
-        # The library's generated example stands in for the retired template
-        # until the UI builds from the schema descriptor (FR-008).
-        self.initital_template = ConfigManager(load_all=False).generate_example(SchemaName.SCRIPT)
         try:
             self.tmp_path = self.settings_dict['tmp_path']
             self.session_uuid = self.settings_dict['session_uuid']
@@ -198,15 +195,18 @@ class CuemsWsServer():
     async def project_manager_session(self, websocket, path):
         """Manage the full lifecycle of a project-manager WebSocket session.
 
-        Creates a :class:`CuemsWsUser`, registers it, sends the initial
-        template and mappings messages, then runs the consumer/producer/
-        processor task set.  Cleans up via :meth:`unregister` on exit.
+        Creates a :class:`CuemsWsUser`, sends ``payload_version``, registers
+        it, sends the initial mappings (and a standing map error), then runs
+        the consumer/producer/processor task set.  Cleans up via
+        :meth:`unregister` on exit.
 
         Args:
             websocket: The accepted WebSocket connection.
             path: The request path (used to extract an optional session UUID).
         """
         user_session = CuemsWsUser(self, websocket)
+        # Before register(): that already queues users and session_id.
+        await user_session.outgoing.put(self.payload_version_message())
         await self.register(user_session, path)
         await self.send_initial_frames(user_session)
         try:
@@ -225,13 +225,22 @@ class CuemsWsServer():
         finally:
             await self.unregister(user_session)
 
-    async def send_initial_frames(self, user_session):
-        """Queue the frames a project-manager session gets on connect, in order.
+    #: The editor <-> UI wire version (not doc_version). +1 only, and only with
+    #: a bump row in tests/ws-command-responses.txt (test_payload_version).
+    PAYLOAD_VERSION = 1
 
-        ``initial_template``, ``initial_mappings``, then ``network_map_error``
-        while a map error stands.
+    def payload_version_message(self):
+        """``{"type": "payload_version", "value": PAYLOAD_VERSION}``, the first frame on connect."""
+        return json.dumps({"type": "payload_version", "value": self.PAYLOAD_VERSION})
+
+    async def send_initial_frames(self, user_session):
+        """Queue the frames a project-manager session gets after registering, in order.
+
+        ``initial_mappings``, then ``network_map_error`` while a map error
+        stands. ``payload_version`` precedes them (see
+        :meth:`project_manager_session`). ``initial_template`` is retired at
+        payload version 1: clients build from ``schema_descriptor``.
         """
-        await user_session.outgoing.put(self.initial_json_template())
         await user_session.outgoing.put(self.initial_setting_message())
         if self.network_map_error is not None:
             await user_session.outgoing.put(self.network_map_error_message())
@@ -553,14 +562,6 @@ class CuemsWsServer():
     def network_map_error_message(self):
         """``{"type": "network_map_error", "value": <error or null>}``."""
         return json.dumps({"type": "network_map_error", "value": self.network_map_error})
-
-    def initial_json_template(self):
-        """Build the initial ``CuemsScript`` template message sent to new clients.
-
-        Returns:
-            JSON string ``{"type": "initial_template", "value": {"CuemsScript": ...}}``.
-        """
-        return json.dumps({"type": "initial_template", "value": {"CuemsScript": self.initital_template}})
 
     NODECONF_IPC = '/tmp/nodeconf.ipc'
 

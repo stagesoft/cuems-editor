@@ -5,7 +5,8 @@ import functools
 import json
 import asyncio
 from datetime import datetime, timedelta
-from cuemsutils.helpers import new_uuid, new_datetime
+from cuemsutils.helpers import new_uuid, new_datetime, Unset
+from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
 import websockets as ws
 import sys
 
@@ -61,6 +62,53 @@ def load_report_value(report_id, project_uuid, report):
             for repair in report.repairs
         ],
     }
+
+
+def _descriptor_default(default):
+    """A field default as JSON. No default (``Unset``), a default factory and a
+    type are all ``null``, as the descriptor's own ``instance`` renders them."""
+    if default is Unset or callable(default):
+        return None
+    return _json_safe(default)
+
+
+def schema_descriptor_value(schema, types):
+    """The ``value`` of ``schema_descriptor``: the library's descriptor, as JSON.
+
+    Field objects are rendered, not reshaped: the same keys, in the
+    library's order, with enums as their values.
+    """
+    return {
+        'schema': schema,
+        'types': [
+            {
+                'key': _json_safe(type_.key),
+                'fields': [
+                    {
+                        'name': field.name,
+                        'xsd_type': field.xsd_type,
+                        'required': field.required,
+                        'repeated': field.repeated,
+                        'order': field.order,
+                        'kind': _json_safe(field.kind),
+                        'enum_values': None if field.enum_values is None else list(field.enum_values),
+                        'default': _descriptor_default(field.default),
+                        'repairability': _json_safe(field.repairability),
+                    }
+                    for field in type_.fields
+                ],
+                'instance': json.loads(json.dumps(type_.instance, default=_json_safe)),
+            }
+            for type_ in types
+        ],
+    }
+
+
+# config_save targets that are refused, with the reason the client is told.
+CONFIG_SAVE_REFUSED = {
+    'script': 'a script is saved with project_save, not config_save',
+    'hardware_outputs': 'hardware_outputs is reserved and has no model bindings',
+}
 
 
 def load_failed_value(project_uuid, error):
@@ -208,6 +256,8 @@ class CuemsWsUser():
                     "project_status": lambda: self.project_status(action),
                     "project_unload": lambda: self.project_unload(action),
                     "repair_acknowledge": lambda: self.repair_acknowledge(value, action),
+                    "schema_descriptor": lambda: self.schema_descriptor(value, action),
+                    "config_save": lambda: self.config_save(value, action),
                 }
 
                 if action in action_map:
@@ -533,6 +583,65 @@ class CuemsWsUser():
         except Exception as e:
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), action=action)
+
+    async def schema_descriptor(self, schema, action):
+        """Send this client one schema's descriptor.
+
+        The source is ``ConfigManager.get_schema_descriptor(SchemaName(schema))``
+        only. Each type carries ``key``, ``fields`` and ``instance``, the
+        constructible empty instance a client builds a new document from.
+
+        Args:
+            schema: a ``SchemaName`` value (``script``, ``settings``,
+                ``network_map``, ``project_mappings``, ``project_settings``,
+                ``hardware_outputs``).
+            action: Action name from the WebSocket frame.
+        """
+        try:
+            name = SchemaName(schema)
+            types = await self.server.event_loop.run_in_executor(
+                self.server.executor,
+                lambda: ConfigManager(load_all=False).get_schema_descriptor(name))
+            await self.outgoing.put(json.dumps({
+                "type": "schema_descriptor",
+                "value": schema_descriptor_value(name.value, types),
+            }))
+        except Exception as e:
+            Logger.error(f"error: {type(e)} {e}")
+            await self.notify_error_to_user(str(e), action=action)
+
+    async def config_save(self, value, action):
+        """Persist a configuration document sent by the client.
+
+        Refuses ``script`` (that is ``project_save``), ``hardware_outputs`` (no
+        model bindings), and anything that is not a ``SchemaName`` —
+        ``default_mappings.xml`` included, which is not a target.
+
+        The four config domains would be written through
+        ``ConfigManager.save_settings`` / ``save_network_map`` /
+        ``save_project_mappings`` / ``save_project_settings``. Those save the
+        object a ``ConfigManager`` holds, and cuemsutils offers no public way to
+        build that object from a client's JSON document. The editor does not
+        hand-build one or write XML itself, so this answers with an error
+        naming that gap (upstream report UR-5) until the library has the call.
+
+        Args:
+            value: ``{"schema": <SchemaName value>, "document": {...}}``.
+            action: Action name from the WebSocket frame.
+        """
+        schema = value.get('schema') if isinstance(value, dict) else None
+        try:
+            name = SchemaName(schema)
+        except ValueError:
+            await self.notify_error_to_user(f"config_save: {schema!r} is not a schema", action=action)
+            return
+        if name.value in CONFIG_SAVE_REFUSED:
+            await self.notify_error_to_user(f"config_save: {CONFIG_SAVE_REFUSED[name.value]}", action=action)
+            return
+        await self.notify_error_to_user(
+            f"config_save of {name.value} is not available: cuemsutils has no public way to "
+            f"build a {name.value} document from JSON (cuems-editor 001 upstream report UR-5)",
+            action=action)
 
     async def node_status(self, action):
         """Ask the engine which nodes are answering right now.
