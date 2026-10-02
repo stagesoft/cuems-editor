@@ -1,0 +1,42 @@
+$ hatch test tests/test_project_payload.py   # before T019: CuemsDBProject still reads through XmlReaderWriter and saves through CuemsParser
+.FFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+E   xmlschema.validators.exceptions.XMLSchemaValidationError: failed validating <Element 'duration' at 0x7f086e495030> with Xsd11Group(model='choice', occurs=[0, 1]):
+    Reason: character data between child elements not allowed
+    Schema component:
+      <xs:complexType xmlns:xs="http://www.w3.org/2001/XMLSchema" name="CTimecodeType">
+        <xs:choice minOccurs="0">
+          <xs:element name="CTimecode" type="cms:TimecodeType" />
+        </xs:choice>
+      </xs:complexType>
+    Instance type: <class 'xml.etree.ElementTree.Element'>
+    Instance:
+      <duration>00:00:00.000</duration>
+    Path: /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[1]/Media/duration
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/xsdbase.py:250: xmlschema.validators.exceptions.XMLSchemaValidationError: failed validating <Element 'duration' at 0x7f086e495030> with Xsd11Group(model='choice', occurs=[0, 1]):
+E   xmlschema.validators.exceptions.XMLSchemaValidationError: failed validating <Element 'duration' at 0x7f086e4962f0> with Xsd11Group(model='choice', occurs=[0, 1]):
+    Reason: character data between child elements not allowed
+    Schema component:
+      <xs:complexType xmlns:xs="http://www.w3.org/2001/XMLSchema" name="CTimecodeType">
+        <xs:choice minOccurs="0">
+          <xs:element name="CTimecode" type="cms:TimecodeType" />
+        </xs:choice>
+      </xs:complexType>
+    Instance type: <class 'xml.etree.ElementTree.Element'>
+    Instance:
+      <duration>00:00:00.000</duration>
+    Path: /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[1]/Media/duration
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/xsdbase.py:250: xmlschema.validators.exceptions.XMLSchemaValidationError: failed validating <Element 'duration' at 0x7f086e4962f0> with Xsd11Group(model='choice', occurs=[0, 1]):
+E   cuemsutils.errors.ValidationError: [T2] action_target_required at 58763af8-462c-4831-bd08-d3e978dc4a0a/action_target: action_target is required
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/validators.py:511: cuemsutils.errors.ValidationError: [T2] action_target_required at 58763af8-462c-4831-bd08-d3e978dc4a0a/action_target: action_target is required
+E   cuemsutils.errors.ValidationError: [T2] action_target_required at 58763af8-462c-4831-bd08-d3e978dc4a0a/action_target: action_target is required
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/validators.py:511: cuemsutils.errors.ValidationError: [T2] action_target_required at 58763af8-462c-4831-bd08-d3e978dc4a0a/action_target: action_target is required
+E   cuemsutils.errors.ValidationError: [T2] action_target_required at 58763af8-462c-4831-bd08-d3e978dc4a0a/action_target: action_target is required
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/validators.py:511: cuemsutils.errors.ValidationError: [T2] action_target_required at 58763af8-462c-4831-bd08-d3e978dc4a0a/action_target: action_target is required
+=========================== short test summary info ============================
+FAILED tests/test_project_payload.py::test_open_frame_differs_from_the_capture_by_three_deltas_only
+FAILED tests/test_project_payload.py::test_open_writes_nothing_else - xmlsche...
+FAILED tests/test_project_payload.py::test_zero_duration_on_a_cue_keyed_cue_is_corrected_from_the_database[audio]
+FAILED tests/test_project_payload.py::test_zero_duration_on_a_cue_keyed_cue_is_corrected_from_the_database[video]
+FAILED tests/test_project_payload.py::test_zero_duration_on_a_cue_keyed_cue_is_corrected_from_the_database[lighting]
+5 failed, 1 passed in 1.11s
