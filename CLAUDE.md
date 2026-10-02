@@ -21,6 +21,8 @@ Main classes: `CuemsWsServer` (asyncio WS server / session multiplexer / command
 cd <this repo> && debuild -b -uc -us -nc
 ```
 
+That is the command on a **bookworm** host. On a Debian 13 (trixie) development machine do not run it: it would target trixie, and dh-virtualenv bakes the host `python3` into the venv. Build inside an unprivileged bookworm chroot instead: `tests/packaging/bookworm-build.sh` (mmdebstrap `--mode=unshare`; needs `mmdebstrap`, subuid/subgid ranges, network). It builds the `cuemsutils` wheel from `../cuems-utils` because PyPI stops at rc14, and checks that the venv's `pyvenv.cfg` says `home = /usr/bin` and the chroot `python3` is 3.11.
+
 ## Project store / library — `/opt/cuems_library/`
 
 The authoritative path is `settings.xml <library_path>` (read by the editor as `library_path`). **There is NO `/opt/cuems/` directory** — that was a long-standing doc error; everything project-related is under `/opt/cuems_library/`.
