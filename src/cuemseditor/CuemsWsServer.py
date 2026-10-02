@@ -23,7 +23,7 @@ from cuemseditor.CuemsErrors import *
 
 from cuemsutils.tools.CommunicatorServices import Communicator
 from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
-from cuemsutils.xml import NetworkMap
+from cuemsutils.tools.NodeList import partition_by_adoption
 from cuemsutils.helpers import new_uuid
 
 
@@ -477,7 +477,7 @@ class CuemsWsServer():
                 cf_manager.load_network_map()
                 # network_map is now a dict with 'node_list' key
                 network_map_dict = cf_manager.network_map
-                nodes, new_nodes = NetworkMap.get_nodes_by_adoption(network_map_dict)
+                nodes, new_nodes = partition_by_adoption(network_map_dict)
 
                 # Merge with existing data to preserve outputs configuration
                 # Combine both lists to handle nodes that change adoption status

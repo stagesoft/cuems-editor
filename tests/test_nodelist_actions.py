@@ -260,14 +260,16 @@ class TestNodeconfAvailableFlag:
 
         with (
             patch('cuemseditor.CuemsWsServer.ConfigManager') as MockCM,
-            patch('cuemseditor.CuemsWsServer.NetworkMap') as MockNM,
+            patch(
+                'cuemseditor.CuemsWsServer.partition_by_adoption',
+                return_value=((), ()),
+            ),
             patch.object(
                 CuemsWsServer, 'nodeconf_available', return_value=socket_exists
             ),
         ):
             MockCM.return_value.conf_path.return_value = str(map_file)
             MockCM.return_value.network_map = {'node_list': []}
-            MockNM.get_nodes_by_adoption.return_value = ([], [])
             ok = server.reload_network_map_nodes()
 
         return ok, server.mappings_dict
