@@ -56,7 +56,7 @@ Single package: `src/cuemseditor/`, `tests/` at the repository root. Feature doc
 
 ### Tests for User Story 1
 
-- [ ] T006 [US1] Add `tests/test_import_smoke.py` that imports every module under `cuemseditor`. Run it before T007 and save the failure in `specs/001-cuems-utils-migration/evidence/smoke-failing-first.txt` (FR-002, constitution IV.1)
+- [X] T006 [US1] Add `tests/test_import_smoke.py` that imports every module under `cuemseditor`. Run it before T007 and save the failure in `specs/001-cuems-utils-migration/evidence/smoke-failing-first.txt` (FR-002, constitution IV.1)
 
 ### Implementation for User Story 1
 

@@ -1,0 +1,25 @@
+$ hatch test tests/test_import_smoke.py   # before T007, src/ at e05f4e7; hatch-test env: cuemsutils 0.1.0rc16 from ../cuems-utils/src @ 6213b16
+..........F.FFFF                                                         [100%]
+=================================== FAILURES ===================================
+E   ModuleNotFoundError: No module named 'cuemsutils.create_script'
+/disk/Projects/StageLab/cuems-editor/src/cuemseditor/CuemsWsServer.py:27: ModuleNotFoundError: No module named 'cuemsutils.create_script'
+E   ModuleNotFoundError: No module named 'cuemsutils.create_script'
+/disk/Projects/StageLab/cuems-editor/src/cuemseditor/CuemsWsServer.py:27: ModuleNotFoundError: No module named 'cuemsutils.create_script'
+E   ModuleNotFoundError: No module named 'cuemsutils.create_script'
+/disk/Projects/StageLab/cuems-editor/src/cuemseditor/CuemsWsServer.py:27: ModuleNotFoundError: No module named 'cuemsutils.create_script'
+E   ModuleNotFoundError: No module named 'cuemsutils.create_script'
+/disk/Projects/StageLab/cuems-editor/src/cuemseditor/CuemsWsServer.py:27: ModuleNotFoundError: No module named 'cuemsutils.create_script'
+E   ModuleNotFoundError: No module named 'cuemsutils.create_script'
+/disk/Projects/StageLab/cuems-editor/src/cuemseditor/CuemsWsServer.py:27: ModuleNotFoundError: No module named 'cuemsutils.create_script'
+=============================== warnings summary ===============================
+tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsDBMedia]
+  /home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/peewee.py:281: DeprecationWarning: "PrimaryKeyField" has been renamed to "AutoField". Please update your code accordingly as this will be completely removed in a subsequent release.
+    warnings.warn(s, DeprecationWarning)
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsWsServer]
+FAILED tests/test_import_smoke.py::test_module_imports[cuemseditor.__main__]
+FAILED tests/test_import_smoke.py::test_module_imports[cuemseditor.cli] - Mod...
+FAILED tests/test_import_smoke.py::test_module_imports[cuemseditor.repair_durations]
+FAILED tests/test_import_smoke.py::test_module_imports[cuemseditor.run_manual]
+5 failed, 11 passed, 1 warning in 0.21s
