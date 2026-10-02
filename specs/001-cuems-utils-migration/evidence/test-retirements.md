@@ -30,6 +30,18 @@ Measured consequence of the old walk on a 013 document: it did not know the `Cue
 every hardware cue id as absent and nulled the fixture's valid `action_target`, and the library then
 refused the save (`project-payload-failing-first.txt`, the three save-path cases).
 
-## `tests/test_repair_durations.py` pass B assertions
+## `tests/test_repair_durations.py` pass B assertions (T030)
 
-Recorded with US5 (T030).
+**Retired, recorded in the module header** with `contracts/repair-tool.md` as the reason: the
+tool writes no script under any flag. Removed: the assertion that `--apply` rewrote `<duration>`
+inside `script.xml` (`'00:00:00.000' not in xml_durs`), the `_xml_durations` helper and its
+`XmlReaderWriter` import, and `--db-only` / `--xml-only` (the options are gone, so
+`test_skip_trash` and `test_trash_media_fixed_without_skip` run the whole tool).
+
+**Kept:** dry-run, `--apply` plus the DB backup, idempotence, trash, missing DB, invalid XML not
+aborting the run.
+
+**Added:** every `script.xml` checksum unchanged after `--apply`; the `NEEDS_SAVE` list equals the
+fixture's two media; dry-run lists the same; a pre-013 script is `SKIPPED_INVALID` naming
+`cuems-reshape-devices`; saving a listed project through `CuemsDBProject.update` takes it off the
+list and is the only write to its file.

@@ -5,24 +5,34 @@ with a string-slicing hack that dropped zero-padding, so any duration whose
 millisecond fraction ended in a zero was stored short (by up to ~0.9 s) and the
 whole-second carry case overshot by minutes. Those corrupted values live in the
 ``media.duration`` column of ``project-manager.db`` and, because the editor
-copies the DB value into every saved ``script.xml`` on save, in the project XML
-files too.
+copies the DB value into every saved ``script.xml`` on save, in the project
+scripts too.
 
 This tool re-probes every media file with the fixed :func:`probe_duration` and:
 
 - **Pass A** rewrites ``media.duration`` in the DB (the source of truth).
-- **Pass B** rewrites ``<duration>`` in each project ``script.xml`` from the
-  (now-corrected) DB, reusing the exact walk the editor's save path uses.
+- It then opens every project script with the library's public load and lists
+  each project whose media durations differ from the corrected DB values as
+  **needs a save**, naming the project, the media, the script value and the
+  database value. It compares with ``CTimecode`` through the same walk the
+  editor's save path uses.
 
-Dry-run is the default; ``--apply`` performs writes after backing up the DB and
-every modified XML file. Run with the editor STOPPED (single-writer SQLite).
+**This tool never writes a script file.** Script files change only when an
+operator opens the project in the editor and saves it; until that save, the
+engine plays the file on disk, short durations included. A script the library
+cannot open is ``SKIPPED_INVALID`` with the library's reason. A document still
+in the pre-013 device shape (``<AudioCue>`` with no ``class``) is corrected by
+running ``cuems-reshape-devices`` over the whole library and then saving in
+the editor, not by this tool.
+
+Dry-run is the default; ``--apply`` writes the DB after backing it up. Run
+with the editor STOPPED (single-writer SQLite).
 
 Invoke as a console script (``cuems-editor-repair-durations``) or module
 (``python -m cuemseditor.repair_durations``).
 """
 import argparse
 import os
-import re
 import shutil
 import sys
 from datetime import datetime
@@ -35,12 +45,17 @@ from cuemseditor.CuemsDBProject import (
     db_duration_resolver,
 )
 from cuemseditor.CuemsErrors import NotTimeCodeError
+from cuemsutils.cues import CuemsScript
 from cuemsutils.tools.CTimecode import CTimecode
-from cuemsutils.xml.Parsers import CuemsParser
-from cuemsutils.xml.XmlReaderWriter import XmlReaderWriter
 
-# Canonical ms-framerate timecode shape (what str(CTimecode) always produces).
-TIMECODE_SHAPE = re.compile(r'^\d\d:\d\d:\d\d\.\d\d\d$')
+HELP_EPILOG = (
+    'Script files are never written by this tool. They change only when an '
+    'operator opens the project in the editor and saves it; until then the '
+    'engine plays the file on disk. Projects listed as NEEDS_SAVE are the ones '
+    'to open and save. A script in the old device shape (<AudioCue> with no '
+    'class) is corrected by running cuems-reshape-devices over the whole '
+    'library, then saving in the editor, not by this tool.'
+)
 
 
 def build_settings(args):
@@ -80,21 +95,6 @@ def _delta_ms(old_str, new_tc):
     return new_tc.milliseconds_exact - old_ms
 
 
-def _scan_odd_timecodes(node, found):
-    """Collect timecode-ish strings that don't match the canonical shape."""
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if key in ('duration', 'in_time', 'out_time', 'offset',
-                       'prewait', 'postwait') and isinstance(value, str):
-                if value and not TIMECODE_SHAPE.match(value):
-                    found.append(f'{key}={value!r}')
-            else:
-                _scan_odd_timecodes(value, found)
-    elif isinstance(node, list):
-        for item in node:
-            _scan_odd_timecodes(item, found)
-
-
 class Report:
     """Accumulates per-item statuses and drives the exit code."""
 
@@ -127,18 +127,17 @@ def backup_database(settings, backup_dir):
     print(f'  DB backed up to {backup_dir}')
 
 
-def backup_file(settings, path, backup_dir):
-    """Mirror a file under backup_dir preserving its library-relative path."""
-    rel = os.path.relpath(path, settings['library_path'])
-    dest = os.path.join(backup_dir, rel)
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    shutil.copy2(path, dest)
-
-
 def pass_a_db(settings, args, report):
-    """Re-probe every media file, report/apply corrected durations."""
+    """Re-probe every media file, report/apply corrected durations.
+
+    Returns:
+        ``{unix_name: corrected_duration_str}`` for every row it would change,
+        applied or not, so the script comparison can use the corrected values
+        in a dry run too.
+    """
     print('\n== Pass A: database media.duration ==')
     updates = []  # (uuid, new_str)
+    corrected = {}
     for media in Media.select():
         label = f'{media.unix_name} ({media.media_type})'
         if media.media_type == 'IMAGE':
@@ -165,6 +164,7 @@ def pass_a_db(settings, args, report):
         if old is None:
             report.add('NULL_FILLED', f'{label}: -> {new_str}')
             updates.append((media.uuid, new_str))
+            corrected[media.unix_name] = new_str
         elif old == new_str:
             report.add('OK', label)
         else:
@@ -173,6 +173,7 @@ def pass_a_db(settings, args, report):
             flag = ' <<<>1s' if (delta is not None and abs(delta) > 1000) else ''
             report.add('CHANGED', f'{label}: {old} -> {new_str} ({delta_txt}){flag}')
             updates.append((media.uuid, new_str))
+            corrected[media.unix_name] = new_str
 
     if args.apply and updates:
         with database.atomic():
@@ -181,19 +182,34 @@ def pass_a_db(settings, args, report):
         print(f'  applied {len(updates)} DB duration update(s)')
     elif updates:
         print(f'  {len(updates)} DB duration update(s) pending (dry-run)')
-    return updates
+    return corrected
 
 
-def pass_b_xml(settings, args, report, backup_dir):
-    """Rewrite <duration> in each project script.xml from the corrected DB."""
-    print('\n== Pass B: project script.xml <duration> ==')
-    if args.xml_only:
-        print('  WARNING: --xml-only trusts the CURRENT DB values; run Pass A '
-              'first or corruption will be propagated verbatim.')
-    schema = settings['script_schema_name']
+def corrected_resolver(corrected):
+    """``db_duration_resolver`` with pass A's corrections laid over it.
+
+    After ``--apply`` the overlay equals the DB; in a dry run it is what the DB
+    would hold, so the script comparison reports the same list either way.
+    """
+    def resolve(file_name):
+        if file_name in corrected:
+            return corrected[file_name]
+        return db_duration_resolver(file_name)
+    return resolve
+
+
+def scan_scripts(settings, args, report, corrected):
+    """List projects whose script durations differ from the corrected DB.
+
+    Opens each script with ``CuemsScript.load_with_report`` (in memory; a
+    version conversion is not written either), runs the editor's own duration
+    walk on the object, and reports what it would change. Writes nothing.
+    """
+    print('\n== Project scripts: media durations against the database ==')
+    resolver = corrected_resolver(corrected)
     for project in Project.select():
         if args.skip_trash and project.in_trash:
-            report.add('SKIP_TRASH_XML', project.unix_name)
+            report.add('SKIP_TRASH_SCRIPT', project.unix_name)
             continue
         path = _project_xml_path(settings, project)
         label = f'{project.unix_name}'
@@ -201,50 +217,34 @@ def pass_b_xml(settings, args, report, backup_dir):
             report.add('MISSING_XML', f'{label} -> {path}', dirty=True)
             continue
         try:
-            data = XmlReaderWriter(schema_name=schema, xmlfile=path).read()
+            script, _load_report = CuemsScript.load_with_report(path)
         except Exception as e:
-            report.add('SKIPPED_INVALID', f'{label}: {type(e).__name__}: {e}',
-                       dirty=True)
+            report.add('SKIPPED_INVALID', f'{label}: {type(e).__name__}: {e}', dirty=True)
             continue
 
-        odd = []
-        _scan_odd_timecodes(data, odd)
-        if odd:
-            report.add('ODD_TIMECODE', f'{label}: {odd}', dirty=True)
-
-        contents = data.get('CuemsScript', {}).get('CueList', {}).get('contents', [])
-        stats = fix_media_durations_in_contents(contents, db_duration_resolver)
+        stats = fix_media_durations_in_contents(script.cuelist.contents, resolver)
         if stats.orphans:
             report.add('ORPHAN_MEDIA_REF',
                        f'{label}: {len(stats.orphans)} ref(s) not in DB: {stats.orphans}',
                        dirty=True)
-
-        if stats.replacements == 0:
-            report.add('XML_OK', label)
+        if not stats.changes:
+            report.add('SCRIPT_OK', label)
             continue
-
-        report.add('XML_CHANGED', f'{label}: {stats.replacements} duration(s)')
-        if args.apply:
-            try:
-                backup_file(settings, path, backup_dir)
-                obj = CuemsParser(data).parse()
-                XmlReaderWriter(schema_name=schema, xmlfile=path).write_from_object(obj)
-            except Exception as e:
-                report.add('WRITE_FAILED', f'{label}: {type(e).__name__}: {e}',
-                           dirty=True)
+        for file_name, previous, replacement in stats.changes:
+            report.add('NEEDS_SAVE',
+                       f'{label}: {file_name}: script {previous} != database {replacement}')
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='cuems-editor-repair-durations',
-        description='Re-probe and repair corrupted media durations in the DB '
-                    'and project XMLs. Dry-run by default; use --apply to write.')
+        description='Re-probe and repair corrupted media durations in the DB, '
+                    'and list the projects whose scripts need a save in the '
+                    'editor. Dry-run by default; use --apply to write the DB.',
+        epilog=HELP_EPILOG)
     parser.add_argument('--library-path', help='override library_path (default /opt/cuems_library)')
     parser.add_argument('--database-name', help='override database file name')
-    parser.add_argument('--apply', action='store_true', help='perform writes (default: dry-run)')
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument('--db-only', action='store_true', help='run Pass A only')
-    group.add_argument('--xml-only', action='store_true', help='run Pass B only')
+    parser.add_argument('--apply', action='store_true', help='write the DB (default: dry-run); never writes scripts')
     parser.add_argument('--skip-trash', action='store_true', help='skip trashed media and projects')
     parser.add_argument('--backup-dir', help='backup directory (default <library>/duration_repair_backup_<ts>)')
     args = parser.parse_args(argv)
@@ -273,10 +273,8 @@ def main(argv=None):
 
     report = Report()
     try:
-        if not args.xml_only:
-            pass_a_db(settings, args, report)
-        if not args.db_only:
-            pass_b_xml(settings, args, report, backup_dir)
+        corrected = pass_a_db(settings, args, report)
+        scan_scripts(settings, args, report, corrected)
     finally:
         database.close()
 

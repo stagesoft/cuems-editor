@@ -1,27 +1,18 @@
-"""Tests for the repair_durations script (Pass A DB + Pass B XML)."""
+"""Tests for the repair_durations tool: pass A (DB) and the needs-a-save list.
+
+Retired by 001-cuems-utils-migration (FR-007, FR-026,
+specs/001-cuems-utils-migration/contracts/repair-tool.md): every pass B
+assertion — that ``--apply`` rewrote ``<duration>`` inside ``script.xml`` so
+the XML no longer held ``00:00:00.000`` — and ``--xml-only`` / ``--db-only``.
+The tool writes no script under any flag now. What replaces those assertions:
+after ``--apply`` every ``script.xml`` checksum is unchanged, and the projects
+whose durations differ from the corrected DB are listed as ``NEEDS_SAVE``.
+Saving one of them through the editor's save path takes it off the list.
+"""
 import hashlib
 import os
 
 import cuemseditor.repair_durations as rd
-from cuemsutils.xml.XmlReaderWriter import XmlReaderWriter
-
-
-def _xml_durations(path):
-    d = XmlReaderWriter(schema_name='script', xmlfile=path).read()
-    out = []
-
-    def walk(n):
-        if isinstance(n, dict):
-            if n.get('file_name'):
-                out.append(n.get('duration'))
-            for v in n.values():
-                walk(v)
-        elif isinstance(n, list):
-            for i in n:
-                walk(i)
-
-    walk(d)
-    return out
 
 
 def _file_hash(path):
@@ -31,6 +22,16 @@ def _file_hash(path):
 
 def _script_path(library):
     return os.path.join(library.projects_dir, 'proj1', 'script.xml')
+
+
+def _all_script_hashes(library):
+    out = {}
+    for base, _dirs, files in os.walk(library.root):
+        for name in files:
+            if name == 'script.xml':
+                path = os.path.join(base, name)
+                out[path] = _file_hash(path)
+    return out
 
 
 def test_dry_run_changes_nothing(library, canned_probe):
@@ -44,7 +45,10 @@ def test_dry_run_changes_nothing(library, canned_probe):
     assert rc == 1                                  # gone.wav MISSING -> exit 1
 
 
-def test_apply_fixes_db_and_xml(library, canned_probe):
+def test_apply_fixes_the_db_and_writes_no_script(library, canned_probe, capsys):
+    _write_v2_script(library)
+    scripts_before = _all_script_hashes(library)
+
     rc = rd.main(['--library-path', library.root, '--apply'])
 
     durations = library.durations()
@@ -53,15 +57,27 @@ def test_apply_fixes_db_and_xml(library, canned_probe):
     assert durations['gone.wav'] == '00:00:01.000'       # MISSING -> untouched
     assert durations['pic.png'] is None                  # IMAGE skipped
 
-    xml_durs = _xml_durations(_script_path(library))
-    assert '00:00:00.000' not in xml_durs               # all rewritten
-    assert set(xml_durs) == {'00:01:23.456', '00:01:30.000'}
+    assert _all_script_hashes(library) == scripts_before   # no script written
+    assert _needs_save(capsys.readouterr().out) == {
+        ('proj1', 'file.ext', '00:01:23.456'),
+        ('proj1', 'file_video.ext', '00:01:30.000'),
+    }
 
     backups = [d for d in os.listdir(library.root)
                if d.startswith('duration_repair_backup_')]
     assert backups, 'a backup directory should have been created'
     assert os.path.exists(os.path.join(library.root, backups[0], 'project-manager.db'))
+    assert sorted(os.listdir(os.path.join(library.root, backups[0]))) == ['project-manager.db']
     assert rc == 1  # still 1 because of the MISSING file
+
+
+def test_dry_run_lists_the_same_projects_as_apply(library, canned_probe, capsys):
+    _write_v2_script(library)
+    rd.main(['--library-path', library.root])
+    assert _needs_save(capsys.readouterr().out) == {
+        ('proj1', 'file.ext', '00:01:23.456'),
+        ('proj1', 'file_video.ext', '00:01:30.000'),
+    }
 
 
 def test_apply_is_idempotent(library, canned_probe):
@@ -73,20 +89,21 @@ def test_apply_is_idempotent(library, canned_probe):
 
 
 def test_skip_trash(library, canned_probe):
-    rd.main(['--library-path', library.root, '--apply', '--skip-trash', '--db-only'])
+    rd.main(['--library-path', library.root, '--apply', '--skip-trash'])
     # trashed tone_c.wav should be untouched by --skip-trash
     assert library.durations()['tone_c.wav'] == '00:00:03.9'
 
 
 def test_trash_media_fixed_without_skip(library, canned_probe):
-    rd.main(['--library-path', library.root, '--apply', '--db-only'])
+    rd.main(['--library-path', library.root, '--apply'])
     assert library.durations()['tone_c.wav'] == '00:00:03.000'
 
 
-def test_skipped_invalid_xml_does_not_abort(library, canned_probe):
+def test_skipped_invalid_xml_does_not_abort(library, canned_probe, capsys):
     # add a second project whose script.xml is malformed
     from cuemseditor.CuemsDBModel import Project, database
     from cuemsutils.helpers import new_uuid, new_datetime
+    _write_v2_script(library)
     bad_dir = os.path.join(library.projects_dir, 'proj2')
     os.makedirs(bad_dir, exist_ok=True)
     with open(os.path.join(bad_dir, 'script.xml'), 'w') as f:
@@ -96,10 +113,13 @@ def test_skipped_invalid_xml_does_not_abort(library, canned_probe):
                    created=new_datetime(), modified=new_datetime(), in_trash=False)
     database.close()
 
-    # full run (Pass A fixes the DB, Pass B rewrites XML)
     rc = rd.main(['--library-path', library.root, '--apply'])
-    # proj1 still got fixed despite proj2 being invalid
-    assert '00:00:00.000' not in _xml_durations(_script_path(library))
+    out = capsys.readouterr().out
+    # proj1 is still compared and listed despite proj2 being invalid
+    assert {p for p, _m, _d in _needs_save(out)} == {'proj1'}
+    assert any(line.startswith('[SKIPPED_INVALID] proj2') for line in
+               (l.strip() for l in out.splitlines()))
+    assert library.durations()['file.ext'] == '00:01:23.456'
     assert rc == 1  # SKIPPED_INVALID (and the MISSING file) mark the run dirty
 
 
@@ -123,6 +143,44 @@ def _write_v2_script(library):
 
 def _status_lines(out, status):
     return [line.strip() for line in out.splitlines() if line.strip().startswith(f'[{status}]')]
+
+
+def _needs_save(out):
+    """``{(project, media, database_value)}`` from the NEEDS_SAVE lines."""
+    found = set()
+    for line in _status_lines(out, 'NEEDS_SAVE'):
+        # [NEEDS_SAVE] proj1: file.ext: script 00:00:00.000 != database 00:01:23.456
+        project, media, rest = line.split('] ', 1)[1].split(': ', 2)
+        found.add((project, media, rest.rsplit(' ', 1)[1]))
+    return found
+
+
+def test_saving_a_listed_project_in_the_editor_takes_it_off_the_list(library, canned_probe, capsys):
+    """US5 acceptance 4: the operator's save is what writes the durations."""
+    from cuemseditor.cli import get_settings
+    from cuemseditor.CuemsDBModel import Project, database
+    from cuemseditor.CuemsDBProject import CuemsDBProject
+
+    _write_v2_script(library)
+    rd.main(['--library-path', library.root, '--apply'])
+    assert {p for p, _m, _d in _needs_save(capsys.readouterr().out)} == {'proj1'}
+    listed_hash = _file_hash(_script_path(library))
+
+    settings = get_settings()
+    settings['library_path'] = library.root
+    library.connect()
+    project = CuemsDBProject(settings, database)
+    uuid = Project.get(Project.unix_name == 'proj1').uuid
+    project.update(uuid, project.load(uuid))   # what project_save does with the open frame
+    database.close()
+    saved_hash = _file_hash(_script_path(library))
+    assert saved_hash != listed_hash
+
+    rd.main(['--library-path', library.root, '--apply'])
+    out = capsys.readouterr().out
+    assert _needs_save(out) == set()
+    assert '[SCRIPT_OK] proj1' in out
+    assert _file_hash(_script_path(library)) == saved_hash   # the tool did not write it
 
 
 def test_structured_duration_differing_from_the_database_is_reported(library, canned_probe, capsys):

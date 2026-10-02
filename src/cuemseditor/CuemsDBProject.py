@@ -26,12 +26,15 @@ class DurationFixStats:
             ``Media`` row (duration left untouched — a leftover
             ``00:00:00.000`` there matches the valid timecode shape, so it is
             invisible to a pattern scan; report it explicitly instead).
+        changes: ``(file_name, previous, replacement)`` for each replacement,
+            both as ``CTimecode`` (``previous`` may be ``None``).
     """
 
     def __init__(self):
         self.media_refs = 0
         self.replacements = 0
         self.orphans = []
+        self.changes = []
 
 
 def db_duration_resolver(file_name):
@@ -96,9 +99,11 @@ def _walk_media_durations(contents, resolver, stats):
             continue
         if duration:
             new_value = CTimecode(str(duration))
-            if media.get('duration') != new_value:
+            previous = media.get('duration')
+            if previous != new_value:
                 media.duration = new_value
                 stats.replacements += 1
+                stats.changes.append((file_name, previous, new_value))
 
 
 def _fade_duration_ms(duration):
