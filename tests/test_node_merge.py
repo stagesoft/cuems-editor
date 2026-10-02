@@ -31,8 +31,8 @@ CONF = os.path.join(HERE, 'fixtures', 'conf')
 CAPTURE = os.path.join(
     HERE, '..', 'specs', '001-cuems-utils-migration', 'evidence', 'initial-mappings.json')
 
-CONTROLLER = '0367f391-ebf4-48b2-9f26-000000000001'   # in the map and in the mappings
-NEW_NODE = '0367f391-ebf4-48b2-9f26-000000000003'     # in the map only
+CONTROLLER = '0367f391-ebf4-48b2-9f26-000000000001'   # adopted; mapping node has devices
+NEW_NODE = '0367f391-ebf4-48b2-9f26-000000000003'     # not adopted; mapping node has none
 
 
 def _library_nodes(conf=CONF):
@@ -75,6 +75,13 @@ def test_a_converted_node_keeps_node_role_through_the_merge():
     assert merged[0]['node']['node_role'] == adopted[0].to_wire()['node_role']
 
 
+def test_a_node_the_mappings_do_not_know_is_its_own_wire_form():
+    adopted, unadopted = _library_nodes()
+    server = CuemsWsServer.__new__(CuemsWsServer)
+    merged = server.merge_node_data([], adopted + unadopted)
+    assert merged == [{'node': node.to_wire()} for node in adopted + unadopted]
+
+
 # ─── the wire form (T034) ────────────────────────────────────────────────
 
 
@@ -83,7 +90,7 @@ def _capture_value():
         return json.load(fh)['value']
 
 
-def apply_mapping_deltas(captured, library_wire):
+def apply_mapping_deltas(captured, library_wire, mapping_uuids):
     """The pre-001 frame moved through the enumerated deltas, and nothing else.
 
     (m1) ``nodeconf_available`` is present, last. The pre-001 frame lost it:
@@ -92,7 +99,8 @@ def apply_mapping_deltas(captured, library_wire):
          ``online`` are ``"True"`` / ``"False"`` (were JSON booleans), and
          ``node_role`` follows ``name``. The mapping node's own keys, output
          blocks included, keep their place and value.
-    (m3) a node only in the map is its own ``to_wire()``, key for key.
+    (m3) a node only in the map is its own ``to_wire()``, key for key
+         (none in this fixture; ``test_a_node_the_mappings_do_not_know_is_its_own_wire_form``).
     """
     value = copy.deepcopy(captured)
     for key in ('nodes', 'new_nodes'):
@@ -100,7 +108,7 @@ def apply_mapping_deltas(captured, library_wire):
         for item in value[key]:
             node = item['node']
             wire = library_wire[node['uuid']]
-            if 'devices' in node:                                   # (m2)
+            if node['uuid'] in mapping_uuids:                       # (m2)
                 merged = dict(node)
                 for field in ('online', 'adopted', 'ip', 'name', 'node_role', 'mac',
                               'role_id', 'alias', 'hostname'):
@@ -118,10 +126,11 @@ def test_initial_mappings_differs_from_the_capture_only_by_the_listed_deltas(ser
     adopted, unadopted = _library_nodes()
     library_wire = {str(n.to_wire()['uuid']): n.to_wire() for n in adopted + unadopted}
 
+    mapping_uuids = {item['node']['uuid'] for item in _mapping_nodes()}
     frame = json.loads(server.initial_setting_message())
 
     assert frame['type'] == 'initial_mappings'
-    expected = apply_mapping_deltas(_capture_value(), library_wire)
+    expected = apply_mapping_deltas(_capture_value(), library_wire, mapping_uuids)
     assert json.dumps(frame['value']) == json.dumps(expected)
 
 

@@ -3,6 +3,7 @@
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import asyncio
 import concurrent.futures
+import functools
 import json
 import os
 import time
@@ -20,10 +21,13 @@ from cuemseditor.CuemsProjectManager import CuemsDBManager
 from cuemseditor.CuemsWsUser import CuemsWsUser
 from cuemseditor.CuemsUpload import CuemsUpload
 from cuemseditor.CuemsErrors import *
+from cuemseditor.node_reads import IdentityCollision, NodeLists, collided_identity
 
 from cuemsutils.tools.CommunicatorServices import Communicator
 from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
 from cuemsutils.tools.NodeList import partition_by_adoption
+from cuemsutils.tools import coerce_identity
+from cuemsutils.errors import node_identity_collision_message
 from cuemsutils.helpers import new_uuid
 
 
@@ -83,7 +87,11 @@ class CuemsWsServer():
         self.users = dict()
         self.sessions = dict()
         self.settings_dict = settings_dict
-        self.mappings_dict = mappings_dict
+        # Projected once, here. json.dumps of the library's mappings object
+        # re-projects it through the mappings schema on every message and drops
+        # every key that schema does not declare: nodeconf_available, and the
+        # network-map fields merged into each node (node_role).
+        self.mappings_dict = mappings_dict.to_wire() if hasattr(mappings_dict, 'to_wire') else mappings_dict
         # The library's generated example stands in for the retired template
         # until the UI builds from the schema descriptor (FR-008).
         self.initital_template = ConfigManager(load_all=False).generate_example(SchemaName.SCRIPT)
@@ -200,8 +208,7 @@ class CuemsWsServer():
         """
         user_session = CuemsWsUser(self, websocket)
         await self.register(user_session, path)
-        await user_session.outgoing.put(self.initial_json_template())
-        await user_session.outgoing.put(self.initial_setting_message())
+        await self.send_initial_frames(user_session)
         try:
             consumer_task = asyncio.create_task(user_session.consumer_handler())
             producer_task = asyncio.create_task(user_session.producer_handler())
@@ -217,6 +224,17 @@ class CuemsWsServer():
 
         finally:
             await self.unregister(user_session)
+
+    async def send_initial_frames(self, user_session):
+        """Queue the frames a project-manager session gets on connect, in order.
+
+        ``initial_template``, ``initial_mappings``, then ``network_map_error``
+        while a map error stands.
+        """
+        await user_session.outgoing.put(self.initial_json_template())
+        await user_session.outgoing.put(self.initial_setting_message())
+        if self.network_map_error is not None:
+            await user_session.outgoing.put(self.network_map_error_message())
 
     async def upload_session(self, websocket):
         """Handle a binary file upload over the ``/upload`` WebSocket path.
@@ -387,77 +405,78 @@ class CuemsWsServer():
 
     # warning, these non async functions should be not blocking or user @sync_to_async to get their own thread
 
-    def merge_node_data(self, existing_nodes, new_nodes):
-        """Merge existing node data (with outputs) with new node data (with updated status).
+    # Network-map fields a merged mapping node takes from the map. role_id /
+    # alias / hostname are the optional identity fields from feat/node-identity
+    # in cuems-common (docs/node-identity-contract.md there); they drive the
+    # frontend's node label and cuems-logs' -n filter.
+    NODE_STATUS_FIELDS = ('online', 'adopted', 'ip', 'name', 'node_role', 'mac',
+                          'role_id', 'alias', 'hostname')
 
-        Matches nodes by UUID and preserves outputs configuration while updating
-        basic fields (``online``, ``adopted``, ``ip``, ``name``, ``node_type``,
-        ``mac``).
+    def merge_node_data(self, existing_nodes, library_nodes):
+        """Merge the map's nodes into the mapping nodes, in the map's order.
+
+        A node the mappings already know keeps every key of its mapping node,
+        output blocks included and copied through whatever their ``class``,
+        and takes ``NODE_STATUS_FIELDS`` from the node's ``to_wire()``: string
+        ``uuid``, ``"True"`` / ``"False"`` for ``adopted`` and ``online``,
+        ``node_role``. A node the mappings do not know is its own ``to_wire()``.
 
         Args:
-            existing_nodes: List of existing node dicts with outputs configuration.
-            new_nodes: List of new node dicts from ``network_map.xml`` with
-                updated status.
+            existing_nodes: ``[{"node": <mapping node, wire form>}, ...]``.
+            library_nodes: one side of the library's adoption partition, a tuple of
+                bare node objects.
 
         Returns:
-            List of merged node dicts; nodes absent from *existing_nodes* are
-            included as-is from *new_nodes*.
+            ``[{"node": <dict>}, ...]``, one per library node.
         """
-        # Create a lookup dict for existing nodes by UUID
-        existing_by_uuid = {}
-        for node_item in existing_nodes:
-            if 'node' in node_item:
-                uuid = node_item['node'].get('uuid')
-                if uuid:
-                    existing_by_uuid[uuid] = node_item
+        existing_by_identity = {}
+        for item in existing_nodes:
+            node = item.get('node') if isinstance(item, dict) else None
+            if node and node.get('uuid'):
+                existing_by_identity[coerce_identity(node['uuid'])] = node
 
-        # Merge new nodes with existing data
-        merged_nodes = []
-        for new_node_item in new_nodes:
-            if 'node' not in new_node_item:
+        merged = []
+        for library_node in library_nodes:
+            wire = library_node.to_wire()
+            existing = existing_by_identity.get(coerce_identity(wire.get('uuid')))
+            if existing is None:
+                merged.append({'node': wire})
                 continue
+            node = dict(existing)
+            for field in self.NODE_STATUS_FIELDS:
+                if field in wire:
+                    node[field] = wire[field]
+            merged.append({'node': node})
+        return merged
 
-            new_node = new_node_item['node']
-            uuid = new_node.get('uuid')
+    # A standing duplicate-identity error, as sent on the wire, or None.
+    network_map_error = None
+    _logged_collisions = frozenset()
 
-            if uuid and uuid in existing_by_uuid:
-                # Node exists - merge data
-                existing_node = existing_by_uuid[uuid]['node'].copy()
-                
-                # Update basic fields from network_map (online, adopted, ip, name, etc.).
-                # role_id/alias/hostname are the optional identity fields
-                # introduced by feat/node-identity in cuems-common: see
-                # docs/node-identity-contract.md in cuems-common. They drive
-                # the frontend's human-readable node label and cuems-logs'
-                # -n filter resolution. Propagate them like the rest of the
-                # mutable state so the UI sees changes after nodeconf updates
-                # the XML (e.g. after an adoption or apply-identity).
-                basic_fields = ['online', 'adopted', 'ip', 'name', 'node_type', 'mac',
-                                'role_id', 'alias', 'hostname']
-                for field in basic_fields:
-                    if field in new_node:
-                        existing_node[field] = new_node[field]
+    def reload_network_map_nodes(self, assign=True):
+        """Read ``network_map.xml`` and merge it into the mapping nodes.
 
-                # Keep outputs (audio, video, dmx) from existing node
-                merged_nodes.append({'node': existing_node})
-            else:
-                # New node not in existing data - add as-is
-                merged_nodes.append(new_node_item)
-
-        return merged_nodes
-
-    def reload_network_map_nodes(self):
-        """Reload ``network_map.xml`` and update ``mappings_dict`` with current node status.
+        Called with ``assign=False`` from the executor: it then returns what it
+        read (:class:`NodeLists` or :class:`IdentityCollision`, or ``None``)
+        and the awaiting coroutine applies it on the event-loop thread with
+        :meth:`assign_network_map_nodes` (constitution II). The default is the
+        constructor's startup read, made before the loop exists, which assigns
+        directly and returns whether the read succeeded.
 
         Retries up to 3 times with exponential back-off in case the file is
-        being written concurrently.  Merges the reloaded node data with the
-        existing ``mappings_dict`` via :meth:`merge_node_data` to preserve
-        output configurations while refreshing online/adopted status.
-
-        Returns:
-            ``True`` on success, ``False`` if the file does not exist or all
-            retries fail.
+        being written concurrently. A duplicate node identity is not retried:
+        the same file fails the same way.
         """
+        result = self.read_network_map_nodes()
+        if not assign:
+            return result
+        if result is None:
+            return False
+        self.assign_network_map_nodes(result)
+        return isinstance(result, NodeLists)
+
+    def read_network_map_nodes(self):
+        """The read behind :meth:`reload_network_map_nodes`. Writes no shared state."""
         max_retries = 3
         initial_delay = 0.1
         delay_after_write = 0.05
@@ -470,29 +489,24 @@ class CuemsWsServer():
                 if not os.path.isfile(network_map_file):
                     if attempt == 0:
                         Logger.warning(f'network_map.xml not found at {network_map_file}')
-                    return False
+                    return None
 
                 time.sleep(delay_after_write)
 
-                cf_manager.load_network_map()
-                # network_map is now a dict with 'node_list' key
-                network_map_dict = cf_manager.network_map
-                nodes, new_nodes = partition_by_adoption(network_map_dict)
+                try:
+                    cf_manager.load_network_map()
+                except Exception as e:
+                    collision = node_identity_collision_message(network_map_file, e)
+                    if collision is not None:
+                        return IdentityCollision(collided_identity(e), network_map_file, collision)
+                    raise
+                adopted, unadopted = partition_by_adoption(cf_manager.network_map)
 
-                # Merge with existing data to preserve outputs configuration
-                # Combine both lists to handle nodes that change adoption status
-                existing_nodes = self.mappings_dict.get('nodes') or []
-                existing_new_nodes = self.mappings_dict.get('new_nodes') or []
-                all_existing = existing_nodes + existing_new_nodes
-
-                merged_nodes = self.merge_node_data(all_existing, nodes)
-                merged_new_nodes = self.merge_node_data(all_existing, new_nodes)
-
-                self.mappings_dict['nodes'] = merged_nodes
-                self.mappings_dict['new_nodes'] = merged_new_nodes
-                self.mappings_dict['nodeconf_available'] = self.nodeconf_available()
-                Logger.debug(f'Network map reloaded successfully: {len(merged_nodes)} adopted nodes, {len(merged_new_nodes)} new nodes')
-                return True
+                # Merge with existing data to preserve outputs configuration.
+                # Both lists, so a node that changed adoption keeps its outputs.
+                all_existing = (self.mappings_dict.get('nodes') or []) + (self.mappings_dict.get('new_nodes') or [])
+                return NodeLists(self.merge_node_data(all_existing, adopted),
+                                 self.merge_node_data(all_existing, unadopted))
 
             except Exception as e:
                 if attempt < max_retries - 1:
@@ -501,9 +515,44 @@ class CuemsWsServer():
                     time.sleep(delay)
                 else:
                     Logger.error(f'Error loading network_map after {max_retries} attempts: {e}')
-                    return False
+                    return None
 
-        return False
+        return None
+
+    def assign_network_map_nodes(self, result):
+        """Apply a read to shared state. Event-loop thread (or the constructor).
+
+        A :class:`NodeLists` replaces ``nodes`` / ``new_nodes``, samples
+        ``nodeconf_available`` fresh, and clears a standing map error. An
+        :class:`IdentityCollision` keeps the last good lists and records the
+        error, logging each distinct identity once.
+
+        Returns:
+            ``True`` when this read cleared a standing map error.
+        """
+        if isinstance(result, IdentityCollision):
+            if result.identity not in self._logged_collisions:
+                Logger.error(result.message)
+                self._logged_collisions = self._logged_collisions | {result.identity}
+            self.network_map_error = {
+                'kind': 'duplicate_identity',
+                'identity': result.identity,
+                'file': result.file,
+            }
+            return False
+
+        self.mappings_dict['nodes'] = result.nodes
+        self.mappings_dict['new_nodes'] = result.new_nodes
+        self.mappings_dict['nodeconf_available'] = self.nodeconf_available()
+        Logger.debug(f'Network map reloaded successfully: {len(result.nodes)} adopted nodes, {len(result.new_nodes)} new nodes')
+        cleared = self.network_map_error is not None
+        self.network_map_error = None
+        self._logged_collisions = frozenset()
+        return cleared
+
+    def network_map_error_message(self):
+        """``{"type": "network_map_error", "value": <error or null>}``."""
+        return json.dumps({"type": "network_map_error", "value": self.network_map_error})
 
     def initial_json_template(self):
         """Build the initial ``CuemsScript`` template message sent to new clients.
@@ -601,26 +650,33 @@ class CuemsWsServer():
                 Logger.warning(f'network_map watcher error: {e}')
 
     async def notify_all_node_list_update(self):
-        """Reload the network map and broadcast the updated node list to all clients.
+        """Reload the network map and broadcast the result to all clients.
 
-        Runs :meth:`reload_network_map_nodes` in the thread-pool executor to
-        avoid blocking the event loop during file I/O.  Broadcasts
-        :meth:`initial_setting_message` to every connected user on success.
+        The read runs in the thread-pool executor; its result is assigned here,
+        on the event-loop thread. On success every connected user gets
+        ``initial_mappings``, preceded by ``network_map_error: null`` when the
+        read cleared a standing error. On a duplicate node identity every user
+        gets ``network_map_error`` and the last good list stays in place.
         """
-        reload_success = await self.event_loop.run_in_executor(
+        result = await self.event_loop.run_in_executor(
             self.executor,
-            self.reload_network_map_nodes
+            functools.partial(self.reload_network_map_nodes, assign=False)
         )
-        if reload_success:
-            if self.users:
-                message = self.initial_setting_message()
-                for user in self.users:
-                    await user.outgoing.put(message)
-                Logger.debug(f'Broadcasted updated node list to {len(self.users)} connected client(s)')
-            else:
-                Logger.debug('Node list updated but no clients connected')
-        else:
+        if not result:
             Logger.warning('Failed to reload network map, not broadcasting update')
+            return
+        cleared = self.assign_network_map_nodes(result)
+        if isinstance(result, IdentityCollision):
+            messages = [self.network_map_error_message()]
+        else:
+            messages = ([self.network_map_error_message()] if cleared else []) + [self.initial_setting_message()]
+        if self.users:
+            for user in self.users:
+                for message in messages:
+                    await user.outgoing.put(message)
+            Logger.debug(f'Broadcasted node list update to {len(self.users)} connected client(s)')
+        else:
+            Logger.debug('Node list updated but no clients connected')
 
     def users_event(self, type, uuid=None):
         """Build a users-count or item-modified event message.

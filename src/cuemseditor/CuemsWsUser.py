@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+import functools
 import json
 import asyncio
 from datetime import datetime, timedelta
@@ -11,6 +12,7 @@ import sys
 from cuemsutils.log import logged, Logger
 
 from cuemseditor.CuemsErrors import EngineError, NonExistentItemError
+from cuemseditor.node_reads import IdentityCollision
 
 TIMEOUT = 25  # TODO: make it configurable, or get from settings
 
@@ -440,20 +442,27 @@ class CuemsWsUser():
         Same payload the client already gets on connect
         (``initial_mappings``: ``nodes`` = adopted, ``new_nodes`` = discovered
         but not adopted), so no new client-side handling is needed — it is just
-        a way to refresh on demand instead of reconnecting.
+        a way to refresh on demand instead of reconnecting. While the map has a
+        duplicate node identity, ``network_map_error`` comes first and the
+        list is the last good one; a read that clears it sends
+        ``network_map_error: null`` first.
 
         Args:
             action: Action name from the WebSocket frame.
         """
         Logger.info(f"user {id(self.websocket)} requesting {functionNameAsString()}")
         try:
-            reload_ok = await self.server.event_loop.run_in_executor(
+            result = await self.server.event_loop.run_in_executor(
                 self.server.executor,
-                self.server.reload_network_map_nodes
+                functools.partial(self.server.reload_network_map_nodes, assign=False)
             )
-            if not reload_ok:
+            if not result:
                 raise ValueError("could not read network_map.xml")
 
+            # Shared state is assigned here, on the event-loop thread.
+            cleared = self.server.assign_network_map_nodes(result)
+            if isinstance(result, IdentityCollision) or cleared is True:
+                await self.outgoing.put(self.server.network_map_error_message())
             await self.outgoing.put(self.server.initial_setting_message())
 
         except Exception as e:

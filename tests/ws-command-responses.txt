@@ -116,9 +116,34 @@ extra handling for it.
                              host, so every adopt/un-adopt WILL fail. Grey the
                              controls instead of letting the operator click.
 
-Each node carries uuid, mac, name, ip, node_type, adopted, online and the
-optional identity fields role_id / alias / hostname. `online` is nodeconf's
+Each node carries uuid, mac, name, ip, node_role, adopted, online and the
+optional identity fields role_id / alias / hostname, in the library's wire
+form: uuid a string, adopted / online "True" / "False" (not JSON true /
+false), node_role "controller" / "node" / .... There is no node_type. A node
+that has a mapping node keeps that mapping node's keys, output blocks
+(devices / device / class) included, in place. `online` is nodeconf's
 discovery view (refreshed within ~30 s), NOT runtime liveness.
+
+Before 001 these frames lost nodeconf_available and node_role, and carried
+JSON booleans: json.dumps of the library mappings object re-projected every
+node through the mappings schema (specs/001-cuems-utils-migration/evidence/
+mappings-capture/). tests/test_node_merge.py pins the difference.
+
+network_map_error (all sessions; new in 001, not a payload-version bump)
+
+    ->  {"type": "network_map_error", "value": {"kind": "duplicate_identity",
+         "identity": "<uuid string>", "file": "<path of network_map.xml>"}}
+    ->  {"type": "network_map_error", "value": null}
+
+network_map.xml names one node identity on two rows. The editor does not
+retry that read (the file will not become unique by waiting), keeps serving
+the last good node list, logs once per identity, and broadcasts the first
+frame to every session, and to each session that connects while it stands
+(after initial_mappings). The next successful read broadcasts the null frame,
+then the usual initial_mappings. A nodelist_get while it stands answers the
+caller with the error frame, then the last good initial_mappings. Fix: decide
+from the two rows' MACs which is the real node and run cuems-init-node
+--remint (the library's message, in the editor log, says the same).
 
 For runtime liveness use "node_status": `alive` is the engine's sub-second
 ping/pong, the only signal the GO gate trusts, and `age_s` says how old that
