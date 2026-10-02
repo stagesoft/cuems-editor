@@ -16,6 +16,10 @@ Commands 													 ->	Responses
 
 {"action" : "project_list"}  									->  {"type": "project_list", "value": "project_list_json"}
 {"action" : "project_load", "value" : "project_uuid"}   		->  {"type": "project", "value": "project_json"}
+																->  {"type": "document_load_report", "value": {"report_id": "uuid", "project_uuid": "uuid", "document": "path", "outcome": "clean|converted|repaired", "file_differs_from_loaded": false, "conversions": [...], "repairs": [...]}}
+																or, instead of both:
+																->  {"type": "document_load_failed", "value": {"project_uuid": "uuid", "document": "path", "cue_id": "uuid|null", "field": "name|null", "message": "library text", "next_steps": ["restore_from_conversion_backup", "correct_field_by_hand", "remove_document"]}}
+{"action" : "repair_acknowledge", "value" : {"project_uuid": "uuid", "report_id": "uuid"}}	->  {"type": "repair_acknowledge", "value": {"project_uuid": "uuid", "report_id": "uuid"}}
 {"action" : "project_ready", "value" : "project_uuid"}   		->  {"type": "project_ready", "value": "project_uuid"}
 {"action" : "project_deploy", "value" : "project_uuid"}   		->  {"type": "project_deploy", "value": "project_uuid"}
 {"action" : "project_status"}  									->  {"type": "project_status", "value":  {"status ": "none|running", "project_uuid": "project_uuid"}
@@ -23,11 +27,12 @@ Commands 													 ->	Responses
 
 {"action" : "project_new", "value" : "project_json", "unix_name" : "unix_name_string"}   		->  {"type": "project_save", "value": "project_uuid"}
 {"action" : "project_save", "value" : "project_json"}   		->  {"type": "project_save", "value": "project_uuid"}
+																->  {"type": "repair_save_refused", "value": {"project_uuid": "uuid", "report_id": "uuid", "reason": "unacknowledged|preserve_failed"}}
 {"action" : "project_delete", "value" : "project_uuid"} 		->  {"type": "project_delete", "value": "project_uuid"}
 {"action" : "project_trash_list"}  							 	->  {"type": "project_trash_list", "value": "project_trash_list_json"}
 {"action" : "project_restore", "value" : "project_uuid"}  		->  {"type": "project_recover", "value": "project_uuid"}
 {"action" : "project_trash_delete", "value" : "project_uuid"}	->  {"type": "project_trash_delete", "value": "project_uuid"}
-{"action" : "project_duplicate", "value" : "project_uuid"}		->  {"type": "project_duplicate", "value": {"uuid": "project_uuid", "new_uuid": "duplicated_project_uuid" }}
+{"action" : "project_duplicate", "value" : "project_uuid"}		->  {"type": "project_duplicate", "value": {"uuid": "project_uuid", "new_uuid": "duplicated_project_uuid", "report": {...} }}
 {"action" : "project_export", "value" : "project_uuid"}			->  {"type": "project_export", "value": exported_file_url}
 
 {"action" : "file_list"}  										->  {"type": "file_list", "value": "file_list_json"}
@@ -101,6 +106,41 @@ it is reported upstream (001 upstream-reports/UR-3).
 
 Consumer: cuems-frontend src/app/services/projects/projects.service.ts:120
 declares schemaLocation: string as required.
+
+Load reports and the save gate (001, milestone 2; audience: the session only)
+
+Every successful project_load is followed by document_load_report, also for
+a clean load (outcome "clean", empty lists). It is never omitted and never
+null. outcome "converted" / "repaired" means the library changed the
+document in memory: the file on disk is NOT written by opening it
+(file_differs_from_loaded true). repairs[] items are {field_path
+"<cue_id>/<field>", previous_value, substituted_value, rule_name}; values
+are JSON-safe (a CTimecode as its string, None as null). conversions[] items
+are {from_version, to_version, description, dropped_elements[]}.
+file_differs_from_loaded is a JSON boolean: editor state about the file, not
+a cms:BoolType field.
+
+document_load_failed replaces both frames when the library refuses the
+document: an unrepairable value (e.g. an action_target naming no cue) or a
+document newer than the library (cue_id and field null). message is the
+library's text. next_steps is always all three. The session stays up and
+the project stays in project_list. A malformed file still answers with the
+generic error frame.
+
+project_save of a project this session opened as converted / repaired is
+refused (reason "unacknowledged") until this session sends
+repair_acknowledge with that report_id. Another session's acknowledgment
+does not count, and a new load replaces the report. The first save after
+acknowledgment moves the file on disk into <library>/trash/projects/ as
+<unix_name>_<YYYYmmddTHHMMSS>_<script_file_name> before writing the repaired
+document; if that move fails, nothing is saved (reason "preserve_failed").
+
+project_duplicate gains an optional "report" (same shape as
+document_load_report's value) when the source was not clean. The copy is the
+repaired document; the source is not overwritten and no acknowledgment is
+needed. New optional key, so not a payload-version bump.
+
+New message types do not bump the payload version.
 
 Nodes: adoption
 

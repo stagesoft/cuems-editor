@@ -39,3 +39,31 @@ class EngineError(CuemsWsServerError):
     Example:
         >>> raise EngineError("Timeout: engine did not respond in 25s for project_load")
     """
+
+
+class DocumentLoadFailed(CuemsWsServerError):
+    """The library refused to open a project's script: an unrepairable value,
+    or a document newer than the library.
+
+    Raised by ``CuemsDBProject.open`` around the library's ``ValidationError``
+    (not ``SchemaError``), so the session can answer ``document_load_failed``
+    with the path the library read.
+
+    Attributes:
+        document: Path of the script file.
+        cause: The library's ``ValidationError``; ``cause.violation`` (when
+            present) carries ``location == (cue_id, field)``.
+    """
+
+    def __init__(self, document, cause):
+        super().__init__(str(cause))
+        self.document = document
+        self.cause = cause
+
+
+class OriginalNotPreserved(CuemsWsServerError):
+    """The pre-repair script could not be moved into the trash, so it was not
+    overwritten.
+
+    Raised by ``CuemsDBProject.update`` before ``CuemsScript.save`` is called.
+    """

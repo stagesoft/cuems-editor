@@ -1,6 +1,7 @@
 import os
 import traceback
 import shutil
+from datetime import datetime
 from peewee import DoesNotExist, IntegrityError, prefetch
 
 from cuemsutils.tools.StringSanitizer import StringSanitizer
@@ -8,6 +9,7 @@ from cuemsutils.tools.CopyMoveVersioned import CopyMoveVersioned
 from cuemsutils.tools.CTimecode import CTimecode
 from cuemsutils.cues import AudioCue, CueList, CuemsScript, DmxCue, VideoCue
 from cuemsutils.cues.MediaCue import MediaCue
+from cuemsutils.errors import SchemaError, ValidationError
 from cuemsutils.helpers import new_datetime, new_uuid
 from cuemsutils.log import logged, Logger
 
@@ -265,6 +267,34 @@ class CuemsDBProject(StringSanitizer):
         script, _report = self.load_with_report(uuid, include_trash)
         return script.to_wire()
 
+    def open(self, uuid):
+        """Open a live project for a session: its wire value and the load report.
+
+        One library load, one ``to_wire()``. The file is not written.
+
+        Returns:
+            ``(value, LoadReport)`` — *value* is what :meth:`load` returns.
+
+        Raises:
+            NonExistentItemError: no live project with *uuid*.
+            DocumentLoadFailed: the library refused the document with a
+                ``ValidationError`` (an unrepairable value, or a document newer
+                than the library). ``SchemaError`` and ``OSError`` propagate
+                unwrapped.
+        """
+        try:
+            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
+        except DoesNotExist:
+            raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
+        path = self.script_path(project.unix_name)
+        try:
+            script, report = CuemsScript.load_with_report(path)
+        except SchemaError:
+            raise
+        except ValidationError as e:
+            raise DocumentLoadFailed(path, e) from e
+        return script.to_wire(), report
+
     def load_with_report(self, uuid, include_trash=False):
         """Load a project's script object and the library's report of what the load did.
 
@@ -324,7 +354,7 @@ class CuemsDBProject(StringSanitizer):
 
         return project_trash_list
 
-    def update(self, uuid, data):
+    def update(self, uuid, data, preserve_original=False):
         """Save an edited project: update DB metadata and rewrite the script file.
 
         Runs inside a Peewee atomic transaction. The client payload becomes a
@@ -342,11 +372,17 @@ class CuemsDBProject(StringSanitizer):
             uuid: Project UUID string; must match ``data['CuemsScript']['id']``.
             data: ``CuemsScript`` dict as received from the frontend over
                 WebSocket.
+            preserve_original: Move the script now on disk into the trash
+                before the first overwrite. The session sets it when the
+                library repaired or converted that file on load, so the
+                original is recoverable. If the move fails nothing is saved;
+                if the save fails the original is moved back.
 
         Raises:
             NonExistentItemError: If the project does not exist or is in the
                 trash.
             ValueError: A FadeCue duration is missing, unparseable or ``<= 0``.
+            OriginalNotPreserved: *preserve_original* and the move failed.
             Exception: Re-raises any error after rolling back the transaction.
         """
         try:
@@ -381,11 +417,34 @@ class CuemsDBProject(StringSanitizer):
                 # duration from the file_list payload.
                 self._fix_media_durations(project_object)
                 self.update_media_relations(project, project_object)
-                self.save_xml(project.unix_name, project_object)
+                if preserve_original:
+                    self._save_preserving_original(project.unix_name, project_object)
+                else:
+                    self.save_xml(project.unix_name, project_object)
             except Exception as e:
                 Logger.error("error: {} {} trying to update  project, rolling back database update".format(type(e), e))
                 transaction.rollback()
                 raise e
+
+    def _save_preserving_original(self, unix_name, project_object):
+        """Move the script on disk into the trash, then save; undo the move if the save fails.
+
+        The trashed copy is named ``<unix_name>_<YYYYmmddTHHMMSS>_<script_file_name>``
+        so the project and the date are recoverable from the name alone.
+        """
+        path = self.script_path(unix_name)
+        name = f"{unix_name}_{datetime.now().strftime('%Y%m%dT%H%M%S')}_{self.script_file_name}"
+        try:
+            os.makedirs(self.trash_path, exist_ok=True)
+            trashed = CopyMoveVersioned.move(path, self.trash_path, name)
+        except Exception as e:
+            raise OriginalNotPreserved(f"could not move {path} into {self.trash_path}: {e}") from e
+        Logger.info(f'original script of {unix_name} preserved as {os.path.join(self.trash_path, trashed)}')
+        try:
+            self.save_xml(unix_name, project_object)
+        except Exception:
+            shutil.move(os.path.join(self.trash_path, trashed), path)
+            raise
 
     # SAFETY NET (see update()): overwrite frontend-sent Media durations from
     # the DB. Delegates to the module-level fix_media_durations_in_contents so
@@ -501,7 +560,7 @@ class CuemsDBProject(StringSanitizer):
             uuid: UUID of the project to duplicate; must be a live project.
 
         Returns:
-            New project UUID string.
+            ``(new project UUID string, LoadReport of the source)``.
 
         Raises:
             NonExistentItemError: If the source project does not exist.
@@ -522,7 +581,7 @@ class CuemsDBProject(StringSanitizer):
                     candidate_display = base_display
                     i = 0
                     # The source, in memory. Its file is not written here.
-                    project_object, _report = self.load_xml(base_unix)
+                    project_object, source_report = self.load_xml(base_unix)
                     while (os.path.exists(os.path.join(self.projects_path, candidate_unix))
                            or not self._is_name_available(candidate_unix, candidate_display)):
                         i += 1
@@ -549,7 +608,7 @@ class CuemsDBProject(StringSanitizer):
                     # reveal guard covers them.
                     self.add_media_relations(dup_project, project_object)
                     self.save_xml(new_unix_name, project_object)
-                    return new_project_uuid
+                    return new_project_uuid, source_report
                 except Exception as e:
                     Logger.error("error: {} {}; trying to duplicate  project, rolling back database update".format(type(e), e))
                     transaction.rollback()

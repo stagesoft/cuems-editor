@@ -1,0 +1,38 @@
+$ hatch test tests/test_document_load_report.py   # before T050–T052
+FFFFFFFFF.                                                               [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert ['project', 'error'] == ['project', '..._load_report']
+      At index 1 diff: 'error' != 'document_load_report'
+      Use -v to get more diff
+/disk/Projects/StageLab/cuems-editor/tests/test_document_load_report.py:146: AssertionError: assert ['project', 'error'] == ['project', '..._load_report']
+E   TypeError: string indices must be integers, not 'str'
+/disk/Projects/StageLab/cuems-editor/tests/test_document_load_report.py:163: TypeError: string indices must be integers, not 'str'
+E   TypeError: string indices must be integers, not 'str'
+/disk/Projects/StageLab/cuems-editor/tests/test_document_load_report.py:179: TypeError: string indices must be integers, not 'str'
+E   AssertionError: assert ['error'] == ['document_load_failed']
+      At index 0 diff: 'error' != 'document_load_failed'
+      Use -v to get more diff
+/disk/Projects/StageLab/cuems-editor/tests/test_document_load_report.py:197: AssertionError: assert ['error'] == ['document_load_failed']
+E   AssertionError: assert ['error'] == ['document_load_failed']
+      At index 0 diff: 'error' != 'document_load_failed'
+      Use -v to get more diff
+/disk/Projects/StageLab/cuems-editor/tests/test_document_load_report.py:197: AssertionError: assert ['error'] == ['document_load_failed']
+E   TypeError: string indices must be integers, not 'str'
+/disk/Projects/StageLab/cuems-editor/tests/test_document_load_report.py:237: TypeError: string indices must be integers, not 'str'
+E   TypeError: string indices must be integers, not 'str'
+/disk/Projects/StageLab/cuems-editor/tests/test_document_load_report.py:252: TypeError: string indices must be integers, not 'str'
+E   TypeError: string indices must be integers, not 'str'
+/disk/Projects/StageLab/cuems-editor/tests/test_document_load_report.py:272: TypeError: string indices must be integers, not 'str'
+E   TypeError: string indices must be integers, not 'str'
+/disk/Projects/StageLab/cuems-editor/tests/test_document_load_report.py:289: TypeError: string indices must be integers, not 'str'
+=========================== short test summary info ============================
+FAILED tests/test_document_load_report.py::test_a_clean_open_still_sends_a_report
+FAILED tests/test_document_load_report.py::test_a_repaired_open_reports_the_repair_and_writes_nothing
+FAILED tests/test_document_load_report.py::test_a_converted_open_reports_the_conversion
+FAILED tests/test_document_load_report.py::test_an_unrepairable_open_is_document_load_failed[unrepairable-58763af8-462c-4831-bd08-d3e978dc4a0a-action_target]
+FAILED tests/test_document_load_report.py::test_an_unrepairable_open_is_document_load_failed[too_new-None-None]
+FAILED tests/test_document_load_report.py::test_save_before_acknowledge_is_refused_and_writes_nothing
+FAILED tests/test_document_load_report.py::test_after_acknowledge_the_original_is_in_trash_and_the_repair_is_saved
+FAILED tests/test_document_load_report.py::test_another_sessions_acknowledgment_does_not_unlock_this_save
+FAILED tests/test_document_load_report.py::test_preserve_failure_refuses_and_does_not_save
+9 failed, 1 passed in 1.03s

@@ -194,7 +194,7 @@ def test_zero_duration_on_a_cue_keyed_cue_is_corrected_from_the_database(lib, cu
 def test_duplicate_saves_the_copy_and_leaves_the_source_bytes(lib):
     before = _sha256(lib.script)
 
-    new_uuid_ = lib.project.duplicate(lib.uuid)
+    new_uuid_, _report = lib.project.duplicate(lib.uuid)
 
     assert _sha256(lib.script) == before
     copy_project = Project.get(Project.uuid == new_uuid_)

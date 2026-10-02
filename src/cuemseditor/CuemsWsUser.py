@@ -11,12 +11,70 @@ import sys
 
 from cuemsutils.log import logged, Logger
 
-from cuemseditor.CuemsErrors import EngineError, NonExistentItemError
+from cuemseditor.CuemsErrors import DocumentLoadFailed, EngineError, NonExistentItemError, OriginalNotPreserved
 from cuemseditor.node_reads import IdentityCollision
 
 TIMEOUT = 25  # TODO: make it configurable, or get from settings
 
 functionNameAsString = lambda n=0: sys._getframe(n + 1).f_code.co_name
+
+# document_load_failed always offers all three: the editor cannot know which
+# one the operator can carry out.
+LOAD_FAILED_NEXT_STEPS = ['restore_from_conversion_backup', 'correct_field_by_hand', 'remove_document']
+
+
+def _json_safe(value):
+    """A library value as JSON: scalars as they are, ``None`` as null, anything
+    else (``CTimecode``, ``Uuid``, an enum) as its string form."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    enum_value = getattr(value, 'value', None)
+    if isinstance(enum_value, str):
+        return enum_value
+    return str(value)
+
+
+def load_report_value(report_id, project_uuid, report):
+    """The ``value`` of ``document_load_report`` for a library ``LoadReport``."""
+    return {
+        'report_id': report_id,
+        'project_uuid': project_uuid,
+        'document': report.document,
+        'outcome': report.outcome.value,
+        'file_differs_from_loaded': bool(report.file_differs_from_loaded),
+        'conversions': [
+            {
+                'from_version': step.from_version,
+                'to_version': step.to_version,
+                'description': step.description,
+                'dropped_elements': list(step.dropped_elements),
+            }
+            for step in report.conversions
+        ],
+        'repairs': [
+            {
+                'field_path': repair.field_path,
+                'previous_value': _json_safe(repair.previous_value),
+                'substituted_value': _json_safe(repair.substituted_value),
+                'rule_name': repair.rule_name,
+            }
+            for repair in report.repairs
+        ],
+    }
+
+
+def load_failed_value(project_uuid, error):
+    """The ``value`` of ``document_load_failed`` for a :class:`DocumentLoadFailed`."""
+    violation = getattr(error.cause, 'violation', None)
+    cue_id, field = getattr(violation, 'location', None) or (None, None)
+    return {
+        'project_uuid': project_uuid,
+        'document': error.document,
+        'cue_id': None if cue_id is None else str(cue_id),
+        'field': field,
+        'message': str(error.cause),
+        'next_steps': list(LOAD_FAILED_NEXT_STEPS),
+    }
 
 
 class CuemsWsUser():
@@ -60,6 +118,11 @@ class CuemsWsUser():
         self.outgoing = asyncio.Queue()
         self.websocket = websocket
         self.session_id = None
+        # This session's last project_load and what the library did to it:
+        # project_uuid, report_id, outcome, file_differs_from_loaded,
+        # acknowledged, preserved. Only this session reads or writes it, and
+        # only on the event-loop thread. It dies with the connection.
+        self.repair_state = None
         server.users[self] = None
 
     async def consumer_handler(self):
@@ -144,6 +207,7 @@ class CuemsWsUser():
                     "node_status": lambda: self.node_status(action),
                     "project_status": lambda: self.project_status(action),
                     "project_unload": lambda: self.project_unload(action),
+                    "repair_acknowledge": lambda: self.repair_acknowledge(value, action),
                 }
 
                 if action in action_map:
@@ -377,6 +441,7 @@ class CuemsWsUser():
             self.server.users[self] = None
             if self.session_id and self.session_id in self.server.sessions:
                 self.server.sessions[self.session_id]['loaded_project'] = None
+            self.repair_state = None
 
             await self.outgoing.put(json.dumps({"type": functionNameAsString(), "value": "OK"}))
 
@@ -555,28 +620,85 @@ class CuemsWsUser():
             await self.notify_error_to_user(str(e), action=action)
 
     async def send_project(self, project_uuid, action):
-        """Load a project's XML from disk and send it to the client.
+        """Load a project's script from disk and send it to the client.
+
+        Sends ``{"type": "project"}`` with the script's wire value, then
+        ``document_load_report`` with what the library did on load (never
+        omitted, also for a clean load). When the library refuses the document
+        (an unrepairable value, or a document newer than the library) the
+        session gets ``document_load_failed`` instead of ``project``; the
+        session stays up and the project stays listed. Opening writes nothing.
 
         Also records *project_uuid* as the session's loaded project in
-        ``server.users`` and ``server.sessions``.
+        ``server.users`` and ``server.sessions``, and replaces this session's
+        repair state.
 
         Args:
             project_uuid: UUID string of the project to load.
             action: Action name from the WebSocket frame.
         """
+        self.repair_state = None   # a new load replaces whatever this session held
         try:
             Logger.info("user {} loading project {}".format(id(self.websocket), project_uuid))
-            project = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.load, project_uuid)
+            project, report = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.open, project_uuid)
             msg = json.dumps({"type": "project", "value": project})
             await self.outgoing.put(msg)
             self.server.users[self] = project_uuid
             self.server.sessions[self.session_id]['loaded_project'] = project_uuid
+
+            report_id = str(new_uuid())
+            self.repair_state = {
+                'project_uuid': project_uuid,
+                'report_id': report_id,
+                'outcome': report.outcome.value,
+                'file_differs_from_loaded': bool(report.file_differs_from_loaded),
+                'acknowledged': False,
+                'preserved': False,
+            }
+            await self.outgoing.put(json.dumps({
+                "type": "document_load_report",
+                "value": load_report_value(report_id, project_uuid, report),
+            }))
+        except DocumentLoadFailed as e:
+            Logger.warning(f"project {project_uuid} not opened: {e}")
+            await self.outgoing.put(json.dumps({
+                "type": "document_load_failed",
+                "value": load_failed_value(project_uuid, e),
+            }))
         except NonExistentItemError as e:
             Logger.info(e)
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
         except Exception as e:
             Logger.error("error: {} {}".format(type(e), e))
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
+
+    async def repair_acknowledge(self, value, action):
+        """Record that this session's operator has seen the load report.
+
+        Only this session's current report counts, by ``project_uuid`` and
+        ``report_id``; another session's acknowledgment never unlocks this one.
+        Writes nothing to disk.
+
+        Args:
+            value: ``{"project_uuid": ..., "report_id": ...}``.
+            action: Action name from the WebSocket frame.
+        """
+        state = self.repair_state
+        if state is None:
+            await self.notify_error_to_user('no load report to acknowledge on this session', action=action)
+            return
+        value = value if isinstance(value, dict) else {}
+        if value.get('project_uuid') != state['project_uuid'] or value.get('report_id') != state['report_id']:
+            await self.refuse_save(state, 'unacknowledged')
+            return
+        state['acknowledged'] = True
+        await self.outgoing.put(json.dumps({"type": "repair_acknowledge", "value": {
+            "project_uuid": state['project_uuid'], "report_id": state['report_id']}}))
+
+    async def refuse_save(self, state, reason):
+        """``repair_save_refused`` for this session's report."""
+        await self.outgoing.put(json.dumps({"type": "repair_save_refused", "value": {
+            "project_uuid": state['project_uuid'], "report_id": state['report_id'], "reason": reason}}))
 
     async def received_new_project(self, data, action, unix_name):
         """Create a new project and notify the client and other users.
@@ -602,20 +724,47 @@ class CuemsWsUser():
     async def received_project(self, data, action):
         """Save an edited project and notify the client and other users.
 
+        A project this session opened with a repair or a conversion is not
+        saved until this session acknowledges that report
+        (``repair_save_refused``, reason ``unacknowledged``). The first save
+        after that moves the original file into the trash before overwriting
+        it; if that move fails nothing is saved (reason ``preserve_failed``).
+        The decision is made here, on the event-loop thread; the move and the
+        save run in the executor.
+
         Args:
             data: ``CuemsScript`` dict containing ``id`` and updated fields.
             action: Action name echoed back in the confirmation.
         """
+        project_uuid = None
+        state = None
+        preserve = False
         try:
             project_uuid = data['CuemsScript']['id']
-            await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.update, project_uuid, data)
+            if self.repair_state and self.repair_state['project_uuid'] == project_uuid:
+                state = self.repair_state
+            if state and state['outcome'] != 'clean' and not state['acknowledged']:
+                await self.refuse_save(state, 'unacknowledged')
+                return
+            preserve = bool(state and state['file_differs_from_loaded'] and not state['preserved'])
+            if preserve:
+                state['preserved'] = True   # claimed before the await: one move per load
+            await self.server.event_loop.run_in_executor(
+                self.server.executor,
+                functools.partial(self.server.db.project.update, project_uuid, data, preserve_original=preserve))
             Logger.info("user {} saving project {}".format(id(self.websocket), project_uuid))
 
             self.server.users[self] = project_uuid
             await self.notify_user(uuid=project_uuid, action=action)
             await self.server.notify_others_list_changes(self, "project_list")
             await self.server.notify_others_same_project(self, "project_modified", project_uuid)
+        except OriginalNotPreserved as e:
+            Logger.error(f"project {project_uuid} not saved: {e}")
+            state['preserved'] = False
+            await self.refuse_save(state, 'preserve_failed')
         except Exception as e:
+            if preserve:
+                state['preserved'] = False
             Logger.error("error: {} {}".format(type(e), e))
             await self.notify_error_to_user((str(type(e)) + str(e)), uuid=project_uuid, action=action)
 
@@ -668,8 +817,14 @@ class CuemsWsUser():
         """
         try:
             Logger.info("user {} duplicating project: {}".format(id(self.websocket), project_uuid))
-            new_project_uuid = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.duplicate, project_uuid)
-            await self.notify_user(uuid=project_uuid, action=action, new_uuid=new_project_uuid)
+            new_project_uuid, report = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.duplicate, project_uuid)
+            reply = {"uuid": project_uuid, "new_uuid": new_project_uuid}
+            if report.outcome.value != 'clean':
+                # The copy is the repaired / converted document; say so. Optional
+                # key: an old reader ignores it. The source is not overwritten
+                # and no acknowledgment is asked for.
+                reply["report"] = load_report_value(str(new_uuid()), project_uuid, report)
+            await self.outgoing.put(json.dumps({"type": action, "value": reply}))
             await self.server.notify_others_list_changes(self, "project_list")
             await self.server.notify_others_list_changes(self, "file_list")
         except NonExistentItemError as e:
