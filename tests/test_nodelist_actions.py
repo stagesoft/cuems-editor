@@ -10,8 +10,9 @@ Three behaviours are pinned here:
   Without that check a None travels editor -> engine -> nodeconf and returns as
   the baffling "Node None not found".
 * `nodelist_get` re-reads network_map.xml on demand and answers with the same
-  `initial_mappings` payload a client already gets on connect, so refreshing
-  needs no reconnect and no new client-side handling.
+  `node_list` payload a client already gets on connect, so refreshing needs no
+  reconnect and no new client-side handling. (Until payload version 1 this
+  was `initial_mappings`; 001 T058 split the node list out of it.)
 * `nodeconf_available` tells the UI whether adoption can work at all on this
   host — cuems-nodeconf ships disabled on most of the fleet, and there every
   adopt/un-adopt click can only end in an error.
@@ -39,9 +40,9 @@ def user():
     # A real executor: run_in_executor rejects a MagicMock, and nodelist_get
     # reads the map through it exactly as the production path does.
     server.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    server.mappings_dict = {'nodes': [], 'new_nodes': []}
-    server.initial_setting_message = lambda: json.dumps(
-        {'type': 'initial_mappings', 'value': server.mappings_dict}
+    server.node_list = {'nodes': [], 'new_nodes': []}
+    server.node_list_message = lambda: json.dumps(
+        {'type': 'node_list', 'value': server.node_list}
     )
     session = CuemsWsUser(server, MagicMock())
     yield session
@@ -105,21 +106,21 @@ class TestNodelistModifyValidation:
 
 
 class TestNodelistGet:
-    def test_rereads_the_map_and_answers_with_initial_mappings(self, user):
+    def test_rereads_the_map_and_answers_with_node_list(self, user):
         user.server.reload_network_map_nodes = MagicMock(return_value=True)
-        user.server.mappings_dict = {
+        user.server.node_list = {
             'nodes': [{'node': {'uuid': NODE, 'adopted': True}}],
             'new_nodes': [],
         }
-        user.server.initial_setting_message = lambda: json.dumps(
-            {'type': 'initial_mappings', 'value': user.server.mappings_dict}
+        user.server.node_list_message = lambda: json.dumps(
+            {'type': 'node_list', 'value': user.server.node_list}
         )
 
         user.server.event_loop.run_until_complete(user.nodelist_get('nodelist_get'))
         msgs = user.server.event_loop.run_until_complete(_drain(user))
 
         assert len(msgs) == 1
-        assert msgs[0]['type'] == 'initial_mappings'
+        assert msgs[0]['type'] == 'node_list'
         assert msgs[0]['value']['nodes'][0]['node']['uuid'] == NODE
 
     def test_unreadable_map_is_an_error_not_a_silent_empty_list(self, user):
@@ -272,7 +273,7 @@ class TestNodeconfAvailableFlag:
             MockCM.return_value.network_map = {'node_list': []}
             ok = server.reload_network_map_nodes()
 
-        return ok, server.mappings_dict
+        return ok, server
 
     def test_the_flag_is_sampled_per_message_not_cached(self):
         """The scenario this exists for: the operator has Settings open, then
@@ -283,13 +284,13 @@ class TestNodeconfAvailableFlag:
         from cuemseditor.CuemsWsServer import CuemsWsServer
 
         server = CuemsWsServer.__new__(CuemsWsServer)
-        server.mappings_dict = {'nodes': [], 'new_nodes': []}
+        server.node_list = {'nodes': [], 'new_nodes': []}
 
         with patch.object(CuemsWsServer, 'nodeconf_available', return_value=True):
-            up = json.loads(server.initial_setting_message())
+            up = json.loads(server.node_list_message())
         # nodeconf stops. Nothing on disk changes.
         with patch.object(CuemsWsServer, 'nodeconf_available', return_value=False):
-            down = json.loads(server.initial_setting_message())
+            down = json.loads(server.node_list_message())
 
         assert up['value']['nodeconf_available'] is True
         assert down['value']['nodeconf_available'] is False
@@ -331,15 +332,23 @@ class TestNodeconfAvailableFlag:
 
         assert server.notify_all_node_list_update.called
 
+    # Since payload version 1 the flag is an envelope field of node_list,
+    # sampled when the frame is built, and never stored in the mappings.
     def test_true_when_the_socket_is_there(self, tmp_path):
-        ok, mappings = self._reload(tmp_path, socket_exists=True)
+        from cuemseditor.CuemsWsServer import CuemsWsServer
+        ok, server = self._reload(tmp_path, socket_exists=True)
         assert ok is True
-        assert mappings['nodeconf_available'] is True
+        with patch.object(CuemsWsServer, 'nodeconf_available', return_value=True):
+            assert json.loads(server.node_list_message())['value']['nodeconf_available'] is True
+        assert 'nodeconf_available' not in server.mappings_dict
 
     def test_false_when_nodeconf_is_disabled(self, tmp_path):
-        ok, mappings = self._reload(tmp_path, socket_exists=False)
+        from cuemseditor.CuemsWsServer import CuemsWsServer
+        ok, server = self._reload(tmp_path, socket_exists=False)
         assert ok is True
-        assert mappings['nodeconf_available'] is False
+        with patch.object(CuemsWsServer, 'nodeconf_available', return_value=False):
+            assert json.loads(server.node_list_message())['value']['nodeconf_available'] is False
+        assert 'nodeconf_available' not in server.mappings_dict
 
 
 # ─── node_status (liveness relay) ────────────────────────────────────────

@@ -4,7 +4,8 @@ Commands 													 ->	Responses
 																
 
 																->  {"type" : "payload_version", "value": 1}		(first frame on every connection)
-																->  {"type" : "initial_mappings", "value": "mapings_json"}
+																->  {"type" : "initial_mappings", "value": "mapings_json"}		(the mapping document only)
+																->  {"type" : "node_list", "value": {"nodes": [...], "new_nodes": [...], "nodeconf_available": bool}}
 																->  {"type" : "users", "value": "connected_users_count"}
 
 																->  {"type" : "project_update", "value" : "project_uuid"}
@@ -48,7 +49,7 @@ Commands 													 ->	Responses
 
 {"action" : "hw_discovery"}   									->  {"type": "hw_discovery", "value": "hardware_json"}
 {"action" : "nodelist_modify", "value" : "node_uuid", "modify_action" : "ADD|REMOVE"}		->  {"type": "nodelist_modify", "value": "OK"}
-{"action" : "nodelist_get"}										->  {"type": "initial_mappings", "value": "mappings_json"}
+{"action" : "nodelist_get"}										->  {"type": "node_list", "value": {"nodes": [...], "new_nodes": [...], "nodeconf_available": bool}}
 {"action" : "schema_descriptor", "value" : "script|settings|network_map|project_mappings|project_settings|hardware_outputs"}	->  {"type": "schema_descriptor", "value": {"schema": "name", "types": [{"key": "schema:TypeName", "fields": [{"name", "xsd_type", "required", "repeated", "order", "kind", "enum_values", "default", "repairability"}], "instance": {...}}]}}
 {"action" : "config_save", "value" : {"schema": "name", "document": {...}}}	->  {"type": "config_save", "value": "OK"}		(not yet: see below)
 {"action" : "node_status"}										->  {"type": "node_status", "value": {"alive": [...], "adopted": [...], "controller": "uuid", "age_s": 0.1, "missing": [...], "unreachable": [...]}}
@@ -66,8 +67,8 @@ fails if the advertised integer has none.
 
 payload_version 1: the 001 coordinated-tag wire. project deltas (a) (b) (c);
 initial_template no longer sent (clients build from schema_descriptor's
-per-type instance); node_list split out of initial_mappings (001 T058, not
-landed yet — see specs/001-cuems-utils-migration/tasks.md).
+per-type instance); the node arrays and nodeconf_available move from
+initial_mappings to node_list, which initial_mappings no longer carries.
 
 schema_descriptor / config_save (caller only)
 
@@ -174,17 +175,25 @@ New message types do not bump the payload version.
 
 Nodes: adoption
 
-The node list is pushed as "initial_mappings" on connect, after a successful
-nodelist_modify, and whenever cuems-nodeconf rewrites network_map.xml (the
-editor watches its mtime). "nodelist_get" is only for refreshing on demand
-without reconnecting; it replies with the same payload, so a client needs no
-extra handling for it.
+The node list is pushed as "node_list" on connect (after initial_mappings),
+after a successful nodelist_modify, and whenever cuems-nodeconf rewrites
+network_map.xml (the editor watches its mtime). "nodelist_get" is only for
+refreshing on demand without reconnecting; it replies with the same payload,
+so a client needs no extra handling for it. Audience: all sessions for the
+push, the caller for nodelist_get.
 
     value.nodes              adopted nodes
     value.new_nodes          discovered, not adopted yet
     value.nodeconf_available false = cuems-nodeconf is not running on this
                              host, so every adopt/un-adopt WILL fail. Grey the
                              controls instead of letting the operator click.
+                             Sampled when the frame is built. It is not on any
+                             node and not in initial_mappings.
+
+Before payload version 1 all of this rode inside "initial_mappings" (version
+0). initial_mappings is now the output mapping document alone: number_of_nodes,
+defaults, and its nodes / new_nodes as the document has them (devices, no
+status). The mixers that read it from localStorage need the 05 eviction.
 
 Each node carries uuid, mac, name, ip, node_role, adopted, online and the
 optional identity fields role_id / alias / hostname, in the library's wire
@@ -209,9 +218,9 @@ network_map.xml names one node identity on two rows. The editor does not
 retry that read (the file will not become unique by waiting), keeps serving
 the last good node list, logs once per identity, and broadcasts the first
 frame to every session, and to each session that connects while it stands
-(after initial_mappings). The next successful read broadcasts the null frame,
-then the usual initial_mappings. A nodelist_get while it stands answers the
-caller with the error frame, then the last good initial_mappings. Fix: decide
+(after node_list). The next successful read broadcasts the null frame, then
+the usual node_list. A nodelist_get while it stands answers the caller with
+the error frame, then the last good node_list. Fix: decide
 from the two rows' MACs which is the real node and run cuems-init-node
 --remint (the library's message, in the editor log, says the same).
 

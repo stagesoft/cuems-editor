@@ -66,7 +66,7 @@ def test_payload_version_is_the_first_frame_on_connect(server):
     types = [frame['type'] for frame in socket.sent]
     assert socket.sent[0] == {'type': 'payload_version', 'value': 1}
     assert types.count('payload_version') == 1
-    assert {'users', 'session_id', 'initial_mappings'} <= set(types)
+    assert {'users', 'session_id', 'initial_mappings', 'node_list'} <= set(types)
 
 
 def test_the_advertised_version_has_a_bump_row():

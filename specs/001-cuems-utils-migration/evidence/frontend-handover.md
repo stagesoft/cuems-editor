@@ -44,7 +44,7 @@ today's UI until 05 renders them): `document_load_report`, `document_load_failed
 | `src/app/services/projects/projects.service.ts:240` | `initial_template` is no longer sent. Build new scripts from `schema_descriptor("script")`'s per-type `instance` |
 | `src/app/services/projects/projects.service.ts:243` | nothing writes `localStorage` `initial_template` any more |
 | `src/app/services/projects/projects.service.ts:159` | a template cached there before 001 milestone 2 is never refreshed: evict it on version 1 |
-| `src/app/components/settings/settings.component.ts` (`:59` reads `new_nodes`) | the node arrays and `nodeconf_available` move to a `node_list` frame (T058, **not landed**: see `tasks.md`). Also show `network_map_error` |
+| `src/app/components/settings/settings.component.ts` (`:58`–`:59` read `initial_mappings().value.nodes` / `new_nodes`) | the node arrays and `nodeconf_available` are the `node_list` frame's value (T058). `initial_mappings` keeps only the mapping document. Also show `network_map_error` |
 | `src/app/components/projects/project-show/audio-mixer/audio-mixer.component.ts:80` | reads `localStorage` `initial_mappings`, `value.nodes[].node.audio`. After cuems-utils 013 a mapping node has `devices` / `device` / `class`, not `audio`. The cache needs an eviction story on payload version 1 |
 | `src/app/components/projects/project-show/video-mixer/video-mixer.component.ts:94` | same, for `video` |
 | (project open / save) | render `document_load_report`, offer `repair_acknowledge` for a non-clean report, handle `repair_save_refused`; render `document_load_failed` with its three `next_steps` |

@@ -554,13 +554,12 @@ class CuemsWsUser():
     async def nodelist_get(self, action):
         """Re-read network_map.xml and send this client the current node list.
 
-        Same payload the client already gets on connect
-        (``initial_mappings``: ``nodes`` = adopted, ``new_nodes`` = discovered
-        but not adopted), so no new client-side handling is needed — it is just
-        a way to refresh on demand instead of reconnecting. While the map has a
-        duplicate node identity, ``network_map_error`` comes first and the
-        list is the last good one; a read that clears it sends
-        ``network_map_error: null`` first.
+        Same ``node_list`` frame the client gets on connect and on every map
+        change (``nodes`` = adopted, ``new_nodes`` = discovered but not
+        adopted, ``nodeconf_available``) — a way to refresh on demand instead
+        of reconnecting. While the map has a duplicate node identity,
+        ``network_map_error`` comes first and the list is the last good one; a
+        read that clears it sends ``network_map_error: null`` first.
 
         Args:
             action: Action name from the WebSocket frame.
@@ -578,7 +577,7 @@ class CuemsWsUser():
             cleared = self.server.assign_network_map_nodes(result)
             if isinstance(result, IdentityCollision) or cleared is True:
                 await self.outgoing.put(self.server.network_map_error_message())
-            await self.outgoing.put(self.server.initial_setting_message())
+            await self.outgoing.put(self.server.node_list_message())
 
         except Exception as e:
             Logger.error(f"error: {type(e)} {e}")

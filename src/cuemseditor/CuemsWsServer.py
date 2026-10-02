@@ -72,9 +72,10 @@ class CuemsWsServer():
             settings_dict: Settings dict from ``settings.xml``; required keys
                 include ``editor_ipc``, ``tmp_path``, ``session_uuid``, and
                 ``library_path``.
-            mappings_dict: Output mapping dict from ``project_mappings.xml``;
-                passed verbatim to the frontend as the initial mappings
-                message and updated when nodes change adoption status.
+            mappings_dict: Output mapping document (``default_mappings.xml``),
+                the library object or its wire form. Served verbatim as
+                ``initial_mappings``; the network-map nodes are merged with
+                its mapping nodes for ``node_list``, never into it.
 
         Raises:
             KeyError: If a required key is absent from *settings_dict*.
@@ -92,6 +93,9 @@ class CuemsWsServer():
         # every key that schema does not declare: nodeconf_available, and the
         # network-map fields merged into each node (node_role).
         self.mappings_dict = mappings_dict.to_wire() if hasattr(mappings_dict, 'to_wire') else mappings_dict
+        # The network-map nodes merged with their mapping nodes, as served on
+        # node_list. Assigned on the event-loop thread only (constructor aside).
+        self.node_list = {'nodes': [], 'new_nodes': []}
         try:
             self.tmp_path = self.settings_dict['tmp_path']
             self.session_uuid = self.settings_dict['session_uuid']
@@ -236,12 +240,13 @@ class CuemsWsServer():
     async def send_initial_frames(self, user_session):
         """Queue the frames a project-manager session gets after registering, in order.
 
-        ``initial_mappings``, then ``network_map_error`` while a map error
+        ``initial_mappings``, ``node_list``, then ``network_map_error`` while a map error
         stands. ``payload_version`` precedes them (see
         :meth:`project_manager_session`). ``initial_template`` is retired at
         payload version 1: clients build from ``schema_descriptor``.
         """
         await user_session.outgoing.put(self.initial_setting_message())
+        await user_session.outgoing.put(self.node_list_message())
         if self.network_map_error is not None:
             await user_session.outgoing.put(self.network_map_error_message())
 
@@ -511,7 +516,7 @@ class CuemsWsServer():
                     raise
                 adopted, unadopted = partition_by_adoption(cf_manager.network_map)
 
-                # Merge with existing data to preserve outputs configuration.
+                # Merge with the mapping document's nodes to carry their outputs.
                 # Both lists, so a node that changed adoption keeps its outputs.
                 all_existing = (self.mappings_dict.get('nodes') or []) + (self.mappings_dict.get('new_nodes') or [])
                 return NodeLists(self.merge_node_data(all_existing, adopted),
@@ -531,10 +536,9 @@ class CuemsWsServer():
     def assign_network_map_nodes(self, result):
         """Apply a read to shared state. Event-loop thread (or the constructor).
 
-        A :class:`NodeLists` replaces ``nodes`` / ``new_nodes``, samples
-        ``nodeconf_available`` fresh, and clears a standing map error. An
-        :class:`IdentityCollision` keeps the last good lists and records the
-        error, logging each distinct identity once.
+        A :class:`NodeLists` replaces ``node_list`` and clears a standing map
+        error. An :class:`IdentityCollision` keeps the last good lists and
+        records the error, logging each distinct identity once.
 
         Returns:
             ``True`` when this read cleared a standing map error.
@@ -550,9 +554,7 @@ class CuemsWsServer():
             }
             return False
 
-        self.mappings_dict['nodes'] = result.nodes
-        self.mappings_dict['new_nodes'] = result.new_nodes
-        self.mappings_dict['nodeconf_available'] = self.nodeconf_available()
+        self.node_list = {'nodes': result.nodes, 'new_nodes': result.new_nodes}
         Logger.debug(f'Network map reloaded successfully: {len(result.nodes)} adopted nodes, {len(result.new_nodes)} new nodes')
         cleared = self.network_map_error is not None
         self.network_map_error = None
@@ -581,13 +583,28 @@ class CuemsWsServer():
         return os.path.exists(self.NODECONF_IPC)
 
     def initial_setting_message(self):
-        """Build the initial mappings message sent to new clients.
+        """The project output mappings, as sent on connect.
 
         Returns:
-            JSON string ``{"type": "initial_mappings", "value": <mappings_dict>}``.
+            JSON string ``{"type": "initial_mappings", "value": <mapping document>}``.
+            Since payload version 1 it carries no network-map status and no
+            ``nodeconf_available``: those are :meth:`node_list_message`'s.
         """
-        self.mappings_dict['nodeconf_available'] = self.nodeconf_available()
         return json.dumps({"type": "initial_mappings", "value": self.mappings_dict})
+
+    def node_list_message(self):
+        """The node list, with ``nodeconf_available`` sampled now.
+
+        Returns:
+            JSON string ``{"type": "node_list", "value": {"nodes": [...],
+            "new_nodes": [...], "nodeconf_available": bool}}``. The flag is an
+            envelope field: it is not on any node and not in any document.
+        """
+        return json.dumps({"type": "node_list", "value": {
+            "nodes": self.node_list['nodes'],
+            "new_nodes": self.node_list['new_nodes'],
+            "nodeconf_available": self.nodeconf_available(),
+        }})
 
     NETWORK_MAP_POLL_S = 3.0
 
@@ -655,8 +672,8 @@ class CuemsWsServer():
 
         The read runs in the thread-pool executor; its result is assigned here,
         on the event-loop thread. On success every connected user gets
-        ``initial_mappings``, preceded by ``network_map_error: null`` when the
-        read cleared a standing error. On a duplicate node identity every user
+        ``node_list``, preceded by ``network_map_error: null`` when the read
+        cleared a standing error. On a duplicate node identity every user
         gets ``network_map_error`` and the last good list stays in place.
         """
         result = await self.event_loop.run_in_executor(
@@ -670,7 +687,7 @@ class CuemsWsServer():
         if isinstance(result, IdentityCollision):
             messages = [self.network_map_error_message()]
         else:
-            messages = ([self.network_map_error_message()] if cleared else []) + [self.initial_setting_message()]
+            messages = ([self.network_map_error_message()] if cleared else []) + [self.node_list_message()]
         if self.users:
             for user in self.users:
                 for message in messages:

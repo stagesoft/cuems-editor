@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The editor's node merge and the ``initial_mappings`` wire form (FR-028–FR-036a).
+"""The editor's node merge and the ``initial_mappings`` / ``node_list`` wire (FR-028–FR-036a, FR-046).
 
 Pins what this repository does with the library's nodes: the merge into the
 mapping nodes, the string form the UI reads, where the shared state is
@@ -90,22 +90,25 @@ def _capture_value():
         return json.load(fh)['value']
 
 
-def apply_mapping_deltas(captured, library_wire, mapping_uuids):
-    """The pre-001 frame moved through the enumerated deltas, and nothing else.
+def apply_node_deltas(captured, library_wire, mapping_uuids):
+    """The pre-001 frame's node arrays, moved through the enumerated deltas.
 
-    (m1) ``nodeconf_available`` is present, last. The pre-001 frame lost it:
-         ``json.dumps`` of the library mappings object drops undeclared keys.
+    (m1) ``nodeconf_available`` is present, beside the arrays. The pre-001
+         frame lost it: ``json.dumps`` of the library mappings object drops
+         undeclared keys.
     (m2) a merged node's status fields are ``to_wire()``'s: ``adopted`` and
          ``online`` are ``"True"`` / ``"False"`` (were JSON booleans), and
          ``node_role`` follows ``name``. The mapping node's own keys, output
          blocks included, keep their place and value.
     (m3) a node only in the map is its own ``to_wire()``, key for key
          (none in this fixture; ``test_a_node_the_mappings_do_not_know_is_its_own_wire_form``).
+    (m4) payload version 1: these arrays and the flag are the ``node_list``
+         frame's value; ``initial_mappings`` no longer carries them.
     """
-    value = copy.deepcopy(captured)
+    value = {}
     for key in ('nodes', 'new_nodes'):
         moved = []
-        for item in value[key]:
+        for item in captured[key]:
             node = item['node']
             wire = library_wire[node['uuid']]
             if node['uuid'] in mapping_uuids:                       # (m2)
@@ -122,20 +125,36 @@ def apply_mapping_deltas(captured, library_wire, mapping_uuids):
     return value
 
 
-def test_initial_mappings_differs_from_the_capture_only_by_the_listed_deltas(server):
+def test_node_list_differs_from_the_capture_only_by_the_listed_deltas(server):
     adopted, unadopted = _library_nodes()
     library_wire = {str(n.to_wire()['uuid']): n.to_wire() for n in adopted + unadopted}
-
     mapping_uuids = {item['node']['uuid'] for item in _mapping_nodes()}
-    frame = json.loads(server.initial_setting_message())
 
-    assert frame['type'] == 'initial_mappings'
-    expected = apply_mapping_deltas(_capture_value(), library_wire, mapping_uuids)
+    frame = json.loads(server.node_list_message())
+
+    assert frame['type'] == 'node_list'                             # (m4)
+    expected = apply_node_deltas(_capture_value(), library_wire, mapping_uuids)
     assert json.dumps(frame['value']) == json.dumps(expected)
 
 
-def test_merged_nodes_carry_the_string_wire_form(server):
+def test_initial_mappings_is_the_mapping_document_alone(server):
+    """(m4): the capture's non-node keys, and its nodes as the document has them."""
     frame = json.loads(server.initial_setting_message())
+
+    assert frame['type'] == 'initial_mappings'
+    with patch.dict(os.environ, {'CUEMS_CONF_PATH': CONF}):
+        document = get_mappings().to_wire()
+    assert json.dumps(frame['value']) == json.dumps(document)
+    assert 'nodeconf_available' not in frame['value']
+    captured = _capture_value()
+    assert [k for k in frame['value']] == [k for k in captured]
+    assert frame['value']['defaults'] == captured['defaults']
+    for item in frame['value']['nodes'] + frame['value']['new_nodes']:
+        assert not {'online', 'adopted', 'node_role'} & set(item['node'])
+
+
+def test_merged_nodes_carry_the_string_wire_form(server):
+    frame = json.loads(server.node_list_message())
     for key in ('nodes', 'new_nodes'):
         for item in frame['value'][key]:
             node = item['node']
@@ -148,12 +167,13 @@ def test_merged_nodes_carry_the_string_wire_form(server):
 
 def test_mapping_output_blocks_survive_the_merge_including_an_unnamed_class(server):
     """A merge that only copied audio / video / dmx would lose ``lighting``."""
-    frame = json.loads(server.initial_setting_message())
+    frame = json.loads(server.node_list_message())
     controller = next(item['node'] for item in frame['value']['nodes']
                       if item['node']['uuid'] == CONTROLLER)
     classes = [d['device']['class'] for d in controller['devices']]
     assert classes == ['audio', 'video', 'dmx', 'lighting']
-    assert [d['default']['class'] for d in frame['value']['defaults']] == \
+    mappings = json.loads(server.initial_setting_message())['value']
+    assert [d['default']['class'] for d in mappings['defaults']] == \
         ['audio', 'audio', 'video', 'video', 'dmx', 'dmx']
 
 
@@ -161,26 +181,30 @@ def test_mapping_output_blocks_survive_the_merge_including_an_unnamed_class(serv
 
 
 def test_the_executor_read_does_not_touch_shared_state(server):
-    before = copy.deepcopy(server.mappings_dict)
+    before = copy.deepcopy((server.mappings_dict, server.node_list))
     result = server.reload_network_map_nodes(assign=False)
     assert result
-    assert server.mappings_dict == before
+    assert (server.mappings_dict, server.node_list) == before
 
 
 def test_both_paths_sample_nodeconf_available_fresh(server):
-    with patch.object(CuemsWsServer, 'nodeconf_available', return_value=True):
-        assert json.loads(server.initial_setting_message())['value']['nodeconf_available'] is True
-
-    server.users = {}
+    """Serve path (a connect) and refresh path (a map change) each sample it."""
+    session = _Session()
+    server.users = {session: None}
     server.event_loop = asyncio.new_event_loop()
     server.executor = None   # run_in_executor(None, ...) uses the loop's default
     try:
-        with patch.object(CuemsWsServer, 'nodeconf_available', return_value=True):
-            server.event_loop.run_until_complete(server.notify_all_node_list_update())
-        assert server.mappings_dict['nodeconf_available'] is True
-        with patch.object(CuemsWsServer, 'nodeconf_available', return_value=False):
-            server.event_loop.run_until_complete(server.notify_all_node_list_update())
-        assert server.mappings_dict['nodeconf_available'] is False
+        for flag in (True, False, True):
+            with patch.object(CuemsWsServer, 'nodeconf_available', return_value=flag):
+                server.event_loop.run_until_complete(server.send_initial_frames(session))
+                served = [f for f in session.drain() if f['type'] == 'node_list']
+                server.event_loop.run_until_complete(server.notify_all_node_list_update())
+                refreshed = [f for f in session.drain() if f['type'] == 'node_list']
+            assert served[0]['value']['nodeconf_available'] is flag
+            assert refreshed[0]['value']['nodeconf_available'] is flag
+        assert 'nodeconf_available' not in server.mappings_dict
+        for item in server.node_list['nodes'] + server.node_list['new_nodes']:
+            assert 'nodeconf_available' not in item['node']
     finally:
         server.event_loop.close()
 
@@ -209,7 +233,7 @@ def _duplicate_conf(tmp_path):
 
 def test_a_duplicate_identity_is_not_retried_and_is_broadcast(server, tmp_path, monkeypatch):
     conf = _duplicate_conf(tmp_path)
-    last_good = copy.deepcopy(server.mappings_dict['nodes'])
+    last_good = copy.deepcopy(server.node_list)
     one, two = _Session(), _Session()
     server.users = {one: None, two: None}
     server.event_loop = asyncio.new_event_loop()
@@ -221,7 +245,7 @@ def test_a_duplicate_identity_is_not_retried_and_is_broadcast(server, tmp_path, 
         server.event_loop.run_until_complete(server.notify_all_node_list_update())
 
         assert all(s < 0.1 for s in sleeps), f'retried with back-off: {sleeps}'
-        assert server.mappings_dict['nodes'] == last_good
+        assert server.node_list == last_good
         for session in (one, two):
             frames = session.drain()
             assert frames == [{'type': 'network_map_error', 'value': {
@@ -242,7 +266,7 @@ def test_a_duplicate_identity_is_not_retried_and_is_broadcast(server, tmp_path, 
         server.event_loop.run_until_complete(server.notify_all_node_list_update())
         for session in (one, two):
             frames = session.drain()
-            assert [f['type'] for f in frames] == ['network_map_error', 'initial_mappings']
+            assert [f['type'] for f in frames] == ['network_map_error', 'node_list']
             assert frames[0]['value'] is None
     finally:
         server.event_loop.close()
