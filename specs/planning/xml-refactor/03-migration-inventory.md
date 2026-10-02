@@ -181,8 +181,19 @@ Upstream's clarification settled the two behaviours this repository owes:
 | `CuemsWsServer.py:447` [`:439`] | `reload_network_map_nodes` | the entanglement, §6 of `04-wire-contract.md` |
 | `CuemsWsServer.py:102` [`:98`], `:604-610` [`:516-522`] | callers of `reload_network_map_nodes` (one in the thread-pool executor) | re-check the concurrency story once the mutation is gone |
 
-`online` and `adopted` are **`bool`** now, not the strings `"True"`/`"False"` — `network_map` is the
-one config schema whose decode runs the adapter table (007 R1).
+`online` and `adopted` are **`bool` in memory** after the decode — `network_map` is the one config
+schema whose decode runs the adapter table (007 R1) — but the **wire form is unchanged**:
+`json.dumps` still emits the strings `"True"`/`"False"` (spec F6, exit criterion 4). In-memory
+comparisons in the editor use the typed values; anything reading the WS payload sees strings.
+
+**A consumer already reads the wire form wrongly.** This is a `cuems-frontend` read, not an editor one:
+
+| Site | Today | After |
+|---|---|---|
+| `cuems-frontend` `settings.component.ts:176` | `node.online === true` against a payload that carries `"True"`/`"False"` | **Broken as written**: a string is never `=== true`, so the online badge shows *off* for every node. The fix is on the frontend side, not here: compare against the wire string (or normalise once on receipt). The editor must **not** switch the wire to real booleans to suit it — that is a payload change outside the two-delta statement, and the two mixers plus `localStorage` readers would see it too (`04-wire-contract.md` §6) |
+
+Not verifiable from this repository (the frontend is a sibling checkout): confirm the line number
+there, and `grep` the same file for the matching `adopted === true` read before closing the item.
 
 ## 8. `repair_durations.py` — the item needing the most care
 

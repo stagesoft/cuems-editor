@@ -379,6 +379,7 @@ colour means anything.
 | 9 | **`tests/test_nodelist_actions.py` is green throughout and unedited.** It pins the node-adoption surface this migration must preserve, not replace — an edit to it is the signal that the port moved something it should not have |
 | 10 | **`tests/ws-command-responses.txt` still describes what the server actually sends.** It is the UI team's reference for these messages |
 | 11 | Items that could not be performed are recorded as **not performed**, per entry. Silence is not an acceptable third state — the convention both landed siblings followed |
+| 12 | **The adoption screen's online badge reads the wire form.** `cuems-frontend` `settings.component.ts:176` checks `node.online === true`, but the editor sends `"True"`/`"False"`, so the badge shows off for every node. Met when the frontend compares against the wire form (or normalises on receipt) and a node with `"online": "True"` renders online — **or** recorded as *not performed* with the frontend flow named as owner. The editor's payload does not change to satisfy it (criterion 4). Check the adjacent `adopted` read in the same file |
 
 ---
 
