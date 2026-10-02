@@ -251,8 +251,8 @@ Depends on T047 and on T016 (the server connects). Do not remove keys from `init
 
 **Purpose**: Close the exit list. Do not fix carried constitution violations in passing.
 
-- [ ] T062 Run `specs/001-cuems-utils-migration/quickstart.md`. For every step this environment cannot perform (live controller UI, applying `debian-consolidation.md` onto `debian/bookworm`, a frontend rendering the report), add a *not performed* row with the reason in `specs/001-cuems-utils-migration/evidence/not-performed.md` (FR-044). An omitted row is not a pass
-- [ ] T063 [P] Confirm `CuemsDBProject.delete_from_trash`, the `ProjectMappings` import in `src/cuemseditor/cli.py`, and `script_file_name` were not changed. They stay carried in `specs/001-cuems-utils-migration/plan.md` Complexity Tracking (FR-043)
+- [X] T062 Run `specs/001-cuems-utils-migration/quickstart.md`. For every step this environment cannot perform (live controller UI, applying `debian-consolidation.md` onto `debian/bookworm`, a frontend rendering the report), add a *not performed* row with the reason in `specs/001-cuems-utils-migration/evidence/not-performed.md` (FR-044). An omitted row is not a pass
+- [X] T063 [P] Confirm `CuemsDBProject.delete_from_trash`, the `ProjectMappings` import in `src/cuemseditor/cli.py`, and `script_file_name` were not changed. They stay carried in `specs/001-cuems-utils-migration/plan.md` Complexity Tracking (FR-043)
 
 ---
 

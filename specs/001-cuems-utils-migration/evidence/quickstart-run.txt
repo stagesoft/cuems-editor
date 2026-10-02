@@ -1,0 +1,29 @@
+# T062 — quickstart.md run, 2026-10-02T09:24:31+02:00, editor d1ae2b2, cuemsutils @ 6213b16
+
+## §0
+0.1.0rc16 /disk/Projects/StageLab/cuems-utils/src/cuemsutils/__init__.py
+
+## §2
+imports
+
+## §3
+census regex: exit 1
+names: exit 1
+28:from cuemsutils.tools.NodeList import partition_by_adoption
+512:                adopted, unadopted = partition_by_adoption(cf_manager.network_map)
+node_type: exit 1
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+## §6
+repair tool script writes: exit 1
+
+## §8
+    "cuemsutils>=0.1.0rc16,<0.1.1",
+         cuems-utils (>= 0.1.0rc16),
+         cuems-utils (<< 0.1.1~),
+72f952a6a832
+../.xml-refactor-tag-messages/editor-tag.msg
+
+## suite
+FAILED tests/test_project_payload.py::test_open_frame_differs_from_the_capture_by_three_deltas_only
+1 failed, 152 passed, 2 skipped, 1 xfailed in 4.85s
