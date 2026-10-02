@@ -1,6 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 from peewee import *
 
 from cuemsutils.helpers import new_datetime
+from cuemsutils.log import Logger
 
 database = SqliteDatabase(None, pragmas={
     'foreign_keys': 1,
@@ -100,6 +104,12 @@ class Media(CuemsBaseModel):
         media_type: ``"MOVIE"``, ``"AUDIO"``, or ``"IMAGE"`` (from
             ``MediaType.name``).
         in_trash: ``True`` when the file has been soft-deleted.
+        pixel_width / pixel_height: original size in pixels of a movie's
+            first video stream, measured at upload like the duration, so the
+            engine does not probe the file when it arms a cue (869fat84r);
+            ``None`` when unknown.
+        file_size: the file's size in bytes when they were measured; the
+            engine compares it with its own copy to notice a replaced file.
     """
 
     uuid = UUIDField(index=True, unique=True, primary_key=True)
@@ -111,6 +121,11 @@ class Media(CuemsBaseModel):
     duration = CharField(null=True)
     media_type = CharField()
     in_trash = BooleanField(default=False)
+    # Added 2026-10 (869fat84r); existing databases get them from
+    # ensure_media_columns() at start-up.
+    pixel_width = IntegerField(null=True)
+    pixel_height = IntegerField(null=True)
+    file_size = IntegerField(null=True)
 
     @staticmethod
     def all_fields():
@@ -120,7 +135,7 @@ class Media(CuemsBaseModel):
             List of Peewee field descriptors covering every column on
             ``Media``.
         """
-        return [Media.uuid, Media.name, Media.unix_name, Media.description, Media.created, Media.modified, Media.duration, Media.media_type, Media.in_trash]
+        return [Media.uuid, Media.name, Media.unix_name, Media.description, Media.created, Media.modified, Media.duration, Media.media_type, Media.in_trash, Media.pixel_width, Media.pixel_height, Media.file_size]
 
     def projects(self):
         """Query all ``Project`` records that reference this media file.
@@ -184,3 +199,38 @@ class ProjectMedia(CuemsBaseModel):
                     (Media.uuid == None) |
                     (Project.uuid == None))
                 .order_by(Media.created))
+
+
+#: Columns added to ``media`` after databases already existed in the field.
+MEDIA_ADDED_COLUMNS = ('pixel_width', 'pixel_height', 'file_size')
+
+
+def missing_media_columns(db):
+    """Added ``media`` columns that this database does not have yet."""
+    existing = {column.name for column in db.get_columns(Media._meta.table_name)}
+    return [name for name in MEDIA_ADDED_COLUMNS if name not in existing]
+
+
+def ensure_media_columns(db):
+    """Add the missing ``media`` columns to an existing database.
+
+    ``create_tables(safe=True)`` creates missing tables but never adds a
+    column to an existing one, and the editor has no migration framework, so
+    this runs at every start (``CuemsDBManager``) and in the repair tool,
+    which opens the database itself. Additive and idempotent: an older
+    editor still reads the migrated database (peewee selects named columns).
+
+    Returns:
+        The names of the columns added (empty when nothing was missing).
+
+    Raises:
+        Any database error: the caller must not carry on with a model the
+        table does not match (every media query would fail).
+    """
+    added = []
+    for name in missing_media_columns(db):
+        db.execute_sql(
+            f'ALTER TABLE "{Media._meta.table_name}" ADD COLUMN "{name}" INTEGER')
+        Logger.info(f'database migration: added column media.{name}')
+        added.append(name)
+    return added

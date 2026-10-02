@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import os
 import traceback
 import shutil
@@ -14,6 +17,7 @@ from cuemsutils.log import logged, Logger
 
 from cuemseditor.CuemsErrors import *
 from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia
+from cuemseditor.CuemsDBMedia import media_file_size, probe_dimensions
 
 
 class DurationFixStats:
@@ -22,16 +26,51 @@ class DurationFixStats:
     Attributes:
         media_refs: Number of cue ``Media`` blocks visited.
         replacements: Number of ``duration`` values actually changed.
+        dimension_changes: Number of ``Media`` blocks whose stored size
+            (``pixel_width`` / ``pixel_height`` / ``file_size``) changed:
+            filled, replaced, or removed.
         orphans: List of ``file_name`` values referencing a media file with no
             ``Media`` row (duration left untouched — a leftover
             ``00:00:00.000`` there matches the valid timecode shape, so it is
             invisible to a pattern scan; report it explicitly instead).
+        errors: ``file_name`` values whose ``Media`` block could not be
+            processed (logged; the walk went on with the next cue).
     """
 
     def __init__(self):
         self.media_refs = 0
         self.replacements = 0
+        self.dimension_changes = 0
         self.orphans = []
+        self.errors = []
+
+
+#: The stored size of a media file in a cue's ``Media`` (869fat84r), in
+#: ``MediaType`` order. VideoCues only.
+DIMENSION_KEYS = ('pixel_width', 'pixel_height', 'file_size')
+
+
+def _positive_int(value):
+    """A usable stored size: a positive int (a digit string is accepted and
+    converted). ``None`` for anything else, ``bool`` included."""
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def dimensions_of_row(media):
+    """``{'pixel_width', 'pixel_height'[, 'file_size']}`` from a ``Media`` row,
+    or ``None`` when its pixel size is unknown."""
+    width, height = _positive_int(media.pixel_width), _positive_int(media.pixel_height)
+    if not (width and height):
+        return None
+    values = {'pixel_width': width, 'pixel_height': height}
+    size = _positive_int(media.file_size)
+    if size:
+        values['file_size'] = size
+    return values
 
 
 def db_duration_resolver(file_name):
@@ -47,57 +86,159 @@ def db_duration_resolver(file_name):
     return media.duration
 
 
-def fix_media_durations_in_contents(contents, resolver):
-    """Overwrite each cue ``Media['duration']`` from *resolver*, in place.
+def db_dimensions_resolver(file_name):
+    """Resolve a media ``unix_name`` to its stored size (see
+    :func:`dimensions_of_row`), or ``None`` when unknown. Read-only: no probe.
+
+    Raises ``KeyError`` when no ``Media`` row exists for *file_name*.
+    """
+    try:
+        media = Media.get(Media.unix_name == file_name)
+    except DoesNotExist:
+        raise KeyError(file_name)
+    return dimensions_of_row(media)
+
+
+def fix_media_durations_in_contents(contents, resolver, dimensions_resolver=None):
+    """Overwrite each cue ``Media``'s duration, and VideoCues' stored size,
+    from the resolvers, in place.
 
     Shared by the WebSocket save path (:meth:`CuemsDBProject._fix_media_durations`)
-    and the standalone duration-repair script, so both trust the same DB source
-    of truth and walk cue trees identically.
+    and the standalone repair script, so both trust the same DB source of
+    truth and walk cue trees identically. Each caller passes its own
+    resolvers: only the save path's may probe and write the DB.
+
+    For every ``Media`` block, in this order:
+
+    1. a ``pixel_width`` / ``pixel_height`` / ``file_size`` that is not a
+       positive integer is removed, whatever the cue: the parser assigns
+       these keys raw, and the schema would reject the whole save;
+       an AudioCue loses them altogether (they belong to VideoCues);
+    2. the duration, from *resolver* (an orphan stops here, untouched);
+    3. a VideoCue's stored size, from *dimensions_resolver* when given:
+       its values replace the client's, ``None`` (unknown) removes them.
+
+    One block that fails is logged and skipped; the walk goes on.
 
     Args:
         contents: ``CueList['contents']`` list (recursively walked).
         resolver: callable ``file_name -> duration_str_or_None``; must raise
             ``KeyError`` for a media file absent from the DB.
+        dimensions_resolver: optional callable ``file_name -> dict | None``
+            (see :func:`db_dimensions_resolver`); ``KeyError`` for an orphan.
 
     Returns:
         :class:`DurationFixStats`.
     """
     stats = DurationFixStats()
-    _walk_media_durations(contents, resolver, stats)
+    _walk_media_durations(contents, resolver, dimensions_resolver, stats)
     return stats
 
 
-def _walk_media_durations(contents, resolver, stats):
+def strip_media_dimensions_in_contents(contents):
+    """Remove the stored size from every cue ``Media``, in place, for a box
+    going back to a cuemsutils whose schema does not know these elements.
+
+    Returns:
+        The number of ``Media`` blocks changed.
+    """
+    changed = 0
+
+    def walk(items):
+        nonlocal changed
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            if 'CueList' in item:
+                walk(item['CueList'].get('contents', []))
+            for cue_type in ('AudioCue', 'VideoCue'):
+                media = (item.get(cue_type) or {}).get('Media')
+                if isinstance(media, dict) and any(k in media for k in DIMENSION_KEYS):
+                    for key in DIMENSION_KEYS:
+                        media.pop(key, None)
+                    changed += 1
+
+    walk(contents)
+    return changed
+
+
+def _dimensions_snapshot(media):
+    return {key: media[key] for key in DIMENSION_KEYS if key in media}
+
+
+def _set_dimensions(media, values):
+    """Make *media*'s stored size exactly *values* (``None``: none)."""
+    for key in DIMENSION_KEYS:
+        media.pop(key, None)
+    for key in DIMENSION_KEYS:  # appended after what is there, i.e. after regions
+        if values and _positive_int(values.get(key)):
+            media[key] = _positive_int(values[key])
+
+
+def _fix_one_media(cue_type, media, resolver, dimensions_resolver, stats):
+    file_name = media.get('file_name')
+    before = _dimensions_snapshot(media)
+    try:
+        # 1. Never let an invalid client value reach the schema.
+        for key in DIMENSION_KEYS:
+            if key in media:
+                value = _positive_int(media[key])
+                if value is None or cue_type == 'AudioCue':
+                    del media[key]
+                else:
+                    media[key] = value
+        if not file_name:
+            return
+        stats.media_refs += 1
+        # 2. Duration.
+        try:
+            duration = resolver(file_name)
+        except KeyError:
+            stats.orphans.append(file_name)  # media not in DB; keep original
+            return
+        if duration:
+            new_value = str(duration)
+            if media.get('duration') != new_value:
+                media['duration'] = new_value
+                stats.replacements += 1
+        # 3. A VideoCue's stored size.
+        if cue_type == 'VideoCue' and dimensions_resolver is not None:
+            try:
+                values = dimensions_resolver(file_name)
+            except KeyError:
+                return
+            _set_dimensions(media, values)
+    except Exception as e:
+        stats.errors.append(file_name)
+        Logger.warning(f'media metadata fix skipped for {file_name!r}: '
+                       f'{type(e).__name__}: {e}')
+    finally:
+        if _dimensions_snapshot(media) != before:
+            stats.dimension_changes += 1
+
+
+def _walk_media_durations(contents, resolver, dimensions_resolver, stats):
     if not contents:
         return
     for item in contents:
+        if not isinstance(item, dict):
+            continue
         # Handle nested CueLists
         if 'CueList' in item:
-            _walk_media_durations(item['CueList'].get('contents', []), resolver, stats)
+            _walk_media_durations(item['CueList'].get('contents', []), resolver,
+                                  dimensions_resolver, stats)
 
         # Check for AudioCue or VideoCue wrappers
         if 'AudioCue' in item:
-            cue_data = item['AudioCue']
+            cue_type, cue_data = 'AudioCue', item['AudioCue']
         elif 'VideoCue' in item:
-            cue_data = item['VideoCue']
+            cue_type, cue_data = 'VideoCue', item['VideoCue']
         else:
-            cue_data = item  # flat structure
+            cue_type, cue_data = None, item  # flat structure
 
         media = cue_data.get('Media') if isinstance(cue_data, dict) else None
         if media and isinstance(media, dict):
-            file_name = media.get('file_name')
-            if file_name:
-                stats.media_refs += 1
-                try:
-                    duration = resolver(file_name)
-                except KeyError:
-                    stats.orphans.append(file_name)  # media not in DB; keep original
-                    continue
-                if duration:
-                    new_value = str(duration)
-                    if media.get('duration') != new_value:
-                        media['duration'] = new_value
-                        stats.replacements += 1
+            _fix_one_media(cue_type, media, resolver, dimensions_resolver, stats)
 
 
 def _fade_duration_ms(duration):
@@ -365,22 +506,67 @@ class CuemsDBProject(StringSanitizer):
     # the DB. Delegates to the module-level fix_media_durations_in_contents so
     # the repair script and this path share one walk.
     def _fix_media_durations(self, data):
-        """Overwrite each cue's ``Media.duration`` from the database.
+        """Overwrite each cue's ``Media.duration``, and each VideoCue's stored
+        pixel size and file size, from the database.
 
         The DB is the source of truth for media duration. This corrects the
         legacy frontend behaviour of sending ``00:00:00.000``. Orphaned media
-        references (no ``Media`` row) are logged, not modified.
+        references (no ``Media`` row) are logged, not modified. The frontend
+        never sends the stored size, so it is always added here (869fat84r).
         """
         try:
             cuelist = data.get('CuemsScript', {}).get('CueList', {})
             contents = cuelist.get('contents', [])
-            stats = fix_media_durations_in_contents(contents, db_duration_resolver)
+            stats = fix_media_durations_in_contents(
+                contents, db_duration_resolver, self._dimensions_resolver())
             if stats.orphans:
                 Logger.warning(
                     f"media duration fix: {len(stats.orphans)} cue(s) reference "
                     f"media not in DB (duration left as-is): {stats.orphans}")
         except Exception as e:
             Logger.warning(f"Could not fix media durations: {e}")
+
+    def _dimensions_resolver(self):
+        """The save path's resolver for a VideoCue's stored size (869fat84r).
+
+        Reads the ``Media`` row. A row with no pixel size yet (uploaded
+        before the size was stored) is probed once here and the result
+        stored, so old libraries heal as their projects are saved. A failed
+        probe stores nothing and returns ``None``: the engine then probes.
+        Memoised per save: a file used by several cues is read once.
+        """
+        cache = {}
+
+        def resolve(file_name):
+            if file_name in cache:
+                return cache[file_name]
+            try:
+                media = Media.get(Media.unix_name == file_name)
+            except DoesNotExist:
+                raise KeyError(file_name)
+            values = dimensions_of_row(media)
+            if values is None:
+                path = self._media_file_path(media)
+                width, height = probe_dimensions(path)
+                if width and height:
+                    size = media_file_size(path)
+                    Media.update(pixel_width=width, pixel_height=height,
+                                 file_size=size).where(Media.uuid == media.uuid).execute()
+                    values = {'pixel_width': width, 'pixel_height': height}
+                    if size:
+                        values['file_size'] = size
+                    Logger.info(f'stored the pixel size of {file_name}: {width}x{height}')
+            cache[file_name] = values
+            return values
+
+        return resolve
+
+    def _media_file_path(self, media):
+        """Absolute path of a media file, honouring its trash state."""
+        if media.in_trash:
+            return os.path.join(self.library_path, self.settings_dict['trash_folder_name'],
+                                self.settings_dict['media_folder_name'], media.unix_name)
+        return os.path.join(self.media_path, media.unix_name)
 
     CUE_TYPES = ['AudioCue', 'VideoCue', 'DmxCue', 'ActionCue', 'FadeCue', 'CueList']
 
@@ -476,7 +662,8 @@ class CuemsDBProject(StringSanitizer):
             Logger.error("error: {} {} ;trying to read  project data".format(type(e), e))
             raise e
 
-        # Same save-time gate as update() — see validate_fade_durations_in_contents.
+        # Same metadata fill and save-time gate as update().
+        self._fix_media_durations(data)
         validate_fade_durations_in_contents(
             (data.get('CuemsScript', {}).get('CueList') or {}).get('contents') or []
         )
@@ -565,6 +752,9 @@ class CuemsDBProject(StringSanitizer):
                     data['CuemsScript']['id'] = new_project_uuid
                     data['CuemsScript']['name'] = project.name
                     data['CuemsScript']['modified'] = project.modified
+                    # Fill durations and stored sizes from the DB, as a save
+                    # does, so a legacy project's copy carries them (869fat84r).
+                    self._fix_media_durations(data)
                     # NO fade-duration validation here on purpose: the source is
                     # load_xml of an existing project — legacy scripts must stay
                     # duplicable; the engine's reveal guard covers them.

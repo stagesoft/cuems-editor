@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 """Repair corrupted media durations in the CueMS library.
 
 Historical ``CuemsDBMedia.get_duration`` reformatted ffprobe sexagesimal output
@@ -10,9 +13,19 @@ files too.
 
 This tool re-probes every media file with the fixed :func:`probe_duration` and:
 
-- **Pass A** rewrites ``media.duration`` in the DB (the source of truth).
+- **Pass A** rewrites ``media.duration`` in the DB (the source of truth), and
+  for movies re-probes the stored pixel size and file size (869fat84r),
+  filling missing ones and reporting changed ones (``DIMS_CHANGED``: a file
+  replaced under the same name).
 - **Pass B** rewrites ``<duration>`` in each project ``script.xml`` from the
-  (now-corrected) DB, reusing the exact walk the editor's save path uses.
+  (now-corrected) DB, and each VideoCue's ``pixel_width`` / ``pixel_height`` /
+  ``file_size``, reusing the exact walk the editor's save path uses.
+- ``--strip-dimensions`` instead removes those three elements from every
+  project, for a box going back to a cuemsutils that does not know them.
+
+The DB gains the three columns here if the editor has not added them yet. A
+dry-run never writes the DB: on a database that lacks them it reads a migrated
+temporary copy.
 
 Dry-run is the default; ``--apply`` performs writes after backing up the DB and
 every modified XML file. Run with the editor STOPPED (single-writer SQLite).
@@ -25,14 +38,19 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from datetime import datetime
 
 from cuemseditor.cli import get_settings
-from cuemseditor.CuemsDBModel import Project, Media, database
-from cuemseditor.CuemsDBMedia import probe_duration
+from cuemseditor.CuemsDBModel import (
+    Project, Media, database, ensure_media_columns, missing_media_columns,
+)
+from cuemseditor.CuemsDBMedia import media_file_size, probe_dimensions, probe_duration
 from cuemseditor.CuemsDBProject import (
     fix_media_durations_in_contents,
+    db_dimensions_resolver,
     db_duration_resolver,
+    strip_media_dimensions_in_contents,
 )
 from cuemseditor.CuemsErrors import NotTimeCodeError
 from cuemsutils.tools.CTimecode import CTimecode
@@ -135,10 +153,31 @@ def backup_file(settings, path, backup_dir):
     shutil.copy2(path, dest)
 
 
+def _check_dimensions(media, path, label, report, dim_updates):
+    """Re-probe a movie's pixel size and file size against the DB row."""
+    width, height = probe_dimensions(path)
+    if not (width and height):
+        report.add('DIMS_PROBE_FAILED', label, dirty=True)
+        return
+    new = (width, height, media_file_size(path))
+    old = (media.pixel_width, media.pixel_height, media.file_size)
+    if old == new:
+        report.add('DIMS_OK', label)
+        return
+    if old == (None, None, None):
+        report.add('DIMS_FILLED', f'{label}: -> {new[0]}x{new[1]}, {new[2]} bytes')
+    else:
+        report.add('DIMS_CHANGED', f'{label}: {old[0]}x{old[1]}, {old[2]} bytes -> '
+                                   f'{new[0]}x{new[1]}, {new[2]} bytes')
+    dim_updates.append((media.uuid, new))
+
+
 def pass_a_db(settings, args, report):
-    """Re-probe every media file, report/apply corrected durations."""
-    print('\n== Pass A: database media.duration ==')
+    """Re-probe every media file, report/apply corrected durations and, for
+    movies, pixel sizes."""
+    print('\n== Pass A: database media.duration + movie pixel size ==')
     updates = []  # (uuid, new_str)
+    dim_updates = []  # (uuid, (width, height, file_size))
     for media in Media.select():
         label = f'{media.unix_name} ({media.media_type})'
         if media.media_type == 'IMAGE':
@@ -151,6 +190,8 @@ def pass_a_db(settings, args, report):
         if not os.path.exists(path):
             report.add('MISSING', f'{label} -> {path}', dirty=True)
             continue
+        if media.media_type == 'MOVIE':
+            _check_dimensions(media, path, label, report, dim_updates)
         try:
             new_tc = probe_duration(path)
         except NotTimeCodeError as e:
@@ -181,12 +222,23 @@ def pass_a_db(settings, args, report):
         print(f'  applied {len(updates)} DB duration update(s)')
     elif updates:
         print(f'  {len(updates)} DB duration update(s) pending (dry-run)')
+    if args.apply and dim_updates:
+        with database.atomic():
+            for uuid, (width, height, size) in dim_updates:
+                Media.update(pixel_width=width, pixel_height=height,
+                             file_size=size).where(Media.uuid == uuid).execute()
+        print(f'  applied {len(dim_updates)} DB pixel-size update(s)')
+    elif dim_updates:
+        print(f'  {len(dim_updates)} DB pixel-size update(s) pending (dry-run)')
     return updates
 
 
 def pass_b_xml(settings, args, report, backup_dir):
     """Rewrite <duration> in each project script.xml from the corrected DB."""
-    print('\n== Pass B: project script.xml <duration> ==')
+    if args.strip_dimensions:
+        print('\n== Pass B: REMOVE pixel_width / pixel_height / file_size from projects ==')
+    else:
+        print('\n== Pass B: project script.xml <duration> + VideoCue pixel size ==')
     if args.xml_only:
         print('  WARNING: --xml-only trusts the CURRENT DB values; run Pass A '
               'first or corruption will be propagated verbatim.')
@@ -213,17 +265,28 @@ def pass_b_xml(settings, args, report, backup_dir):
             report.add('ODD_TIMECODE', f'{label}: {odd}', dirty=True)
 
         contents = data.get('CuemsScript', {}).get('CueList', {}).get('contents', [])
-        stats = fix_media_durations_in_contents(contents, db_duration_resolver)
-        if stats.orphans:
-            report.add('ORPHAN_MEDIA_REF',
-                       f'{label}: {len(stats.orphans)} ref(s) not in DB: {stats.orphans}',
-                       dirty=True)
+        if args.strip_dimensions:
+            stripped = strip_media_dimensions_in_contents(contents)
+            if not stripped:
+                report.add('XML_OK', label)
+                continue
+            report.add('XML_STRIPPED', f'{label}: {stripped} media block(s)')
+        else:
+            stats = fix_media_durations_in_contents(contents, db_duration_resolver,
+                                                    db_dimensions_resolver)
+            if stats.orphans:
+                report.add('ORPHAN_MEDIA_REF',
+                           f'{label}: {len(stats.orphans)} ref(s) not in DB: {stats.orphans}',
+                           dirty=True)
+            if stats.errors:
+                report.add('MEDIA_FIX_FAILED', f'{label}: {stats.errors}', dirty=True)
 
-        if stats.replacements == 0:
-            report.add('XML_OK', label)
-            continue
+            if stats.replacements == 0 and stats.dimension_changes == 0:
+                report.add('XML_OK', label)
+                continue
 
-        report.add('XML_CHANGED', f'{label}: {stats.replacements} duration(s)')
+            report.add('XML_CHANGED', f'{label}: {stats.replacements} duration(s), '
+                                      f'{stats.dimension_changes} pixel-size block(s)')
         if args.apply:
             try:
                 backup_file(settings, path, backup_dir)
@@ -246,6 +309,10 @@ def main(argv=None):
     group.add_argument('--db-only', action='store_true', help='run Pass A only')
     group.add_argument('--xml-only', action='store_true', help='run Pass B only')
     parser.add_argument('--skip-trash', action='store_true', help='skip trashed media and projects')
+    parser.add_argument('--strip-dimensions', action='store_true',
+                        help='remove pixel_width/pixel_height/file_size from every project '
+                             '(XML only; the DB keeps them), e.g. before going back to an '
+                             'older cuems-utils')
     parser.add_argument('--backup-dir', help='backup directory (default <library>/duration_repair_backup_<ts>)')
     args = parser.parse_args(argv)
 
@@ -266,19 +333,36 @@ def main(argv=None):
         settings['library_path'],
         'duration_repair_backup_' + datetime.now().strftime('%Y%m%d-%H%M%S'))
 
+    tmp_dir = None
     database.init(db_path)
     database.connect()
     if args.apply:
         backup_database(settings, backup_dir)
+        added = ensure_media_columns(database)  # after the backup
+        if added:
+            print(f'  DB migrated: added media columns {added}')
+    elif missing_media_columns(database):
+        # A dry-run never writes the DB: read a migrated temporary copy.
+        database.close()
+        tmp_dir = tempfile.mkdtemp(prefix='repair_durations_dryrun_')
+        tmp_db = os.path.join(tmp_dir, os.path.basename(db_path))
+        shutil.copy2(db_path, tmp_db)
+        database.init(tmp_db)
+        database.connect()
+        ensure_media_columns(database)
+        print('  DB lacks the pixel-size columns (the editor adds them at start); '
+              'this dry-run reads a migrated temporary copy')
 
     report = Report()
     try:
-        if not args.xml_only:
+        if not args.xml_only and not args.strip_dimensions:
             pass_a_db(settings, args, report)
         if not args.db_only:
             pass_b_xml(settings, args, report, backup_dir)
     finally:
         database.close()
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     print('\n== Report ==')
     report.dump()
