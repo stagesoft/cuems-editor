@@ -1,3 +1,23 @@
+cuems-editor (0.1.0rc1-4) UNRELEASED; urgency=medium
+
+  * 001-cuems-utils-migration: move onto the public cuemsutils surface.
+    cuemsutils 0.1.0rc16 no longer ships cuemsutils.create_script, so the
+    0.1.0rc1-3 editor died at import against it. Scripts now load and save
+    through CuemsScript (load_with_report / from_json / save); the node
+    split is cuemsutils.tools.NodeList.partition_by_adoption (cuems-utils
+    013, 6213b16); initial_template is the library's generated example.
+  * debian/control: bound cuems-utils on both sides,
+    cuems-utils (>= 0.1.0rc16), cuems-utils (<< 0.1.1~). 0.1.1 deletes the
+    deprecated surface; the pair matches cuems-nodeconf.
+  * cuems-editor-repair-durations no longer writes project scripts. It
+    corrects the database and lists the projects that need a save in the
+    editor.
+  * Not a controller release on its own: the project frame now carries
+    Cue / CueOutput with class (cuems-utils 013), which a pre-05
+    cuems-frontend mis-reads. Ships with the coordinated tag.
+
+ -- Adrià Masip <adria@stagelab.coop>  Fri, 02 Oct 2026 09:13:04 +0200
+
 cuems-editor (0.1.0rc1-3) bookworm; urgency=medium
 
   * Merge rc1 into debian/bookworm (43 commits since 0.1.0rc1-2, 2026-03-
