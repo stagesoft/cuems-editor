@@ -19,4 +19,12 @@ nohup.out
 
 dev/local/
 site/
-debian/
+# debian/ is tracked on this branch (001, imported from debian/bookworm @ 72f952a);
+# ignore only what a build leaves in it.
+debian/cuems-editor/
+debian/.debhelper/
+debian/files
+debian/*.substvars
+debian/*.debhelper
+debian/*.log
+debian/debhelper-build-stamp

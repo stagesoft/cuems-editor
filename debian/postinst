@@ -1,0 +1,57 @@
+#!/bin/bash
+set -e
+
+CUEMS_VENV="/usr/lib/cuems"
+
+case "$1" in
+    configure)
+        # Verify virtual environment exists
+        if [ ! -f "$CUEMS_VENV/bin/python3" ]; then
+            echo "ERROR: Virtual environment not found at $CUEMS_VENV" >&2
+            echo "Please ensure cuems-utils package is properly installed." >&2
+            exit 1
+        fi
+
+        # Verify console script was installed
+        if [ ! -f "$CUEMS_VENV/bin/cuems-editor" ]; then
+            echo "WARNING: Console script cuems-editor not found at $CUEMS_VENV/bin/" >&2
+        fi
+
+        # Reload systemd (service file from cuems-common)
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+        fi
+
+        echo "cuems-editor installed successfully."
+        echo "Package: cuemseditor installed to $CUEMS_VENV/lib/python*/site-packages/"
+        echo "Console scripts: $CUEMS_VENV/bin/cuems-editor, $CUEMS_VENV/bin/cuems-editor-manual"
+        echo "Service file provided by cuems-common package."
+
+        # Enable and (re)start the service
+        if [ -d /run/systemd/system ]; then
+            if ! systemctl is-enabled cuems-editor >/dev/null 2>&1; then
+                systemctl enable cuems-editor || echo "WARNING: Failed to enable cuems-editor service" >&2
+            fi
+
+            # $2 is the previously-configured version (set on upgrade, empty on fresh install)
+            if [ -n "$2" ]; then
+                echo "Upgrade from $2 detected, restarting cuems-editor service..."
+                systemctl restart cuems-editor || echo "WARNING: Failed to restart cuems-editor service" >&2
+            else
+                systemctl start cuems-editor || echo "WARNING: Failed to start cuems-editor service" >&2
+            fi
+        fi
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
