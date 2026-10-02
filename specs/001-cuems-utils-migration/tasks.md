@@ -29,10 +29,10 @@ Single package: `src/cuemseditor/`, `tests/` at the repository root. Feature doc
 
 **Purpose**: Record the broken import and the payloads the later tests compare against. No `src/` edit in this phase.
 
-- [ ] T001 Record `hatch run python -c "import cuemsutils; print(cuemsutils.__version__, cuemsutils.__file__)"` in `specs/001-cuems-utils-migration/evidence/environment.txt`. Expected version is `0.1.0rc16` from `../cuems-utils/src` or an install of that same version (quickstart.md §0)
-- [ ] T002 Run `hatch run python -c "import cuemseditor.CuemsWsServer"` and save the `ModuleNotFoundError: No module named 'cuemsutils.create_script'` traceback in `specs/001-cuems-utils-migration/evidence/import-failure.txt` (FR-004, research R1)
-- [ ] T003 [P] Reconstruct `create_script()` by running the last `cuemsutils` release that still ships `cuemsutils.create_script`. Save the payload, the release version, and a checksum in `specs/001-cuems-utils-migration/evidence/create-script-baseline.json` (FR-008, research R10). Do not edit `src/`
-- [ ] T004 [P] Capture the current `CuemsDBProject.load_xml` dict, before any edit to `src/cuemseditor/CuemsDBProject.py`, for `tests/fixtures/script_minimal.xml` only. Do not add documents from `../cuems-utils/tests/golden/xml`: that tree may hold a superseded state. Write the capture under `specs/001-cuems-utils-migration/evidence/project-capture/` and name the fixture in a sibling `README.md` (FR-010). Do not regenerate these bytes later to make a test pass (FR-040). Schema truth is `../cuems-utils/src/cuemsutils/xml/schemas/`, not `MANIFEST.sha256`
+- [X] T001 Record `hatch run python -c "import cuemsutils; print(cuemsutils.__version__, cuemsutils.__file__)"` in `specs/001-cuems-utils-migration/evidence/environment.txt`. Expected version is `0.1.0rc16` from `../cuems-utils/src` or an install of that same version (quickstart.md §0)
+- [X] T002 Run `hatch run python -c "import cuemseditor.CuemsWsServer"` and save the `ModuleNotFoundError: No module named 'cuemsutils.create_script'` traceback in `specs/001-cuems-utils-migration/evidence/import-failure.txt` (FR-004, research R1)
+- [X] T003 [P] Reconstruct `create_script()` by running the last `cuemsutils` release that still ships `cuemsutils.create_script`. Save the payload, the release version, and a checksum in `specs/001-cuems-utils-migration/evidence/create-script-baseline.json` (FR-008, research R10). Do not edit `src/`
+- [X] T004 [P] Capture the current `CuemsDBProject.load_xml` dict, before any edit to `src/cuemseditor/CuemsDBProject.py`, for `tests/fixtures/script_minimal.xml` only. Do not add documents from `../cuems-utils/tests/golden/xml`: that tree may hold a superseded state. Write the capture under `specs/001-cuems-utils-migration/evidence/project-capture/` and name the fixture in a sibling `README.md` (FR-010). Do not regenerate these bytes later to make a test pass (FR-040). Schema truth is `../cuems-utils/src/cuemsutils/xml/schemas/`, not `MANIFEST.sha256`
 
 ---
 
@@ -42,7 +42,7 @@ Single package: `src/cuemseditor/`, `tests/` at the repository root. Feature doc
 
 **⚠️ CRITICAL**: No user story work until T001–T005 are done.
 
-- [ ] T005 Write `specs/001-cuems-utils-migration/evidence/README.md` stating that files in this directory are immutable, that a re-baseline of the editor capture is a recorded diff and at most one, that `../cuems-utils/tests/golden/xml` is not frozen here because it may be superseded and is restated in `cuems-utils` after the system refactoring (the XSD under `../cuems-utils/src/cuemsutils/xml/schemas/` is the schema), that `doc_version` is the on-disk marker and is never a wire key, and that the payload version is a different integer (data-model.md, research R12)
+- [X] T005 Write `specs/001-cuems-utils-migration/evidence/README.md` stating that files in this directory are immutable, that a re-baseline of the editor capture is a recorded diff and at most one, that `../cuems-utils/tests/golden/xml` is not frozen here because it may be superseded and is restated in `cuems-utils` after the system refactoring (the XSD under `../cuems-utils/src/cuemsutils/xml/schemas/` is the schema), that `doc_version` is the on-disk marker and is never a wire key, and that the payload version is a different integer (data-model.md, research R12)
 
 **Checkpoint**: Baselines exist. User Story 1 can start.
 

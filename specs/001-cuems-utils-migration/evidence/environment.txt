@@ -1,0 +1,10 @@
+$ hatch run python -c "import cuemsutils; print(cuemsutils.__version__, cuemsutils.__file__)"
+0.1.0rc16 /disk/Projects/StageLab/cuems-utils/src/cuemsutils/__init__.py
+
+# measured 2026-10-02T08:49:57+02:00
+# cuems-utils HEAD: 6213b1603d0a508b6ac7dfb5f46593ba4d870193 docs(planning): prompt the editor to amend 001 once 013 is the library it imports
+# cuems-utils worktree clean: yes
+# python: 3.11.9
+# the hatch env previously held cuemsutils 0.1.0rc14 from the index; it was switched with
+#   hatch run pip install -e ../cuems-utils
+# rc14 was used once, before the switch, for create-script-baseline.json and project-capture/ (see their READMEs).

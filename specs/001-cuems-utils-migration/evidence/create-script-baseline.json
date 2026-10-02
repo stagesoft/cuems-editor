@@ -1,0 +1,324 @@
+{
+  "what": "Reconstructed create_script() payload: the value of {\"type\":\"initial_template\",\"value\":...} as CuemsWsServer.initial_template_message() serialised it (json.dumps of {\"CuemsScript\": create_script()}).",
+  "release": "0.1.0rc14",
+  "release_tag": "v0.1.0rc14",
+  "release_tag_commit": "e4ad0ef63850afa8997df8d07e3aa3c950eb146f",
+  "why_this_release": "Last tagged cuemsutils release that ships cuemsutils.create_script. 0.1.0rc15 was a version string on the dev line (7396a6c) and was never tagged; create_script was deleted in 217633c, before the 0.1.0rc16 bump (d0340fc).",
+  "source": "/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/cuemseditor/lib/python3.11/site-packages/cuemsutils/__init__.py",
+  "python": "3.11.9",
+  "procedure": "hatch env python with cuemsutils 0.1.0rc14 installed from the index: json.dumps({'CuemsScript': create_script()})",
+  "sha256_of_serialised": "5ec029be2e461520db3cdffbd4b61ea6060a504a509f6df881a6aae60a25f164",
+  "serialised": "{\"CuemsScript\": {\"CueList\": {\"autoload\": false, \"description\": null, \"enabled\": true, \"id\": \"030a3a98-907d-46db-8e81-5112b16c6c34\", \"loop\": 1, \"name\": \"empty\", \"offset\": {\"CTimecode\": \"00:00:00.000\"}, \"post_go\": \"pause\", \"postwait\": {\"CTimecode\": \"00:00:00.000\"}, \"prewait\": {\"CTimecode\": \"00:00:00.000\"}, \"target\": null, \"timecode\": false, \"ui_properties\": null, \"contents\": [{\"AudioCue\": {\"autoload\": false, \"description\": null, \"enabled\": true, \"id\": null, \"loop\": 1, \"name\": \"empty\", \"offset\": {\"CTimecode\": \"00:00:00.000\"}, \"post_go\": \"pause\", \"postwait\": {\"CTimecode\": \"00:00:00.000\"}, \"prewait\": {\"CTimecode\": \"00:00:00.000\"}, \"target\": null, \"timecode\": false, \"ui_properties\": {\"warning\": null}, \"Media\": {\"file_name\": \"file.ext\", \"id\": \"e2328c11-05bf-4c77-b4a1-9f098acc459f\", \"duration\": \"00:00:00.000\", \"regions\": [{\"Region\": {\"id\": 0, \"loop\": 1, \"in_time\": {\"CTimecode\": \"00:00:00.000\"}, \"out_time\": {\"CTimecode\": \"00:00:00.000\"}}}]}, \"outputs\": [{\"AudioCueOutput\": {\"output_name\": \"0367f391-ebf4-48b2-9f26-000000000001_system:playback_1\", \"output_vol\": 80, \"channels\": [{\"channel\": {\"channel_num\": 0, \"channel_vol\": 80}}]}}], \"fade_profiles\": null, \"master_vol\": 66}}, {\"VideoCue\": {\"autoload\": false, \"description\": null, \"enabled\": true, \"id\": null, \"loop\": 1, \"name\": \"empty\", \"offset\": {\"CTimecode\": \"00:00:00.000\"}, \"post_go\": \"pause\", \"postwait\": {\"CTimecode\": \"00:00:00.000\"}, \"prewait\": {\"CTimecode\": \"00:00:00.000\"}, \"target\": null, \"timecode\": false, \"ui_properties\": {\"warning\": null}, \"Media\": {\"file_name\": \"file_video.ext\", \"id\": \"15172eae-42c9-44af-9e8a-45b128b46fe1\", \"duration\": \"00:00:00.000\", \"regions\": [{\"Region\": {\"id\": 0, \"loop\": 1, \"in_time\": {\"CTimecode\": \"00:00:00.000\"}, \"out_time\": {\"CTimecode\": \"00:00:00.000\"}}}]}, \"outputs\": [{\"VideoCueOutput\": {\"output_name\": \"0367f391-ebf4-48b2-9f26-000000000001_0\", \"output_geometry\": {\"x_scale\": 1, \"y_scale\": 1, \"corners\": {\"top_left\": {\"x\": 0, \"y\": 0}, \"top_right\": {\"x\": 0, \"y\": 0}, \"bottom_left\": {\"x\": 0, \"y\": 0}, \"bottom_right\": {\"x\": 0, \"y\": 0}}}}}, {\"VideoCueOutput\": {\"output_name\": \"0367f391-ebf4-48b2-9f26-000000000001_custom_0\", \"output_geometry\": {\"x_scale\": 1, \"y_scale\": 1, \"corners\": {\"top_left\": {\"x\": 0, \"y\": 0}, \"top_right\": {\"x\": 0, \"y\": 0}, \"bottom_left\": {\"x\": 0, \"y\": 0}, \"bottom_right\": {\"x\": 0, \"y\": 0}}}, \"canvas_region\": {\"x\": 0.1, \"y\": 0.1, \"width\": 0.5, \"height\": 0.5}}}], \"fade_profiles\": null, \"opacity\": 100}}, {\"DmxCue\": {\"autoload\": false, \"description\": null, \"enabled\": true, \"id\": null, \"loop\": 1, \"name\": \"empty\", \"offset\": {\"CTimecode\": \"00:00:00.000\"}, \"post_go\": \"pause\", \"postwait\": {\"CTimecode\": \"00:00:00.000\"}, \"prewait\": {\"CTimecode\": \"00:00:00.000\"}, \"target\": null, \"timecode\": false, \"ui_properties\": {\"warning\": null}, \"fadein_time\": 0.0, \"fadeout_time\": 0.0, \"outputs\": [{\"DmxCueOutput\": {\"output_name\": \"0367f391-ebf4-48b2-9f26-000000000001\"}}], \"DmxScene\": {\"DmxUniverse\": {\"dmx_channels\": [{\"DmxChannel\": {\"channel\": 0, \"value\": 0}}], \"universe_num\": 0}, \"id\": 0}}}, {\"ActionCue\": {\"autoload\": false, \"description\": null, \"enabled\": true, \"id\": null, \"loop\": 1, \"name\": \"empty\", \"offset\": {\"CTimecode\": \"00:00:00.000\"}, \"post_go\": \"pause\", \"postwait\": {\"CTimecode\": \"00:00:00.000\"}, \"prewait\": {\"CTimecode\": \"00:00:00.000\"}, \"target\": null, \"timecode\": false, \"ui_properties\": {\"warning\": 0}, \"action_target\": \"1f301cf8-dd03-4b40-ac17-ef0e5e7988be\", \"action_type\": \"play\"}}, {\"FadeCue\": {\"autoload\": false, \"description\": null, \"enabled\": true, \"id\": null, \"loop\": 1, \"name\": \"empty\", \"offset\": {\"CTimecode\": \"00:00:00.000\"}, \"post_go\": \"pause\", \"postwait\": {\"CTimecode\": \"00:00:00.000\"}, \"prewait\": {\"CTimecode\": \"00:00:00.000\"}, \"target\": null, \"timecode\": false, \"ui_properties\": {\"warning\": null}, \"action_target\": \"1f301cf8-dd03-4b40-ac17-ef0e5e7988be\", \"action_type\": \"fade_action\", \"curve_type\": \"linear\", \"duration\": {\"CTimecode\": \"00:00:02.000\"}, \"target_value\": 0}}]}, \"created\": null, \"description\": \"This is a test script\", \"id\": \"a786ebd9-b1a9-451d-8407-9ce3aa230bdc\", \"modified\": null, \"name\": \"Test Script\", \"ui_properties\": {\"warning\": 0}}}",
+  "payload": {
+    "CuemsScript": {
+      "CueList": {
+        "autoload": false,
+        "description": null,
+        "enabled": true,
+        "id": "030a3a98-907d-46db-8e81-5112b16c6c34",
+        "loop": 1,
+        "name": "empty",
+        "offset": {
+          "CTimecode": "00:00:00.000"
+        },
+        "post_go": "pause",
+        "postwait": {
+          "CTimecode": "00:00:00.000"
+        },
+        "prewait": {
+          "CTimecode": "00:00:00.000"
+        },
+        "target": null,
+        "timecode": false,
+        "ui_properties": null,
+        "contents": [
+          {
+            "AudioCue": {
+              "autoload": false,
+              "description": null,
+              "enabled": true,
+              "id": null,
+              "loop": 1,
+              "name": "empty",
+              "offset": {
+                "CTimecode": "00:00:00.000"
+              },
+              "post_go": "pause",
+              "postwait": {
+                "CTimecode": "00:00:00.000"
+              },
+              "prewait": {
+                "CTimecode": "00:00:00.000"
+              },
+              "target": null,
+              "timecode": false,
+              "ui_properties": {
+                "warning": null
+              },
+              "Media": {
+                "file_name": "file.ext",
+                "id": "e2328c11-05bf-4c77-b4a1-9f098acc459f",
+                "duration": "00:00:00.000",
+                "regions": [
+                  {
+                    "Region": {
+                      "id": 0,
+                      "loop": 1,
+                      "in_time": {
+                        "CTimecode": "00:00:00.000"
+                      },
+                      "out_time": {
+                        "CTimecode": "00:00:00.000"
+                      }
+                    }
+                  }
+                ]
+              },
+              "outputs": [
+                {
+                  "AudioCueOutput": {
+                    "output_name": "0367f391-ebf4-48b2-9f26-000000000001_system:playback_1",
+                    "output_vol": 80,
+                    "channels": [
+                      {
+                        "channel": {
+                          "channel_num": 0,
+                          "channel_vol": 80
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "fade_profiles": null,
+              "master_vol": 66
+            }
+          },
+          {
+            "VideoCue": {
+              "autoload": false,
+              "description": null,
+              "enabled": true,
+              "id": null,
+              "loop": 1,
+              "name": "empty",
+              "offset": {
+                "CTimecode": "00:00:00.000"
+              },
+              "post_go": "pause",
+              "postwait": {
+                "CTimecode": "00:00:00.000"
+              },
+              "prewait": {
+                "CTimecode": "00:00:00.000"
+              },
+              "target": null,
+              "timecode": false,
+              "ui_properties": {
+                "warning": null
+              },
+              "Media": {
+                "file_name": "file_video.ext",
+                "id": "15172eae-42c9-44af-9e8a-45b128b46fe1",
+                "duration": "00:00:00.000",
+                "regions": [
+                  {
+                    "Region": {
+                      "id": 0,
+                      "loop": 1,
+                      "in_time": {
+                        "CTimecode": "00:00:00.000"
+                      },
+                      "out_time": {
+                        "CTimecode": "00:00:00.000"
+                      }
+                    }
+                  }
+                ]
+              },
+              "outputs": [
+                {
+                  "VideoCueOutput": {
+                    "output_name": "0367f391-ebf4-48b2-9f26-000000000001_0",
+                    "output_geometry": {
+                      "x_scale": 1,
+                      "y_scale": 1,
+                      "corners": {
+                        "top_left": {
+                          "x": 0,
+                          "y": 0
+                        },
+                        "top_right": {
+                          "x": 0,
+                          "y": 0
+                        },
+                        "bottom_left": {
+                          "x": 0,
+                          "y": 0
+                        },
+                        "bottom_right": {
+                          "x": 0,
+                          "y": 0
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "VideoCueOutput": {
+                    "output_name": "0367f391-ebf4-48b2-9f26-000000000001_custom_0",
+                    "output_geometry": {
+                      "x_scale": 1,
+                      "y_scale": 1,
+                      "corners": {
+                        "top_left": {
+                          "x": 0,
+                          "y": 0
+                        },
+                        "top_right": {
+                          "x": 0,
+                          "y": 0
+                        },
+                        "bottom_left": {
+                          "x": 0,
+                          "y": 0
+                        },
+                        "bottom_right": {
+                          "x": 0,
+                          "y": 0
+                        }
+                      }
+                    },
+                    "canvas_region": {
+                      "x": 0.1,
+                      "y": 0.1,
+                      "width": 0.5,
+                      "height": 0.5
+                    }
+                  }
+                }
+              ],
+              "fade_profiles": null,
+              "opacity": 100
+            }
+          },
+          {
+            "DmxCue": {
+              "autoload": false,
+              "description": null,
+              "enabled": true,
+              "id": null,
+              "loop": 1,
+              "name": "empty",
+              "offset": {
+                "CTimecode": "00:00:00.000"
+              },
+              "post_go": "pause",
+              "postwait": {
+                "CTimecode": "00:00:00.000"
+              },
+              "prewait": {
+                "CTimecode": "00:00:00.000"
+              },
+              "target": null,
+              "timecode": false,
+              "ui_properties": {
+                "warning": null
+              },
+              "fadein_time": 0.0,
+              "fadeout_time": 0.0,
+              "outputs": [
+                {
+                  "DmxCueOutput": {
+                    "output_name": "0367f391-ebf4-48b2-9f26-000000000001"
+                  }
+                }
+              ],
+              "DmxScene": {
+                "DmxUniverse": {
+                  "dmx_channels": [
+                    {
+                      "DmxChannel": {
+                        "channel": 0,
+                        "value": 0
+                      }
+                    }
+                  ],
+                  "universe_num": 0
+                },
+                "id": 0
+              }
+            }
+          },
+          {
+            "ActionCue": {
+              "autoload": false,
+              "description": null,
+              "enabled": true,
+              "id": null,
+              "loop": 1,
+              "name": "empty",
+              "offset": {
+                "CTimecode": "00:00:00.000"
+              },
+              "post_go": "pause",
+              "postwait": {
+                "CTimecode": "00:00:00.000"
+              },
+              "prewait": {
+                "CTimecode": "00:00:00.000"
+              },
+              "target": null,
+              "timecode": false,
+              "ui_properties": {
+                "warning": 0
+              },
+              "action_target": "1f301cf8-dd03-4b40-ac17-ef0e5e7988be",
+              "action_type": "play"
+            }
+          },
+          {
+            "FadeCue": {
+              "autoload": false,
+              "description": null,
+              "enabled": true,
+              "id": null,
+              "loop": 1,
+              "name": "empty",
+              "offset": {
+                "CTimecode": "00:00:00.000"
+              },
+              "post_go": "pause",
+              "postwait": {
+                "CTimecode": "00:00:00.000"
+              },
+              "prewait": {
+                "CTimecode": "00:00:00.000"
+              },
+              "target": null,
+              "timecode": false,
+              "ui_properties": {
+                "warning": null
+              },
+              "action_target": "1f301cf8-dd03-4b40-ac17-ef0e5e7988be",
+              "action_type": "fade_action",
+              "curve_type": "linear",
+              "duration": {
+                "CTimecode": "00:00:02.000"
+              },
+              "target_value": 0
+            }
+          }
+        ]
+      },
+      "created": null,
+      "description": "This is a test script",
+      "id": "a786ebd9-b1a9-451d-8407-9ce3aa230bdc",
+      "modified": null,
+      "name": "Test Script",
+      "ui_properties": {
+        "warning": 0
+      }
+    }
+  }
+}

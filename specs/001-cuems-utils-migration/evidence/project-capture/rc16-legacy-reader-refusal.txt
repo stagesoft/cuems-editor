@@ -1,0 +1,27 @@
+$ hatch run python capture_load.py tests/fixtures/script_minimal.xml
+# cuemsutils 0.1.0rc16 @ 6213b16, editor src unedited at e05f4e7
+
+Traceback (most recent call last):
+  File "/tmp/claude-1000/-disk-Projects-StageLab-cuems-editor/04261e57-cd0c-47a8-8daa-1fa7a393660d/scratchpad/capture_load.py", line 12, in <module>
+    d = p.load_xml('p')
+        ^^^^^^^^^^^^^^^
+  File "/disk/Projects/StageLab/cuems-editor/src/cuemseditor/CuemsDBProject.py", line 896, in load_xml
+    return reader.read()
+           ^^^^^^^^^^^^^
+  File "/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/cuemseditor/lib/python3.11/site-packages/deprecated/classic.py", line 199, in wrapper_function
+    return wrapped_(*args_, **kwargs_)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/xml_reader_writer.py", line 113, in read
+    return self.schema_object.to_dict(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/cuemseditor/lib/python3.11/site-packages/xmlschema/validators/schemas.py", line 2112, in decode
+    for result in self.iter_decode(source, path, schema_path, validation, *args, **kwargs):
+  File "/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/cuemseditor/lib/python3.11/site-packages/xmlschema/validators/schemas.py", line 2098, in iter_decode
+    yield from xsd_element.iter_decode(elem, validation, **kwargs)
+  File "/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/cuemseditor/lib/python3.11/site-packages/xmlschema/validators/elements.py", line 739, in iter_decode
+    for result in content_decoder.iter_decode(obj, validation, **kwargs):
+  File "/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/cuemseditor/lib/python3.11/site-packages/xmlschema/validators/groups.py", line 1050, in iter_decode
+[... the validator dumps the whole <contents> element here; elided ...]
+34:xmlschema.validators.exceptions.XMLSchemaChildrenValidationError: failed validating <Element 'contents' at 0x7fd5c22554e0> with Xsd11Group(model='choice', occurs=[0, None]):
+36:Reason: Unexpected child with tag 'VideoCue' at position 2.
+63:Path: /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents

@@ -1,0 +1,8 @@
+$ hatch run python -c "import cuemseditor.CuemsWsServer"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/disk/Projects/StageLab/cuems-editor/src/cuemseditor/CuemsWsServer.py", line 27, in <module>
+    from cuemsutils.create_script import create_script, new_uuid
+ModuleNotFoundError: No module named 'cuemsutils.create_script'
+# exit: 1
+# editor HEAD: e05f4e77265096ac6b186b7d986945190cfacab1; cuemsutils 0.1.0rc16 from ../cuems-utils/src @ 6213b16
