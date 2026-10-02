@@ -1,0 +1,12 @@
+$ hatch test tests/test_node_merge.py -k duplicate   # before T040: the watcher retries a duplicate identity with back-off and broadcasts nothing
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_a_duplicate_identity_is_not_retried_and_is_broadcast ___________
+tests/test_node_merge.py:214: in test_a_duplicate_identity_is_not_retried_and_is_broadcast
+    assert all(s < 0.1 for s in sleeps), f'retried with back-off: {sleeps}'
+E   AssertionError: retried with back-off: [0.05, 0.1, 0.05, 0.2, 0.05]
+E   assert False
+E    +  where False = all(<generator object test_a_duplicate_identity_is_not_retried_and_is_broadcast.<locals>.<genexpr> at 0x7f32b59a32a0>)
+=========================== short test summary info ============================
+FAILED tests/test_node_merge.py::test_a_duplicate_identity_is_not_retried_and_is_broadcast
+1 failed, 6 deselected in 0.94s

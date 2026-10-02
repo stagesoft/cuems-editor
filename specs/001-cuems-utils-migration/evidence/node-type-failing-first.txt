@@ -1,0 +1,26 @@
+$ hatch test tests/test_node_merge.py -k "not duplicate"   # before T036/T037/T038: basic_fields still names node_type; merge skips items without "node"
+FFF.FF                                                                   [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert [] == ['0367f391-eb...000000000001']
+      Right contains one more item: '0367f391-ebf4-48b2-9f26-000000000001'
+      Use -v to get more diff
+/disk/Projects/StageLab/cuems-editor/tests/test_node_merge.py:74: AssertionError: assert [] == ['0367f391-eb...000000000001']
+E   assert '{"number_of_...p.local."}}]}' == '{"number_of_...able": false}'
+      Skipping 1767 identical leading characters in diff, use -v to show
+      - "online": "True", "adopted": "True", "ip": "192.168.1.10", "name": "2cf05d21cca3._cuems_nodeconf._tcp.local.", "node_role": "controller"}}], "new_nodes": [{"node": {"uuid": "0367f391-ebf4-48b2-9f26-000000000003", "mac": "0800276db133", "name": "0800276db133._cuems_nodeconf._tcp.local.", "node_role": "node", "ip": "192.168.1.101", "adopted": "False", "online": "False"}}], "nodeconf_available": false}
+      + "online": true, "adopted": true, "ip": "192.168.1.10", "name": "2cf05d21cca3._cuems_nodeconf._tcp.local....
+      ...Full output truncated (1 line hidden), use '-vv' to show
+/disk/Projects/StageLab/cuems-editor/tests/test_node_merge.py:125: assert '{"number_of_...p.local."}}]}' == '{"number_of_...able": false}'
+E   AssertionError: assert True in ('True', 'False')
+/disk/Projects/StageLab/cuems-editor/tests/test_node_merge.py:134: AssertionError: assert True in ('True', 'False')
+E   TypeError: CuemsWsServer.reload_network_map_nodes() got an unexpected keyword argument 'assign'
+/disk/Projects/StageLab/cuems-editor/tests/test_node_merge.py:156: TypeError: CuemsWsServer.reload_network_map_nodes() got an unexpected keyword argument 'assign'
+E   KeyError: 'nodeconf_available'
+/disk/Projects/StageLab/cuems-editor/tests/test_node_merge.py:163: KeyError: 'nodeconf_available'
+=========================== short test summary info ============================
+FAILED tests/test_node_merge.py::test_a_converted_node_keeps_node_role_through_the_merge
+FAILED tests/test_node_merge.py::test_initial_mappings_differs_from_the_capture_only_by_the_listed_deltas
+FAILED tests/test_node_merge.py::test_merged_nodes_carry_the_string_wire_form
+FAILED tests/test_node_merge.py::test_the_executor_read_does_not_touch_shared_state
+FAILED tests/test_node_merge.py::test_both_paths_sample_nodeconf_available_fresh
+5 failed, 1 passed, 1 deselected in 1.63s
