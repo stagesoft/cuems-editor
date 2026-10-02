@@ -1,0 +1,14 @@
+$ hatch test tests/test_initial_template.py -- --tb=short --show-capture=no   # before T014: __init__ still calls create_script()
+E.                                                                       [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_served_template_differs_from_the_baseline_only_by_the_listed_deltas _
+tests/test_initial_template.py:108: in server
+    return CuemsWsServer(settings, get_mappings())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/cuemseditor/CuemsWsServer.py:87: in __init__
+    self.initital_template = create_script()
+                             ^^^^^^^^^^^^^
+E   NameError: name 'create_script' is not defined
+=========================== short test summary info ============================
+ERROR tests/test_initial_template.py::test_served_template_differs_from_the_baseline_only_by_the_listed_deltas
+1 passed, 1 error in 0.52s

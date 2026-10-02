@@ -1,0 +1,52 @@
+$ hatch test tests/test_public_surface.py   # src/ at 5b8791c (after T007 only)
+.FFFFF..FF.F...F..FF                                                     [100%]
+=================================== FAILURES ===================================
+E   AssertionError: imports of cuemsutils.xml / .config / .create_script / .timeoutloop: ['cuemseditor/CuemsDBProject.py:9', 'cuemseditor/CuemsDBProject.py:10', 'cuemseditor/CuemsWsServer.py:26', 'cuemseditor/repair_durations.py:39', 'cuemseditor/repair_durations.py:40']. Use CuemsScript and ConfigManager instead.
+    assert not ['cuemseditor/CuemsDBProject.py:9', 'cuemseditor/CuemsDBProject.py:10', 'cuemseditor/CuemsWsServer.py:26', 'cuemseditor/repair_durations.py:39', 'cuemseditor/repair_durations.py:40']
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:94: AssertionError: imports of cuemsutils.xml / .config / .create_script / .timeoutloop: ['cuemseditor/CuemsDBProject.py:9', 'cuemseditor/CuemsDBProject.py:10', 'cuemseditor/CuemsWsServer.py:26', 'cuemseditor/repair_durations.py:39', 'cuemseditor/repair_durations.py:40']. Use CuemsScript and ConfigManager instead.
+E   AssertionError: 'CuemsParser' in src/: ['cuemseditor/CuemsDBProject.py:9', 'cuemseditor/CuemsDBProject.py:151', 'cuemseditor/CuemsDBProject.py:356', 'cuemseditor/CuemsDBProject.py:489', 'cuemseditor/CuemsDBProject.py:571', 'cuemseditor/CuemsDBProject.py:808', 'cuemseditor/repair_durations.py:39', 'cuemseditor/repair_durations.py:230']
+    assert not ['cuemseditor/CuemsDBProject.py:9', 'cuemseditor/CuemsDBProject.py:151', 'cuemseditor/CuemsDBProject.py:356', 'cuemseditor/CuemsDBProject.py:489', 'cuemseditor/CuemsDBProject.py:571', 'cuemseditor/CuemsDBProject.py:808', ...]
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:103: AssertionError: 'CuemsParser' in src/: ['cuemseditor/CuemsDBProject.py:9', 'cuemseditor/CuemsDBProject.py:151', 'cuemseditor/CuemsDBProject.py:356', 'cuemseditor/CuemsDBProject.py:489', 'cuemseditor/CuemsDBProject.py:571', 'cuemseditor/CuemsDBProject.py:808', 'cuemseditor/repair_durations.py:39', 'cuemseditor/repair_durations.py:230']
+E   AssertionError: 'XmlReaderWriter' in src/: ['cuemseditor/CuemsDBProject.py:10', 'cuemseditor/CuemsDBProject.py:10', 'cuemseditor/CuemsDBProject.py:248', 'cuemseditor/CuemsDBProject.py:305', 'cuemseditor/CuemsDBProject.py:883', 'cuemseditor/CuemsDBProject.py:893', 'cuemseditor/CuemsDBProject.py:895', 'cuemseditor/repair_durations.py:40', 'cuemseditor/repair_durations.py:40', 'cuemseditor/repair_durations.py:204', 'cuemseditor/repair_durations.py:231']
+    assert not ['cuemseditor/CuemsDBProject.py:10', 'cuemseditor/CuemsDBProject.py:10', 'cuemseditor/CuemsDBProject.py:248', 'cuemseditor/CuemsDBProject.py:305', 'cuemseditor/CuemsDBProject.py:883', 'cuemseditor/CuemsDBProject.py:893', ...]
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:103: AssertionError: 'XmlReaderWriter' in src/: ['cuemseditor/CuemsDBProject.py:10', 'cuemseditor/CuemsDBProject.py:10', 'cuemseditor/CuemsDBProject.py:248', 'cuemseditor/CuemsDBProject.py:305', 'cuemseditor/CuemsDBProject.py:883', 'cuemseditor/CuemsDBProject.py:893', 'cuemseditor/CuemsDBProject.py:895', 'cuemseditor/repair_durations.py:40', 'cuemseditor/repair_durations.py:40', 'cuemseditor/repair_durations.py:204', 'cuemseditor/repair_durations.py:231']
+E   AssertionError: 'create_script' in src/: ['cuemseditor/CuemsWsServer.py:87']
+    assert not ['cuemseditor/CuemsWsServer.py:87']
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:103: AssertionError: 'create_script' in src/: ['cuemseditor/CuemsWsServer.py:87']
+E   AssertionError: 'get_nodes_by_adoption' in src/: ['cuemseditor/CuemsWsServer.py:478']
+    assert not ['cuemseditor/CuemsWsServer.py:478']
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:103: AssertionError: 'get_nodes_by_adoption' in src/: ['cuemseditor/CuemsWsServer.py:478']
+E   AssertionError: 'CUE_TYPES' in src/: ['cuemseditor/CuemsDBProject.py:385', 'cuemseditor/CuemsDBProject.py:408', 'cuemseditor/CuemsDBProject.py:422']
+    assert not ['cuemseditor/CuemsDBProject.py:385', 'cuemseditor/CuemsDBProject.py:408', 'cuemseditor/CuemsDBProject.py:422']
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:103: AssertionError: 'CUE_TYPES' in src/: ['cuemseditor/CuemsDBProject.py:385', 'cuemseditor/CuemsDBProject.py:408', 'cuemseditor/CuemsDBProject.py:422']
+E   AssertionError: "'AudioCue' in" in src/: ['cuemseditor/CuemsDBProject.py:79']
+    assert not ['cuemseditor/CuemsDBProject.py:79']
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:103: AssertionError: "'AudioCue' in" in src/: ['cuemseditor/CuemsDBProject.py:79']
+E   AssertionError: "'VideoCue' in" in src/: ['cuemseditor/CuemsDBProject.py:81']
+    assert not ['cuemseditor/CuemsDBProject.py:81']
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:103: AssertionError: "'VideoCue' in" in src/: ['cuemseditor/CuemsDBProject.py:81']
+E   AssertionError: 'node_type' in src/: ['cuemseditor/CuemsWsServer.py:392', 'cuemseditor/CuemsWsServer.py:433']
+    assert not ['cuemseditor/CuemsWsServer.py:392', 'cuemseditor/CuemsWsServer.py:433']
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:103: AssertionError: 'node_type' in src/: ['cuemseditor/CuemsWsServer.py:392', 'cuemseditor/CuemsWsServer.py:433']
+E   assert 'from cuemsutils.tools.NodeList import partition_by_adoption' in ['# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL', '# SPDX-License-Identifier: GPL-3.0-or-later', '# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>', 'import asyncio', 'import concurrent.futures', 'import json', ...]
+     +  where ['# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL', '# SPDX-License-Identifier: GPL-3.0-or-later', '# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>', 'import asyncio', 'import concurrent.futures', 'import json', ...] = <built-in method splitlines of str object at 0x5558ab619420>()
+     +    where <built-in method splitlines of str object at 0x5558ab619420> = '# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL\n# SPDX-License-Identifier: GPL-3.0-or-later\n# SPDX-FileContributo...  Logger.debug("Caught the following exception: (ignore if on closing)")\n        Logger.debug(context[\'message\'])\n'.splitlines
+     +      where '# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL\n# SPDX-License-Identifier: GPL-3.0-or-later\n# SPDX-FileContributo...  Logger.debug("Caught the following exception: (ignore if on closing)")\n        Logger.debug(context[\'message\'])\n' = read_text(encoding='utf-8')
+     +        where read_text = PosixPath('/disk/Projects/StageLab/cuems-editor/src/cuemseditor/CuemsWsServer.py').read_text
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:123: assert 'from cuemsutils.tools.NodeList import partition_by_adoption' in ['# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL', '# SPDX-License-Identifier: GPL-3.0-or-later', '# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>', 'import asyncio', 'import concurrent.futures', 'import json', ...]
+E   AssertionError: internal classes imported through a public module: ['cuemseditor/CuemsDBProject.py: CuemsParser from cuemsutils.xml.Parsers (defined in cuemsutils.xml.Parsers)', 'cuemseditor/CuemsDBProject.py: XmlReaderWriter from cuemsutils.xml.XmlReaderWriter (defined in cuemsutils.xml.xml_reader_writer)', 'cuemseditor/CuemsWsServer.py: NetworkMap from cuemsutils.xml (defined in cuemsutils.xml.settings)', 'cuemseditor/repair_durations.py: CuemsParser from cuemsutils.xml.Parsers (defined in cuemsutils.xml.Parsers)', 'cuemseditor/repair_durations.py: XmlReaderWriter from cuemsutils.xml.XmlReaderWriter (defined in cuemsutils.xml.xml_reader_writer)']
+    assert not ['cuemseditor/CuemsDBProject.py: CuemsParser from cuemsutils.xml.Parsers (defined in cuemsutils.xml.Parsers)', 'cuemse...epair_durations.py: XmlReaderWriter from cuemsutils.xml.XmlReaderWriter (defined in cuemsutils.xml.xml_reader_writer)']
+/disk/Projects/StageLab/cuems-editor/tests/test_public_surface.py:157: AssertionError: internal classes imported through a public module: ['cuemseditor/CuemsDBProject.py: CuemsParser from cuemsutils.xml.Parsers (defined in cuemsutils.xml.Parsers)', 'cuemseditor/CuemsDBProject.py: XmlReaderWriter from cuemsutils.xml.XmlReaderWriter (defined in cuemsutils.xml.xml_reader_writer)', 'cuemseditor/CuemsWsServer.py: NetworkMap from cuemsutils.xml (defined in cuemsutils.xml.settings)', 'cuemseditor/repair_durations.py: CuemsParser from cuemsutils.xml.Parsers (defined in cuemsutils.xml.Parsers)', 'cuemseditor/repair_durations.py: XmlReaderWriter from cuemsutils.xml.XmlReaderWriter (defined in cuemsutils.xml.xml_reader_writer)']
+=========================== short test summary info ============================
+FAILED tests/test_public_surface.py::test_no_internal_or_removed_cuemsutils_import
+FAILED tests/test_public_surface.py::test_banned_name_is_absent[CuemsParser]
+FAILED tests/test_public_surface.py::test_banned_name_is_absent[XmlReaderWriter]
+FAILED tests/test_public_surface.py::test_banned_name_is_absent[create_script]
+FAILED tests/test_public_surface.py::test_banned_name_is_absent[get_nodes_by_adoption]
+FAILED tests/test_public_surface.py::test_banned_name_is_absent[CUE_TYPES] - ...
+FAILED tests/test_public_surface.py::test_banned_name_is_absent['AudioCue' in]
+FAILED tests/test_public_surface.py::test_banned_name_is_absent['VideoCue' in]
+FAILED tests/test_public_surface.py::test_banned_name_is_absent[node_type] - ...
+FAILED tests/test_public_surface.py::test_the_server_imports_the_published_partition
+FAILED tests/test_public_surface.py::test_no_internal_class_reached_through_a_public_module
+11 failed, 9 passed in 0.26s
