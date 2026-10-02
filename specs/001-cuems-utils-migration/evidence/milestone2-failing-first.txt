@@ -1,0 +1,51 @@
+$ hatch test tests/test_payload_version.py tests/test_schema_descriptor.py   # before T057/T059
+FFFFFFFFFFFFFFx                                                          [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert {'type': 'users', 'value': 1} == {'type': 'pay...', 'value': 1}
+      Omitting 1 identical items, use -vv to show
+      Differing items:
+      {'type': 'users'} != {'type': 'payload_version'}
+      Use -v to get more diff
+/disk/Projects/StageLab/cuems-editor/tests/test_payload_version.py:67: AssertionError: assert {'type': 'users', 'value': 1} == {'type': 'pay...', 'value': 1}
+E   AttributeError: type object 'CuemsWsServer' has no attribute 'PAYLOAD_VERSION'
+/disk/Projects/StageLab/cuems-editor/tests/test_payload_version.py:77: AttributeError: type object 'CuemsWsServer' has no attribute 'PAYLOAD_VERSION'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:65: AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:65: AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:65: AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:65: AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:65: AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:65: AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:80: AttributeError: 'CuemsWsUser' object has no attribute 'schema_descriptor'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'config_save'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:87: AttributeError: 'CuemsWsUser' object has no attribute 'config_save'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'config_save'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:87: AttributeError: 'CuemsWsUser' object has no attribute 'config_save'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'config_save'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:87: AttributeError: 'CuemsWsUser' object has no attribute 'config_save'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'config_save'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:87: AttributeError: 'CuemsWsUser' object has no attribute 'config_save'
+E   AttributeError: 'CuemsWsUser' object has no attribute 'config_save'
+/disk/Projects/StageLab/cuems-editor/tests/test_schema_descriptor.py:87: AttributeError: 'CuemsWsUser' object has no attribute 'config_save'
+=========================== short test summary info ============================
+FAILED tests/test_payload_version.py::test_payload_version_is_the_first_frame_on_connect
+FAILED tests/test_payload_version.py::test_the_advertised_version_has_a_bump_row
+FAILED tests/test_schema_descriptor.py::test_schema_descriptor_carries_the_library_descriptor[script]
+FAILED tests/test_schema_descriptor.py::test_schema_descriptor_carries_the_library_descriptor[settings]
+FAILED tests/test_schema_descriptor.py::test_schema_descriptor_carries_the_library_descriptor[network_map]
+FAILED tests/test_schema_descriptor.py::test_schema_descriptor_carries_the_library_descriptor[project_mappings]
+FAILED tests/test_schema_descriptor.py::test_schema_descriptor_carries_the_library_descriptor[project_settings]
+FAILED tests/test_schema_descriptor.py::test_schema_descriptor_carries_the_library_descriptor[hardware_outputs]
+FAILED tests/test_schema_descriptor.py::test_schema_descriptor_of_an_unknown_schema_is_an_error
+FAILED tests/test_schema_descriptor.py::test_config_save_refuses[script] - At...
+FAILED tests/test_schema_descriptor.py::test_config_save_refuses[hardware_outputs]
+FAILED tests/test_schema_descriptor.py::test_config_save_refuses[default_mappings]
+FAILED tests/test_schema_descriptor.py::test_config_save_refuses[outputs] - A...
+FAILED tests/test_schema_descriptor.py::test_config_save_refuses[None] - Attr...
+14 failed, 1 xfailed in 0.95s

@@ -232,8 +232,8 @@ Depends on T047 and on T016 (the server connects). Do not remove keys from `init
 
 ### Tests for User Story 8
 
-- [ ] T055 [US8] Add `tests/test_payload_version.py` asserting the first frame on connect is `{"type":"payload_version","value":1}` and that it arrives before any `initial_*` frame. The test fails if the integer changes without a matching bump row in `tests/ws-command-responses.txt` (FR-047, FR-047a). A connection that never sends this type is version 0
-- [ ] T056 [P] [US8] Add `tests/test_schema_descriptor.py`. `schema_descriptor` returns `ConfigManager.get_schema_descriptor` types with `key`, `fields` (name, xsd type, `required`, `repeated`, order, kind, `enum_values`, default, repairability), and `instance`. `config_save` persists through `save_network_map`, `save_settings`, `save_project_mappings`, or `save_project_settings`. It rejects schema `script`, schema `hardware_outputs`, and any write of `default_mappings.xml` (FR-045, data-model.md)
+- [X] T055 [US8] Add `tests/test_payload_version.py` asserting the first frame on connect is `{"type":"payload_version","value":1}` and that it arrives before any `initial_*` frame. The test fails if the integer changes without a matching bump row in `tests/ws-command-responses.txt` (FR-047, FR-047a). A connection that never sends this type is version 0
+- [X] T056 [P] [US8] Add `tests/test_schema_descriptor.py`. `schema_descriptor` returns `ConfigManager.get_schema_descriptor` types with `key`, `fields` (name, xsd type, `required`, `repeated`, order, kind, `enum_values`, default, repairability), and `instance`. `config_save` persists through `save_network_map`, `save_settings`, `save_project_mappings`, or `save_project_settings`. It rejects schema `script`, schema `hardware_outputs`, and any write of `default_mappings.xml` (FR-045, data-model.md)
 
 ### Implementation for User Story 8
 
