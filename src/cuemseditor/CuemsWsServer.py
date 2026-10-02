@@ -22,7 +22,7 @@ from cuemseditor.CuemsUpload import CuemsUpload
 from cuemseditor.CuemsErrors import *
 
 from cuemsutils.tools.CommunicatorServices import Communicator
-from cuemsutils.tools.ConfigManager import ConfigManager
+from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
 from cuemsutils.xml import NetworkMap
 from cuemsutils.helpers import new_uuid
 
@@ -84,7 +84,9 @@ class CuemsWsServer():
         self.sessions = dict()
         self.settings_dict = settings_dict
         self.mappings_dict = mappings_dict
-        self.initital_template = create_script()
+        # The library's generated example stands in for the retired template
+        # until the UI builds from the schema descriptor (FR-008).
+        self.initital_template = ConfigManager(load_all=False).generate_example(SchemaName.SCRIPT)
         try:
             self.tmp_path = self.settings_dict['tmp_path']
             self.session_uuid = self.settings_dict['session_uuid']

@@ -3,6 +3,7 @@
 Commands 													 ->	Responses
 																
 
+																->  {"type" : "initial_template", "value": {"CuemsScript": "script_example_json"}}
 																->  {"type" : "initial_mappings", "value": "mapings_json"}
 																->  {"type" : "users", "value": "connected_users_count"}
 
@@ -45,6 +46,36 @@ Commands 													 ->	Responses
 {"action" : "nodelist_get"}										->  {"type": "initial_mappings", "value": "mappings_json"}
 {"action" : "node_status"}										->  {"type": "node_status", "value": {"alive": [...], "adopted": [...], "controller": "uuid", "age_s": 0.1, "missing": [...], "unreachable": [...]}}
 
+
+initial_template
+
+Sent on connect, before initial_mappings. The value is
+{"CuemsScript": <ConfigManager.generate_example(SchemaName.SCRIPT)>}. Until
+001 it was cuemsutils' create_script(), deleted upstream. Against that
+baseline (v0.1.0rc14, specs/001-cuems-utils-migration/evidence/
+create-script-baseline.json) the value differs by exactly these deltas,
+pinned by tests/test_initial_template.py:
+
+  (a) every boolean is the string "True" / "False", not JSON true / false
+      (the same form the "project" frame already uses)
+  (b) ui_properties scalars are strings: 0 -> "0", null -> "None"
+  (c) a hardware cue's key is "Cue" with "class" ("audio", "video", "dmx")
+      as its last key, not "AudioCue" / "VideoCue" / "DmxCue"; a hardware
+      cue output's key is "CueOutput" with "class" last, not
+      "AudioCueOutput" / "VideoCueOutput" / "DmxCueOutput". ActionCue,
+      FadeCue and CueList keep their keys
+  (e) hardware cues have no "fade_profiles" key
+  (f) Media.duration is {"CTimecode": "HH:MM:SS.mmm"}, not a bare string
+  (d) example values, not empty ones: ids, created / modified, name,
+      description, file_name, master_vol, output_name, output_vol,
+      channel_vol, action_target and CTimecode values. Keys and their order
+      are unchanged; only these values differ
+
+Consumer: cuems-frontend src/app/services/projects/projects.service.ts:240
+(type check), :243 (writes localStorage "initial_template"), :159 (reads it
+back on start). A cached pre-001 template stays in localStorage until the
+next connect overwrites it. Retired in milestone 2, behind payload version 1
+(clients build from the schema descriptor instead).
 
 Nodes: adoption
 

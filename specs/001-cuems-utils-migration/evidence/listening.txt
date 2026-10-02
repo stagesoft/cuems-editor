@@ -1,0 +1,13 @@
+# T016 — after T014. FR-003: the service accepts a WebSocket connection on :9092. Closes US1 scenario 2.
+# editor ee920ae + T014 working tree; cuemsutils 0.1.0rc16 @ 6213b16; CUEMS_CONF_PATH=tests/fixtures/conf; temporary library
+$ CUEMS_CONF_PATH=tests/fixtures/conf hatch run python listening/serve.py <tmp-library> &
+$ ss -ltn | grep :9092
+LISTEN 0      100        127.0.0.1:9092       0.0.0.0:*   
+LISTEN 0      100            [::1]:9092          [::]:*   
+$ hatch run python listening/connect.py
+users 1
+session_id 79e28cbd-016c-4f38-b2f4-442c50f05a85
+initial_template ['CuemsScript']
+initial_mappings ['number_of_nodes', 'defaults', 'nodes', 'new_nodes']
+{'type': 'project_list', 'value': []}
+# Note: initial_mappings carries no nodeconf_available (the mappings object drops undeclared keys; mappings-capture/README.md). Fixed in US6.
