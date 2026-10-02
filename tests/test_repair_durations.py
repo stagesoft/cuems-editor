@@ -106,3 +106,43 @@ def test_skipped_invalid_xml_does_not_abort(library, canned_probe):
 def test_missing_db_is_fatal(tmp_path):
     rc = rd.main(['--library-path', str(tmp_path)])
     assert rc == 2
+
+
+# ─── 001: structured durations and pre-013 documents ─────────────────────
+
+FIXTURE_013 = os.path.join(os.path.dirname(__file__), 'fixtures', 'script_minimal_013.xml')
+
+
+def _write_v2_script(library):
+    """proj1 holds the 013 fixture as the library writes it: doc_version 2,
+    <duration><CTimecode>…</CTimecode></duration>, durations still zero."""
+    from cuemsutils.cues import CuemsScript
+    script, _report = CuemsScript.load_with_report(FIXTURE_013)
+    script.save(_script_path(library))
+
+
+def _status_lines(out, status):
+    return [line.strip() for line in out.splitlines() if line.strip().startswith(f'[{status}]')]
+
+
+def test_structured_duration_differing_from_the_database_is_reported(library, canned_probe, capsys):
+    _write_v2_script(library)
+    with open(_script_path(library), encoding='utf-8') as fh:
+        assert '<CTimecode>00:00:00.000</CTimecode></duration>' in fh.read().replace('\n', '')
+
+    rd.main(['--library-path', library.root])
+
+    needs_save = _status_lines(capsys.readouterr().out, 'NEEDS_SAVE')
+    assert any('proj1' in line and 'file.ext' in line for line in needs_save), needs_save
+
+
+def test_pre_013_script_is_skipped_invalid_and_untouched(library, canned_probe, capsys):
+    before = _file_hash(_script_path(library))      # the library fixture is pre-013
+
+    rd.main(['--library-path', library.root, '--apply'])
+
+    skipped = _status_lines(capsys.readouterr().out, 'SKIPPED_INVALID')
+    assert any('proj1' in line and 'cuems-reshape-devices' in line for line in skipped), skipped
+    assert _file_hash(_script_path(library)) == before
+    # cuems-reshape-devices leaves <name>.<ts>.bak beside each file it rewrites.
+    assert not [f for f in os.listdir(os.path.dirname(_script_path(library))) if f.endswith('.bak')]

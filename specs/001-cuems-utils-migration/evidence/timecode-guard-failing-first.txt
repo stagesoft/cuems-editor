@@ -1,0 +1,25 @@
+$ hatch test tests/test_repair_durations.py -k structured_duration   # before T029: pass B guards with TIMECODE_SHAPE.match on strings
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_______ test_structured_duration_differing_from_the_database_is_reported _______
+tests/test_repair_durations.py:136: in test_structured_duration_differing_from_the_database_is_reported
+    assert any('proj1' in line and 'file.ext' in line for line in needs_save), needs_save
+E   AssertionError: []
+E   assert False
+E    +  where False = any(<generator object test_structured_duration_differing_from_the_database_is_reported.<locals>.<genexpr> at 0x7fb3c30ca400>)
+_____________ test_pre_013_script_is_skipped_invalid_and_untouched _____________
+tests/test_repair_durations.py:145: in test_pre_013_script_is_skipped_invalid_and_untouched
+    assert any('proj1' in line and 'cuems-reshape-devices' in line for line in skipped), skipped
+E   AssertionError: ["[SKIPPED_INVALID] proj1: XMLSchemaChildrenValidationError: failed validating <Element 'contents' at 0x7fb3c274e5c0> with Xsd11Group(model='choice', occurs=[0, None]):"]
+E   assert False
+E    +  where False = any(<generator object test_pre_013_script_is_skipped_invalid_and_untouched.<locals>.<genexpr> at 0x7fb3c47bb2a0>)
+=========================== short test summary info ============================
+FAILED tests/test_repair_durations.py::test_structured_duration_differing_from_the_database_is_reported
+FAILED tests/test_repair_durations.py::test_pre_013_script_is_skipped_invalid_and_untouched
+2 failed, 7 deselected in 0.81s
+
+# The pre-change tool on that structured-duration project (dry run): pass B sees no media refs
+# in the dict the old reader returns, so proj1 is XML_OK and nothing says it needs a save.
+== Pass B: project script.xml <duration> ==
+  [XML_OK] proj1
+    XML_OK: 1

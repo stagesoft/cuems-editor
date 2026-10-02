@@ -131,7 +131,7 @@ Depends on T023: the duration comparison shares the object walker's `CTimecode` 
 
 ### Tests for User Story 5
 
-- [ ] T028 [US5] In `tests/test_repair_durations.py`, add a test that a structured media duration (a `CTimecode`, or `{"CTimecode": "HH:MM:SS.mmm"}` on the wire) differing from the database value is reported. Add a second case: a fixture in the pre-013 cue shape (element `AudioCue`, no `class`) is reported `SKIPPED_INVALID` with the library's reason, the file checksum is unchanged, and `cuems-reshape-devices` is not invoked. Run the structured-duration case against the pre-change `TIMECODE_SHAPE.match` guard at `src/cuemseditor/repair_durations.py` and save the failure in `specs/001-cuems-utils-migration/evidence/timecode-guard-failing-first.txt` before T029 (FR-024, constitution IV.4)
+- [X] T028 [US5] In `tests/test_repair_durations.py`, add a test that a structured media duration (a `CTimecode`, or `{"CTimecode": "HH:MM:SS.mmm"}` on the wire) differing from the database value is reported. Add a second case: a fixture in the pre-013 cue shape (element `AudioCue`, no `class`) is reported `SKIPPED_INVALID` with the library's reason, the file checksum is unchanged, and `cuems-reshape-devices` is not invoked. Run the structured-duration case against the pre-change `TIMECODE_SHAPE.match` guard at `src/cuemseditor/repair_durations.py` and save the failure in `specs/001-cuems-utils-migration/evidence/timecode-guard-failing-first.txt` before T029 (FR-024, constitution IV.4)
 
 ### Implementation for User Story 5
 
