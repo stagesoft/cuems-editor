@@ -22,14 +22,14 @@ hardware cues keyed `Cue` / `CueOutput` with `class`, is not omitted to keep the
 
 ## `project` frame (T027, FR-018, FR-042)
 
-Deltas (a), (b), (c) are listed beside `project` in `tests/ws-command-responses.txt`. They are
+Deltas (a)–(d) are listed beside `project` in `tests/ws-command-responses.txt`. They are
 payload version 1, not a bump to 2.
 
 | File:line | What it does |
 |---|---|
 | `src/app/services/projects/projects.service.ts:120` | declares `schemaLocation: string` as a required property of the project payload interface. Delta (a) removes the key. Nothing throws at runtime (the WebSocket payload is untyped), so the interface lies until the frontend drops it |
 | (delta (c)) | every reader of `AudioCue` / `VideoCue` / `DmxCue` keys in a project. The frontend 05 work owns finding them; a pre-05 UI mis-reads `Cue` |
-| (open, UR-3) | `"opacity": 100` on a video cue whose document has none. Not sanctioned; see `../upstream-reports/UR-3-to-wire-emits-absent-optional-default.md` |
+| (delta (d)) | `"opacity": 100` on a video cue whose document has none (the `VideoCue` default). Sanctioned 2026-10-02 |
 
 ## Milestone 2 (T061, FR-008, FR-018, FR-046)
 

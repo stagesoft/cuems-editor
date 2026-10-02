@@ -28,11 +28,12 @@ import:
 | (a) | `schemaLocation` is absent. It was present. |
 | (b) | Each `Media.duration` is `{"CTimecode": "HH:MM:SS.mmm"}`, not a bare string. |
 | (c) | A hardware cue's key is `Cue`, with `class` inside. A hardware cue output's key is `CueOutput`, with `class` likewise. `ActionCue`, `FadeCue`, and `CueList` stay their own keys. |
+| (d) | A video cue whose document has no `<opacity>` carries `"opacity": 100` (the `VideoCue` default, a field of `script.xsd`), before `class`. Sanctioned 2026-10-02 (spec clarification); it was first reported as UR-3 and withdrawn. |
 
 Everything else stays: every other key, key order aside from the absent key and the renamed cue
 keys, and the string form of cue booleans (`"True"` / `"False"`, not JSON `true` / `false`).
 `doc_version` is not a key. An unlisted difference fails `tests/test_project_payload.py`.
-A fourth difference is that failure. Delta (c) is listed, so it is not.
+A fifth difference is that failure. Deltas (c) and (d) are listed, so they are not.
 
 The capture's fixture set is this repository's `tests/fixtures/` (today `script_minimal.xml`).
 It is not taken from `cuems-utils` `tests/golden/xml`. Those files may hold a superseded state.

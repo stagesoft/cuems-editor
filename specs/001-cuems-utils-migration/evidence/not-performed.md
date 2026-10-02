@@ -27,3 +27,11 @@ here, or **does not pass**. An omitted row would be read as a pass, so each one 
 | `tests/test_project_payload.py::test_open_frame_differs_from_the_capture_by_three_deltas_only` (SC-004) | **fails**: the `project` frame has a fourth difference, `"opacity": 100` on video cues whose document has none | `upstream-reports/UR-3`: cuems-utils stops emitting it, or the 001 spec sanctions it as a delta |
 | T058 — `node_list` split out of `initial_mappings` (FR-032 milestone 2, FR-046) | **not landed** | needs a decision: it changes four assertions in `tests/test_nodelist_actions.py`, which the tasks allow to be edited only in T036 |
 | T059 — `config_save` persisting `settings` / `network_map` / `project_mappings` / `project_settings` | **not implemented**; refusals are in place, the persisting test is `xfail(strict)` | `upstream-reports/UR-5`: no public JSON ingestion for config documents |
+
+## Resolved later the same day (2026-10-02); the rows above are kept as written
+
+- The `opacity` row: sanctioned by the maintainer as `project` delta (d) (spec clarification
+  2026-10-02). `tests/test_project_payload.py` lists it and passes. UR-3 is withdrawn.
+- The T058 row: landed (`bf386b1`) with the maintainer-approved second edit of
+  `tests/test_nodelist_actions.py`.
+- Still open: T059's config saves (UR-5).

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The ``project`` frame differs from the pre-migration capture by three deltas only.
+"""The ``project`` frame differs from the pre-migration capture by the sanctioned deltas only.
 
 FR-011, FR-014, FR-040, contracts/project-payload.md. The capture is the
 ``{"type":"project"}`` frame the editor sent before 001, for
@@ -16,7 +16,9 @@ Sanctioned deltas, applied to the capture by ``apply_project_deltas``:
 (c) a hardware cue's key is ``Cue`` with ``class`` last, and a hardware cue
     output's key is ``CueOutput`` with ``class`` last. ``ActionCue``,
     ``FadeCue`` and ``CueList`` keep their keys. ``AudioCue`` is not written
-    back onto the wire.
+    back onto the wire;
+(d) a video cue whose document has no ``<opacity>`` carries ``"opacity": 100``,
+    the ``VideoCue`` default, before ``class`` (spec clarification 2026-10-02).
 
 Everything else is compared as serialised JSON text, so key order and the
 string booleans are part of the check. ``cuems-utils`` golden XML is not.
@@ -52,10 +54,11 @@ HARDWARE_CUES = {'AudioCue': 'audio', 'VideoCue': 'video', 'DmxCue': 'dmx'}
 HARDWARE_OUTPUTS = {'AudioCueOutput': 'audio', 'VideoCueOutput': 'video', 'DmxCueOutput': 'dmx'}
 
 DB_DURATIONS = {'file.ext': '00:01:23.456', 'file_video.ext': '00:01:30.000'}
+VIDEO_OPACITY_DEFAULT = 100
 
 
 def apply_project_deltas(value):
-    """The captured ``value`` moved through deltas (a), (b) and (c), and nothing else."""
+    """The captured ``value`` moved through deltas (a)–(d), and nothing else."""
     def move(node, parent=None):
         if isinstance(node, list):
             return [move(item, parent) for item in node]
@@ -65,6 +68,8 @@ def apply_project_deltas(value):
             (key, body), = node.items()
             if key in HARDWARE_CUES:                      # (c)
                 moved = {k: move(v, k) for k, v in body.items()}
+                if key == 'VideoCue' and 'opacity' not in moved:
+                    moved['opacity'] = VIDEO_OPACITY_DEFAULT  # (d)
                 moved['class'] = HARDWARE_CUES[key]
                 return {'Cue': moved}
             if key in HARDWARE_OUTPUTS:                   # (c)
@@ -135,9 +140,10 @@ def test_the_capture_is_the_pre_013_frame():
     assert SCHEMA_LOCATION in text
     assert '"AudioCue"' in text and '"Cue"' not in text
     assert '"duration": "00:00:00.000"' in text
+    assert '"opacity"' not in text
 
 
-def test_open_frame_differs_from_the_capture_by_three_deltas_only(lib):
+def test_open_frame_differs_from_the_capture_by_the_sanctioned_deltas_only(lib):
     before = _sha256(lib.script)
 
     value = lib.project.load(lib.uuid)

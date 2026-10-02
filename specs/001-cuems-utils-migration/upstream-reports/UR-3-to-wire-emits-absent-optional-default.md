@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 SPDX-License-Identifier: GPL-3.0-or-later
 -->
 
-# UR-3 — `to_wire()` emits a model default for an absent optional element
+# UR-3 — `to_wire()` emits a model default for an absent optional element — WITHDRAWN
 
 **From** cuems-editor 001, 2026-10-02. Measured on cuemsutils `0.1.0rc16` @ `6213b16`.
 
@@ -39,3 +39,11 @@ Option 2 is a decision for the 001 spec owner, not a code change in this reposit
 **Also seen.** `generate_example(SchemaName.SCRIPT)` emits `opacity` on its video cue too; that is
 covered by the `initial_template` delta list (`ws-command-responses.txt`, which compares against a
 baseline that already had `opacity`).
+
+## Resolution, 2026-10-02 — withdrawn, not a defect
+
+The maintainer ruled that the behaviour is correct: `opacity` is a `VideoCue` field in `script.xsd`;
+a video cue that does not give it carries the default, and `to_wire()` projecting it is the library
+doing its work. Nothing is asked of cuems-utils. The editor side is option 2 above: the 001 spec
+sanctions it as delta (d) (spec clarification 2026-10-02, `contracts/project-payload.md`), and
+`tests/test_project_payload.py` lists it.

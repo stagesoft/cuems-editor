@@ -63,13 +63,15 @@ There is no fourth outcome and no lenient reader.
 The `value` of `{"type":"project"}`. Produced by one call to `script.to_wire()` in the open
 path. No later step adds, removes, or reorders keys to achieve an object-level result.
 
-Against a capture taken before the migration, exactly three differences are sanctioned:
+Against a capture taken before the migration, exactly four differences are sanctioned ((d) added
+2026-10-02, spec clarification):
 
 | Delta | Old | New |
 |---|---|---|
 | (a) | `schemaLocation` present | key absent |
 | (b) | `Media.duration` a string `HH:MM:SS.mmm` | `{"CTimecode": "HH:MM:SS.mmm"}` |
 | (c) | hardware cue key `AudioCue`, `VideoCue`, or `DmxCue`; output key `AudioCueOutput`, `VideoCueOutput`, or `DmxCueOutput` | key `Cue` or `CueOutput`, with `class` inside (`audio`, `video`, `dmx`, or any other string the document carried). `ActionCue`, `FadeCue`, and `CueList` stay their own keys |
+| (d) | a video cue whose document has no `<opacity>` has no `opacity` key | `"opacity": 100`, the `VideoCue` default, before `class` |
 
 Key order is unchanged aside from the absent key and the renamed cue keys. Cue booleans stay the strings `"True"` and
 `"False"`. `doc_version` does not appear. Any unlisted difference fails the test. Schema truth is

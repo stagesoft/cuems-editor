@@ -118,7 +118,8 @@ project (reply to project_load)
 The value is CuemsScript.to_wire() of the script on disk, built once by the
 library's load and not walked afterwards. Opening a project does not write
 its file. Payload version 1 (not a bump to 2) differs from the pre-001 frame
-(specs/001-cuems-utils-migration/evidence/project-capture/) by exactly:
+(specs/001-cuems-utils-migration/evidence/project-capture/) by exactly
+these, (d) sanctioned 2026-10-02:
 
   (a) "schemaLocation" is absent (it was a top-level key beside CuemsScript)
   (b) Media.duration is {"CTimecode": "HH:MM:SS.mmm"}, not a bare string
@@ -131,9 +132,8 @@ Key order otherwise, and "True" / "False" strings, are unchanged. doc_version
 is never a key. Pinned by tests/test_project_payload.py. A pre-05 UI
 mis-reads (c), which is why the milestone 1 checkpoint is not deployed.
 
-Open item: the library also emits "opacity": 100 on a video cue whose
-document has none. That is not one of the three; the test fails on it and
-it is reported upstream (001 upstream-reports/UR-3).
+  (d) a video cue whose document has no <opacity> carries "opacity": 100
+      (the VideoCue default; opacity is a script.xsd field), before "class"
 
 Consumer: cuems-frontend src/app/services/projects/projects.service.ts:120
 declares schemaLocation: string as required.

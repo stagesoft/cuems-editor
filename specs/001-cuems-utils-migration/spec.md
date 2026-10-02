@@ -241,6 +241,17 @@ in this repository is a regression, not coverage.
 
 ---
 
+### Session 2026-10-02
+
+- Q: The `project` frame also carries `"opacity": 100` on a video cue whose document has no
+  `<opacity>` element — a fourth difference from the capture. Library defect or sanctioned? → A:
+  **Sanctioned, as delta (d).** `opacity` is a `VideoCue` field in `script.xsd`; a video cue that
+  does not give it carries the model default, and `to_wire()` emitting it is correct. Upstream
+  report UR-3 is withdrawn as a defect (maintainer, 2026-10-02).
+- Q: T058 changes the milestone-1 wire that four assertions in `tests/test_nodelist_actions.py` pin,
+  and the tasks allowed that file one edit (T036). → A: **Edit those assertions**, as a second,
+  named edit recorded in the T058 commit (maintainer, 2026-10-02).
+
 ## Motivation
 
 ### What this feature is, in constitutional terms
@@ -493,6 +504,8 @@ The UI receives the `{"type":"project"}` frame, byte for byte as before 008, exc
 - **(c)** a hardware cue's wire key is `Cue`, with `class` inside (`audio`, `video`, `dmx`, or any
   other string the document carried). A hardware cue output's key is `CueOutput`, with `class`
   likewise. `ActionCue`, `FadeCue`, and `CueList` stay their own keys.
+- **(d)** *(clarification 2026-10-02)* a video cue whose document has no `<opacity>` carries
+  `"opacity": 100`, the `VideoCue` default, before `class`.
 
 Key order otherwise is unchanged. Cue booleans stay `"True"` / `"False"`.
 
