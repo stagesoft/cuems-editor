@@ -77,6 +77,31 @@ back on start). A cached pre-001 template stays in localStorage until the
 next connect overwrites it. Retired in milestone 2, behind payload version 1
 (clients build from the schema descriptor instead).
 
+project (reply to project_load)
+
+The value is CuemsScript.to_wire() of the script on disk, built once by the
+library's load and not walked afterwards. Opening a project does not write
+its file. Payload version 1 (not a bump to 2) differs from the pre-001 frame
+(specs/001-cuems-utils-migration/evidence/project-capture/) by exactly:
+
+  (a) "schemaLocation" is absent (it was a top-level key beside CuemsScript)
+  (b) Media.duration is {"CTimecode": "HH:MM:SS.mmm"}, not a bare string
+  (c) a hardware cue's key is "Cue" with "class" ("audio", "video", "dmx",
+      or any other string the document carries) as its last key; a hardware
+      cue output's key is "CueOutput" with "class". ActionCue, FadeCue and
+      CueList keep their keys. "AudioCue" is not written back
+
+Key order otherwise, and "True" / "False" strings, are unchanged. doc_version
+is never a key. Pinned by tests/test_project_payload.py. A pre-05 UI
+mis-reads (c), which is why the milestone 1 checkpoint is not deployed.
+
+Open item: the library also emits "opacity": 100 on a video cue whose
+document has none. That is not one of the three; the test fails on it and
+it is reported upstream (001 upstream-reports/UR-3).
+
+Consumer: cuems-frontend src/app/services/projects/projects.service.ts:120
+declares schemaLocation: string as required.
+
 Nodes: adoption
 
 The node list is pushed as "initial_mappings" on connect, after a successful

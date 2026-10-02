@@ -2,72 +2,35 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 
-"""Dangling-target cleanup must know FadeCue.
+"""Retired by 001-cuems-utils-migration (FR-017, research R2).
 
-Regression pins for the CUE_TYPES fix: before it, _collect_cue_ids never
-collected FadeCue ids — so an ActionCue targeting a FadeCue was wrongly seen
-as dangling and nullified on every save — and FadeCue's own dangling
-action_target was never cleaned.
+This module pinned the editor's own dangling-reference walk
+(``_collect_cue_ids`` / ``_nullify_dangling_refs`` over a hand-kept cue-type
+list). That walk is deleted, not ported, and the guide's collapsed list
+``['Cue', 'ActionCue', 'FadeCue', 'CueList']`` was not ported either. The two
+behaviours it asserted now belong to the library, rule by rule, in
+``cuemsutils`` ``xml/validators.py``:
+
+* ``target_resolves`` (repairable): a dangling ``Cue.target`` is set to
+  ``None`` on load and listed on ``LoadReport.repairs``.
+* ``action_target_resolves`` (unrepairable): a dangling ``action_target`` on an
+  ``ActionCue``, and on a ``FadeCue`` through the MRO, is refused on load and at
+  ``CuemsScript.save``. Clearing it to ``None`` would fail
+  ``action_target_required``, which is why the editor's old clear is gone.
+
+Both rules match on cue identity, so a ``Cue`` of any ``class`` is covered.
+Re-asserting them here would re-test the library. Record:
+specs/001-cuems-utils-migration/evidence/test-retirements.md.
 """
 
-from cuemseditor.CuemsDBProject import CuemsDBProject
+import pytest
+
+pytestmark = pytest.mark.skip(
+    reason="retired: dangling targets are cuemsutils xml/validators.py rules "
+           "target_resolves (library repairs Cue.target) and "
+           "action_target_resolves (library refuses); the editor walk is deleted"
+)
 
 
-def _walker():
-    """CuemsDBProject instance without running __init__ (the walk methods only
-    touch the CUE_TYPES class attribute, no DB/paths needed)."""
-    return object.__new__(CuemsDBProject)
-
-
-def _clean(contents):
-    w = _walker()
-    ids = set()
-    w._collect_cue_ids(contents, ids)
-    w._nullify_dangling_refs(contents, ids)
-    return contents
-
-
-def test_fadecue_ids_are_collected():
-    w = _walker()
-    ids = set()
-    w._collect_cue_ids([{'FadeCue': {'id': 'fade-1'}}], ids)
-    assert 'fade-1' in ids
-
-
-def test_actioncue_targeting_fadecue_is_preserved():
-    """Pre-fix behaviour: this action_target was nullified on every save."""
-    contents = [
-        {'FadeCue': {'id': 'fade-1', 'action_target': 'audio-1'}},
-        {'AudioCue': {'id': 'audio-1'}},
-        {'ActionCue': {'id': 'act-1', 'action_target': 'fade-1'}},
-    ]
-    _clean(contents)
-    assert contents[2]['ActionCue']['action_target'] == 'fade-1'
-
-
-def test_fadecue_dangling_action_target_is_cleared():
-    contents = [
-        {'FadeCue': {'id': 'fade-1', 'action_target': 'deleted-cue'}},
-    ]
-    _clean(contents)
-    assert contents[0]['FadeCue']['action_target'] is None
-
-
-def test_fadecue_valid_action_target_is_preserved():
-    contents = [
-        {'AudioCue': {'id': 'audio-1'}},
-        {'FadeCue': {'id': 'fade-1', 'action_target': 'audio-1'}},
-    ]
-    _clean(contents)
-    assert contents[1]['FadeCue']['action_target'] == 'audio-1'
-
-
-def test_nested_cuelist_fadecue_ids_count():
-    contents = [
-        {'CueList': {'id': 'list-1', 'contents': [
-            {'FadeCue': {'id': 'fade-deep'}},
-        ]}},
-        {'ActionCue': {'id': 'act-1', 'action_target': 'fade-deep'}},
-    ]
-    _clean(contents)
-    assert contents[1]['ActionCue']['action_target'] == 'fade-deep'
+def test_retired():
+    """Placeholder so the skip reason is reported."""

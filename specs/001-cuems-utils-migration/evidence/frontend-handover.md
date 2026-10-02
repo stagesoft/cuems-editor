@@ -20,7 +20,13 @@ hardware cues keyed `Cue` / `CueOutput` with `class`, is not omitted to keep the
 | `src/app/services/projects/projects.service.ts:243` | writes `localStorage` key `initial_template` with the value |
 | `src/app/services/projects/projects.service.ts:159` | reads that key back on start. A pre-001 template cached there survives until the next connect overwrites it |
 
-## `project` frame
+## `project` frame (T027, FR-018, FR-042)
 
-Delta (a) of the `project` frame, `projects.service.ts:120`, is added with the User Story 3
-handover (T027).
+Deltas (a), (b), (c) are listed beside `project` in `tests/ws-command-responses.txt`. They are
+payload version 1, not a bump to 2.
+
+| File:line | What it does |
+|---|---|
+| `src/app/services/projects/projects.service.ts:120` | declares `schemaLocation: string` as a required property of the project payload interface. Delta (a) removes the key. Nothing throws at runtime (the WebSocket payload is untyped), so the interface lies until the frontend drops it |
+| (delta (c)) | every reader of `AudioCue` / `VideoCue` / `DmxCue` keys in a project. The frontend 05 work owns finding them; a pre-05 UI mis-reads `Cue` |
+| (open, UR-3) | `"opacity": 100` on a video cue whose document has none. Not sanctioned; see `../upstream-reports/UR-3-to-wire-emits-absent-optional-default.md` |

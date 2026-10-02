@@ -186,3 +186,30 @@ def test_zero_duration_on_a_cue_keyed_cue_is_corrected_from_the_database(lib, cu
             assert cue.get('class') == cue_class
             seen[media['file_name']] = str(media['duration'])
     assert seen == DB_DURATIONS
+
+
+# ─── duplicate writes a new path only ────────────────────────────────────
+
+
+def test_duplicate_saves_the_copy_and_leaves_the_source_bytes(lib):
+    before = _sha256(lib.script)
+
+    new_uuid_ = lib.project.duplicate(lib.uuid)
+
+    assert _sha256(lib.script) == before
+    copy_project = Project.get(Project.uuid == new_uuid_)
+    copy_script, _report = CuemsScript.load_with_report(lib.project.script_path(copy_project.unix_name))
+    assert str(copy_script.id) == new_uuid_
+    assert copy_script.name == copy_project.name
+
+
+def test_duplicate_of_a_source_the_library_refuses_creates_nothing(lib):
+    shutil.copy(os.path.join(HERE, 'fixtures', 'script_minimal.xml'), lib.script)  # pre-013 shape
+    projects_before = sorted(os.listdir(os.path.join(lib.root, 'projects')))
+    rows_before = Project.select().count()
+
+    with pytest.raises(Exception, match='cuems-reshape-devices'):
+        lib.project.duplicate(lib.uuid)
+
+    assert sorted(os.listdir(os.path.join(lib.root, 'projects'))) == projects_before
+    assert Project.select().count() == rows_before

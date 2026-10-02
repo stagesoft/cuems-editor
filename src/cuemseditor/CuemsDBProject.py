@@ -6,8 +6,8 @@ from peewee import DoesNotExist, IntegrityError, prefetch
 from cuemsutils.tools.StringSanitizer import StringSanitizer
 from cuemsutils.tools.CopyMoveVersioned import CopyMoveVersioned
 from cuemsutils.tools.CTimecode import CTimecode
-from cuemsutils.xml.Parsers import CuemsParser
-from cuemsutils.xml.XmlReaderWriter import XmlReaderWriter
+from cuemsutils.cues import AudioCue, CueList, CuemsScript, DmxCue, VideoCue
+from cuemsutils.cues.MediaCue import MediaCue
 from cuemsutils.helpers import new_datetime, new_uuid
 from cuemsutils.log import logged, Logger
 
@@ -47,15 +47,23 @@ def db_duration_resolver(file_name):
     return media.duration
 
 
+# Cues that can carry a ``Media`` block. A cue whose ``class`` is none of
+# audio / video / dmx decodes as a bare ``MediaCue``, so it is listed too: a
+# walker that only knows the three named classes skips it.
+MEDIA_CUES = (AudioCue, VideoCue, DmxCue, MediaCue)
+
+
 def fix_media_durations_in_contents(contents, resolver):
-    """Overwrite each cue ``Media['duration']`` from *resolver*, in place.
+    """Overwrite each media cue's ``Media.duration`` from *resolver*, on the object.
 
     Shared by the WebSocket save path (:meth:`CuemsDBProject._fix_media_durations`)
-    and the standalone duration-repair script, so both trust the same DB source
-    of truth and walk cue trees identically.
+    and the standalone duration-repair tool, so both trust the same DB source
+    of truth and walk cue trees identically. The library will not fill a
+    duration from ``project-manager.db``; this is the one place that does.
 
     Args:
-        contents: ``CueList['contents']`` list (recursively walked).
+        contents: ``CueList.contents`` of a ``CuemsScript`` (nested ``CueList``
+            objects are walked).
         resolver: callable ``file_name -> duration_str_or_None``; must raise
             ``KeyError`` for a media file absent from the DB.
 
@@ -68,36 +76,29 @@ def fix_media_durations_in_contents(contents, resolver):
 
 
 def _walk_media_durations(contents, resolver, stats):
-    if not contents:
-        return
-    for item in contents:
-        # Handle nested CueLists
-        if 'CueList' in item:
-            _walk_media_durations(item['CueList'].get('contents', []), resolver, stats)
-
-        # Check for AudioCue or VideoCue wrappers
-        if 'AudioCue' in item:
-            cue_data = item['AudioCue']
-        elif 'VideoCue' in item:
-            cue_data = item['VideoCue']
-        else:
-            cue_data = item  # flat structure
-
-        media = cue_data.get('Media') if isinstance(cue_data, dict) else None
-        if media and isinstance(media, dict):
-            file_name = media.get('file_name')
-            if file_name:
-                stats.media_refs += 1
-                try:
-                    duration = resolver(file_name)
-                except KeyError:
-                    stats.orphans.append(file_name)  # media not in DB; keep original
-                    continue
-                if duration:
-                    new_value = str(duration)
-                    if media.get('duration') != new_value:
-                        media['duration'] = new_value
-                        stats.replacements += 1
+    for cue in contents or ():
+        if isinstance(cue, CueList):
+            _walk_media_durations(cue.contents, resolver, stats)
+            continue
+        if not isinstance(cue, MEDIA_CUES):
+            continue
+        media = cue.get('Media')
+        if not media:
+            continue
+        file_name = media.get('file_name')
+        if not file_name:
+            continue
+        stats.media_refs += 1
+        try:
+            duration = resolver(file_name)
+        except KeyError:
+            stats.orphans.append(file_name)  # media not in DB; keep original
+            continue
+        if duration:
+            new_value = CTimecode(str(duration))
+            if media.get('duration') != new_value:
+                media.duration = new_value
+                stats.replacements += 1
 
 
 def _fade_duration_ms(duration):
@@ -148,13 +149,12 @@ def _walk_fade_durations(contents, offenders):
 def validate_fade_durations_in_contents(contents):
     """Reject any FadeCue whose duration is missing, unparseable, or <= 0.
 
-    Save-time gate: ``CuemsParser``/``GenericParser`` assigns via
-    ``dict.__setitem__``, bypassing ``FadeCue.set_duration``'s own
-    positive-and-non-zero rule, so a zero coming from a client would reach
-    the XML and later become a silent no-op at reveal (gradient-motiond
-    drops ``dur <= 0`` over fire-and-forget UDP).  Collects ALL offenders and
-    raises a single ``ValueError``; the WS layer forwards the text to the
-    client.
+    Save-time gate, run on the raw client payload before it becomes an
+    object: a zero coming from a client would otherwise reach the XML and
+    later become a silent no-op at reveal (gradient-motiond drops
+    ``dur <= 0`` over fire-and-forget UDP).  Collects ALL offenders and
+    raises a single ``ValueError`` with the same text as before 001; the WS
+    layer forwards it to the client.
     """
     offenders = []
     _walk_fade_durations(contents, offenders)
@@ -237,7 +237,11 @@ class CuemsDBProject(StringSanitizer):
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
 
     def load(self, uuid, include_trash=False):
-        """Load a project's ``CuemsScript`` dict from its XML file on disk.
+        """Load a project's script and project it for the wire, once.
+
+        This is the ``value`` of the ``{"type": "project"}`` frame. It is
+        ``script.to_wire()`` and nothing walks it afterwards. Opening does not
+        write the script file.
 
         Args:
             uuid: Project UUID string.
@@ -245,21 +249,38 @@ class CuemsDBProject(StringSanitizer):
                 Defaults to ``False``.
 
         Returns:
-            ``dict`` produced by ``XmlReaderWriter.read()`` — the parsed
-            ``CuemsScript`` structure.
+            ``{"CuemsScript": {...}}`` as ``CuemsScript.to_wire()`` builds it.
 
         Raises:
             NonExistentItemError: If no project with *uuid* exists (or the
                 project is in the trash and *include_trash* is ``False``).
+            ValidationError / SchemaError / OSError: from the library load,
+                unwrapped. Nothing is written in either case.
+        """
+        script, _report = self.load_with_report(uuid, include_trash)
+        return script.to_wire()
+
+    def load_with_report(self, uuid, include_trash=False):
+        """Load a project's script object and the library's report of what the load did.
+
+        Args:
+            uuid: Project UUID string.
+            include_trash: When ``True``, also searches trashed projects.
+
+        Returns:
+            ``(CuemsScript, LoadReport)`` from ``CuemsScript.load_with_report``.
+
+        Raises:
+            NonExistentItemError: as :meth:`load`.
         """
         try:
             if not include_trash:
                 project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
             else:
                 project = Project.get(Project.uuid == uuid)
-            return self.load_xml(project.unix_name)
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
+        return self.load_xml(project.unix_name)
 
     def list(self):
         """Return a list of all live (non-trashed) projects, newest first.
@@ -299,14 +320,18 @@ class CuemsDBProject(StringSanitizer):
         return project_trash_list
 
     def update(self, uuid, data):
-        """Save an edited project: update DB metadata and rewrite the XML file.
+        """Save an edited project: update DB metadata and rewrite the script file.
 
-        Runs inside a Peewee atomic transaction.  The XML is validated
-        against ``script.xsd`` by ``XmlReaderWriter.write_from_object`` —
-        an invalid cue tree raises before any persistent change is made.
+        Runs inside a Peewee atomic transaction. The client payload becomes a
+        ``CuemsScript`` through ``CuemsScript.from_json`` (which does not
+        repair), the media durations are corrected on that object from the
+        database, and ``CuemsScript.save`` validates (T1 then T2) before an
+        atomic write. A violation raises before the file is touched, and the
+        DB change is rolled back.
 
-        A pre-save pass via :meth:`_fix_media_durations` corrects zero
-        durations sent by the frontend.
+        A dangling ``target`` or ``action_target`` is not cleared here. The
+        library repairs a dangling ``target`` on load and refuses a dangling
+        ``action_target`` at save, with a message naming the cue.
 
         Args:
             uuid: Project UUID string; must match ``data['CuemsScript']['id']``.
@@ -316,6 +341,7 @@ class CuemsDBProject(StringSanitizer):
         Raises:
             NonExistentItemError: If the project does not exist or is in the
                 trash.
+            ValueError: A FadeCue duration is missing, unparseable or ``<= 0``.
             Exception: Re-raises any error after rolling back the transaction.
         """
         try:
@@ -328,19 +354,9 @@ class CuemsDBProject(StringSanitizer):
         except KeyError:
             pass
 
-        # SAFETY NET: older frontends send Media.duration as '00:00:00.000';
-        # overwrite from the DB (source of truth) before saving.
-        # As of the media-duration fix, the frontend copies the real duration
-        # from the file_list payload (CuemsDBMedia.list() now carries a
-        # 'duration' key) — remove this net only once ALL deployed frontends
-        # AND editors are >= those versions.
-        self._fix_media_durations(data)
-
-        self._clean_dangling_targets(data)
-
-        # Reject zero/unparseable FadeCue durations BEFORE parsing: the parser
-        # bypasses FadeCue.set_duration, and a saved zero later becomes a
-        # silent no-op at reveal (gradient-motiond drops dur <= 0).
+        # Reject zero/unparseable FadeCue durations on the raw payload, before
+        # it becomes an object: a saved zero later becomes a silent no-op at
+        # reveal (gradient-motiond drops dur <= 0).
         validate_fade_durations_in_contents(
             (data.get('CuemsScript', {}).get('CueList') or {}).get('contents') or []
         )
@@ -353,7 +369,12 @@ class CuemsDBProject(StringSanitizer):
                 project.modified = now
                 project.description = StringSanitizer.sanitize_text_size(data['CuemsScript']['description'])
                 project.save()
-                project_object = CuemsParser(data).parse()
+                project_object = CuemsScript.from_json(data)
+                # SAFETY NET: older frontends send Media.duration as
+                # '00:00:00.000'; overwrite from the DB (source of truth).
+                # Remove only once ALL deployed frontends copy the real
+                # duration from the file_list payload.
+                self._fix_media_durations(project_object)
                 self.update_media_relations(project, project_object)
                 self.save_xml(project.unix_name, project_object)
             except Exception as e:
@@ -363,77 +384,25 @@ class CuemsDBProject(StringSanitizer):
 
     # SAFETY NET (see update()): overwrite frontend-sent Media durations from
     # the DB. Delegates to the module-level fix_media_durations_in_contents so
-    # the repair script and this path share one walk.
-    def _fix_media_durations(self, data):
-        """Overwrite each cue's ``Media.duration`` from the database.
+    # the repair tool and this path share one walk.
+    def _fix_media_durations(self, project_object):
+        """Overwrite each media cue's ``Media.duration`` from the database, on the object.
 
         The DB is the source of truth for media duration. This corrects the
         legacy frontend behaviour of sending ``00:00:00.000``. Orphaned media
         references (no ``Media`` row) are logged, not modified.
+
+        Args:
+            project_object: ``CuemsScript`` built from the client payload.
         """
         try:
-            cuelist = data.get('CuemsScript', {}).get('CueList', {})
-            contents = cuelist.get('contents', [])
-            stats = fix_media_durations_in_contents(contents, db_duration_resolver)
+            stats = fix_media_durations_in_contents(project_object.cuelist.contents, db_duration_resolver)
             if stats.orphans:
                 Logger.warning(
                     f"media duration fix: {len(stats.orphans)} cue(s) reference "
                     f"media not in DB (duration left as-is): {stats.orphans}")
         except Exception as e:
             Logger.warning(f"Could not fix media durations: {e}")
-
-    CUE_TYPES = ['AudioCue', 'VideoCue', 'DmxCue', 'ActionCue', 'FadeCue', 'CueList']
-
-    def _clean_dangling_targets(self, data):
-        """Clear target and action_target references that point to non-existing cues.
-
-        When a cue is deleted in the frontend, any ActionCue (or regular cue)
-        still referencing it by UUID will have a dangling reference. This method
-        collects all cue UUIDs and nullifies any reference that cannot be resolved.
-        """
-        try:
-            cuelist = data.get('CuemsScript', {}).get('CueList', {})
-            contents = cuelist.get('contents', [])
-            all_ids = set()
-            self._collect_cue_ids(contents, all_ids)
-            self._nullify_dangling_refs(contents, all_ids)
-        except Exception as e:
-            Logger.warning(f"Could not clean dangling targets: {e}")
-
-    def _collect_cue_ids(self, contents, ids):
-        """Recursively collect all cue UUIDs from the project contents."""
-        if not contents:
-            return
-        for item in contents:
-            for cue_type in self.CUE_TYPES:
-                if cue_type in item:
-                    cue_data = item[cue_type]
-                    cue_id = cue_data.get('id')
-                    if cue_id:
-                        ids.add(cue_id)
-                    if cue_type == 'CueList':
-                        self._collect_cue_ids(cue_data.get('contents', []), ids)
-
-    def _nullify_dangling_refs(self, contents, valid_ids):
-        """Recursively clear target/action_target refs that point to non-existing cues."""
-        if not contents:
-            return
-        for item in contents:
-            for cue_type in self.CUE_TYPES:
-                if cue_type in item:
-                    cue_data = item[cue_type]
-                    if cue_type == 'CueList':
-                        self._nullify_dangling_refs(cue_data.get('contents', []), valid_ids)
-                        continue
-                    target = cue_data.get('target')
-                    if target and target not in valid_ids:
-                        Logger.warning(f"{cue_type} {cue_data.get('id')} has dangling target {target}, clearing")
-                        cue_data['target'] = None
-                    if cue_type in ('ActionCue', 'FadeCue'):
-                        action_target = cue_data.get('action_target')
-                        if action_target and action_target not in valid_ids:
-                            Logger.warning(f"{cue_type} {cue_data.get('id')} has dangling action_target {action_target}, clearing")
-                            cue_data['action_target'] = None
 
     def new(self, data, unix_name):
         """Create a new project: allocate a UUID, write the XML, insert the DB row.
@@ -486,7 +455,7 @@ class CuemsDBProject(StringSanitizer):
                 project = Project.create(uuid=project_uuid, unix_name=unix_name, name=StringSanitizer.sanitize_name(data['CuemsScript']['name']), description=StringSanitizer.sanitize_text_size(data['CuemsScript']['description']), created=now, modified=now)
                 os.mkdir(os.path.join(self.projects_path, unix_name))
                 Logger.debug('data is now: {}'.format(data))
-                project_object = CuemsParser(data).parse()
+                project_object = CuemsScript.from_json(data)
                 Logger.debug(f'project_object is now: {type(project_object)},{project_object}')
                 self.add_media_relations(project, project_object)
                 self.save_xml(unix_name, project_object)
@@ -517,8 +486,11 @@ class CuemsDBProject(StringSanitizer):
 
         The copy is named ``<original_name> - Copy``; a numeric suffix
         ``(N)`` is appended if the name is taken by another live or trashed
-        record.  The duplicated ``cue_script.xml`` has its ``CuemsScript.id``
-        and ``name`` updated to match the new DB record.
+        record.  The source script is opened with the library's load (in
+        memory; the source file is not written), its ``id``, ``name`` and
+        ``modified`` are set to the new DB record's, and it is saved under the
+        new directory only.  A source the library refuses to load is not
+        duplicated; the library's error is raised unchanged.
 
         Args:
             uuid: UUID of the project to duplicate; must be a live project.
@@ -544,6 +516,8 @@ class CuemsDBProject(StringSanitizer):
                     candidate_unix = base_unix
                     candidate_display = base_display
                     i = 0
+                    # The source, in memory. Its file is not written here.
+                    project_object, _report = self.load_xml(base_unix)
                     while (os.path.exists(os.path.join(self.projects_path, candidate_unix))
                            or not self._is_name_available(candidate_unix, candidate_display)):
                         i += 1
@@ -561,14 +535,13 @@ class CuemsDBProject(StringSanitizer):
                     project.save(force_insert=True)
 
                     dup_project = Project.get(Project.uuid == new_project_uuid)
-                    data = self.load_xml(dup_project.unix_name)
-                    data['CuemsScript']['id'] = new_project_uuid
-                    data['CuemsScript']['name'] = project.name
-                    data['CuemsScript']['modified'] = project.modified
+                    project_object.id = new_project_uuid
+                    project_object.name = project.name
+                    project_object.modified = project.modified
                     # NO fade-duration validation here on purpose: the source is
-                    # load_xml of an existing project — legacy scripts must stay
-                    # duplicable; the engine's reveal guard covers them.
-                    project_object = CuemsParser(data).parse()
+                    # an existing project — legacy scripts must stay duplicable
+                    # beyond what the library load itself refuses; the engine's
+                    # reveal guard covers them.
                     self.add_media_relations(dup_project, project_object)
                     self.save_xml(new_unix_name, project_object)
                     return new_project_uuid
@@ -805,7 +778,7 @@ class CuemsDBProject(StringSanitizer):
             project_uuid: UUID of the project to update.
             media_filename: ``unix_name`` of the re-uploaded media file.
         """
-        project_object = CuemsParser(self.load(project_uuid, include_trash=True)).parse()
+        project_object, _report = self.load_with_report(project_uuid, include_trash=True)
         media_dict = project_object.get_media()
         matching_media_dict = dict()
         for cue_uuid, media_object in media_dict.items():
@@ -870,27 +843,33 @@ class CuemsDBProject(StringSanitizer):
         Logger.debug('deleting missing media references for media filename: {}'.format(media_filename))
         missing_media_project_refs = ProjectMedia.delete().where(ProjectMedia.media_filename == media_filename and ProjectMedia.media_id.is_null()).execute()
 
-    def save_xml(self, unix_name, project_object):
-        """Write *project_object* to ``<projects_path>/<unix_name>/cue_script.xml``.
+    def script_path(self, unix_name):
+        """``<projects_path>/<unix_name>/<script_file_name>``."""
+        return os.path.join(self.projects_path, unix_name, self.script_file_name)
 
-        Validates against ``script.xsd`` before writing; raises if the
-        ``CuemsScript`` object fails schema validation.
+    def save_xml(self, unix_name, project_object):
+        """Write *project_object* to the project's script file.
+
+        ``CuemsScript.save`` validates (T1, then T2) and raises before writing
+        anything; the write itself is a temp file in the target directory
+        renamed over the target, so a reader sees the old file or the new one.
 
         Args:
             unix_name: Project directory name.
-            project_object: ``CuemsScript`` instance to serialize.
+            project_object: ``CuemsScript`` instance to persist.
         """
-        writer = XmlReaderWriter(schema_name=self.script_schema_name, xmlfile=(os.path.join(self.projects_path, unix_name, self.script_file_name)))
-        writer.write_from_object(project_object)
+        project_object.save(self.script_path(unix_name))
 
     def load_xml(self, unix_name):
-        """Read and parse ``<projects_path>/<unix_name>/cue_script.xml``.
+        """Read the project's script file through the library's public load.
+
+        Conversion and repair, when the library applies them, happen in
+        memory. The file is not written.
 
         Args:
             unix_name: Project directory name.
 
         Returns:
-            ``CuemsScript`` dict produced by ``XmlReaderWriter.read()``.
+            ``(CuemsScript, LoadReport)`` from ``CuemsScript.load_with_report``.
         """
-        reader = XmlReaderWriter(schema_name=self.script_schema_name, xmlfile=(os.path.join(self.projects_path, unix_name, self.script_file_name)))
-        return reader.read()
+        return CuemsScript.load_with_report(self.script_path(unix_name))
