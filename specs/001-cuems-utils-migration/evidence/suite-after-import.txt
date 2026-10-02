@@ -1,0 +1,609 @@
+# Summary: 85 passed, 2 failed. All six pre-feature files collect, plus tests/test_import_smoke.py.
+# The seven TestNetworkMapWatcher (3) / TestNodeconfAvailableFlag (4) tests pass; tests/test_nodelist_actions.py is unedited.
+# The 2 failures are test_repair_durations pass B (test_apply_fixes_db_and_xml, test_skipped_invalid_xml_does_not_abort):
+# the pre-013 fixture now fails the old XmlReaderWriter, so proj1 is SKIPPED_INVALID. Pass B is retired in US5 (T029/T030).
+
+$ hatch test -- -rA --tb=short   # after T007 (import line only); cuemsutils 0.1.0rc16 @ 6213b16; tests/test_nodelist_actions.py unedited
+...................................................................F...F [ 82%]
+...............                                                          [100%]
+=================================== FAILURES ===================================
+_________________________ test_apply_fixes_db_and_xml __________________________
+tests/test_repair_durations.py:56: in test_apply_fixes_db_and_xml
+    xml_durs = _xml_durations(_script_path(library))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_repair_durations.py:10: in _xml_durations
+    d = XmlReaderWriter(schema_name='script', xmlfile=path).read()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/deprecated/classic.py:199: in wrapper_function
+    return wrapped_(*args_, **kwargs_)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../cuems-utils/src/cuemsutils/xml/xml_reader_writer.py:113: in read
+    return self.schema_object.to_dict(
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/schemas.py:2112: in decode
+    for result in self.iter_decode(source, path, schema_path, validation, *args, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/schemas.py:2098: in iter_decode
+    yield from xsd_element.iter_decode(elem, validation, **kwargs)
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/elements.py:739: in iter_decode
+    for result in content_decoder.iter_decode(obj, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/groups.py:1050: in iter_decode
+    for result in xsd_element.iter_decode(child, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/elements.py:739: in iter_decode
+    for result in content_decoder.iter_decode(obj, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/groups.py:1050: in iter_decode
+    for result in xsd_element.iter_decode(child, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/elements.py:739: in iter_decode
+    for result in content_decoder.iter_decode(obj, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/groups.py:1050: in iter_decode
+    for result in xsd_element.iter_decode(child, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/elements.py:739: in iter_decode
+    for result in content_decoder.iter_decode(obj, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/groups.py:1088: in iter_decode
+    raise error
+E   xmlschema.validators.exceptions.XMLSchemaChildrenValidationError: failed validating <Element 'contents' at 0x7ff3cacdd3f0> with Xsd11Group(model='choice', occurs=[0, None]):
+E   
+E   Reason: Unexpected child with tag 'VideoCue' at position 2.
+E   
+E   Schema component:
+E   
+E     <xs:complexType xmlns:xs="http://www.w3.org/2001/XMLSchema" name="CueListContentsType">
+E       <xs:choice minOccurs="0" maxOccurs="unbounded">
+E         
+E         <xs:element name="CueList" type="cms:CueListType" />
+E         
+E         <xs:element name="Cue" type="cms:CueClassType">
+E           <xs:alternative test="@class='audio'" type="cms:AudioCueType" />
+E           <xs:alternative test="@class='video'" type="cms:VideoCueType" />
+E           <xs:alternative test="@class='dmx'" type="cms:DmxCueType" />
+E           <xs:alternative type="cms:MediaCueType" />
+E         </xs:element>
+E         
+E         <xs:element name="ActionCue" type="cms:ActionCueType" />
+E         <xs:element name="FadeCue" type="cms:FadeCueType" />
+E       </xs:choice>
+E     </xs:complexType>
+E   
+E   Instance type: <class 'xml.etree.ElementTree.Element'>
+E   
+E   Instance:
+E   
+E     <contents><ActionCue><autoload>False</autoload><description /><enabled>True</enabled><id>58763af8-462c-4831-bd08-d3e978dc4a0a</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties><icon>icon.png</icon><color>#ffffff</color><timeline_position><x>0</x><y>0</y></timeline_position><warning>0</warning></ui_properties><action_target>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</action_target><action_type>play</action_type></ActionCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>210b9a09-b790-481e-8b01-80d5a03f8dba</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue><AudioCue><autoload>False</autoload><description /><enabled>True</enabled><id>bb391e70-e65e-47ca-8b29-5a7076bbd250</id><loop>1</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file.ext</file_name><id>0ac1d420-452b-4c1b-9eed-1224ce3adcf8</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /><master_vol>66</master_vol></AudioCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>96d6e5de-c29b-4ab2-b828-297d84293304</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>3596965a-fccc-4d5e-80e3-4e6ef6b46bfa</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue></contents>
+E   
+E   Path: /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents
+----------------------------- Captured stdout call -----------------------------
+  DB backed up to /tmp/pytest-of-adria/pytest-420/test_apply_fixes_db_and_xml0/duration_repair_backup_20261002-085212
+== Pass A: database media.duration ==
+  applied 3 DB duration update(s)
+== Pass B: project script.xml <duration> ==
+== Report ==
+  [CHANGED] file.ext (AUDIO): 00:00:00.000 -> 00:01:23.456 (+83456ms) <<<>1s
+  [NULL_FILLED] file_video.ext (MOVIE): -> 00:01:30.000
+  [SKIP_IMAGE] pic.png (IMAGE)
+  [CHANGED] tone_c.wav (AUDIO): 00:00:03.9 -> 00:00:03.000 (-9ms)
+  [MISSING] gone.wav (AUDIO) -> /tmp/pytest-of-adria/pytest-420/test_apply_fixes_db_and_xml0/media/gone.wav
+  [SKIPPED_INVALID] proj1: XMLSchemaChildrenValidationError: failed validating <Element 'contents' at 0x7ff3cbde24d0> with Xsd11Group(model='choice', occurs=[0, None]):
+Reason: Unexpected child with tag 'VideoCue' at position 2.
+Schema component:
+  <xs:complexType xmlns:xs="http://www.w3.org/2001/XMLSchema" name="CueListContentsType">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="CueList" type="cms:CueListType" />
+      <xs:element name="Cue" type="cms:CueClassType">
+        <xs:alternative test="@class='audio'" type="cms:AudioCueType" />
+        <xs:alternative test="@class='video'" type="cms:VideoCueType" />
+        <xs:alternative test="@class='dmx'" type="cms:DmxCueType" />
+        <xs:alternative type="cms:MediaCueType" />
+      </xs:element>
+      <xs:element name="ActionCue" type="cms:ActionCueType" />
+      <xs:element name="FadeCue" type="cms:FadeCueType" />
+    </xs:choice>
+  </xs:complexType>
+Instance type: <class 'xml.etree.ElementTree.Element'>
+Instance:
+  <contents><ActionCue><autoload>False</autoload><description /><enabled>True</enabled><id>58763af8-462c-4831-bd08-d3e978dc4a0a</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties><icon>icon.png</icon><color>#ffffff</color><timeline_position><x>0</x><y>0</y></timeline_position><warning>0</warning></ui_properties><action_target>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</action_target><action_type>play</action_type></ActionCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>210b9a09-b790-481e-8b01-80d5a03f8dba</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue><AudioCue><autoload>False</autoload><description /><enabled>True</enabled><id>bb391e70-e65e-47ca-8b29-5a7076bbd250</id><loop>1</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file.ext</file_name><id>0ac1d420-452b-4c1b-9eed-1224ce3adcf8</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /><master_vol>66</master_vol></AudioCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>96d6e5de-c29b-4ab2-b828-297d84293304</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>3596965a-fccc-4d5e-80e3-4e6ef6b46bfa</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue></contents>
+Path: /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents
+  --- summary ---
+    CHANGED: 2
+    MISSING: 1
+    NULL_FILLED: 1
+    SKIPPED_INVALID: 1
+    SKIP_IMAGE: 1
+  backups: /tmp/pytest-of-adria/pytest-420/test_apply_fixes_db_and_xml0/duration_repair_backup_20261002-085212
+------------------------------ Captured log call -------------------------------
+DEBUG    cuemsutils.xml.documents:log.py:201 Call recieved
+DEBUG    cuemsutils.xml.documents:log.py:202 Using args: ('script',) and kwargs: {}
+DEBUG    cuemsutils.xml.documents:log.py:205 Finished with result: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/schemas/script.xsd
+INFO     cuemsutils.xml.xml_reader_writer:classic.py:199 Reading script document /tmp/pytest-of-adria/pytest-420/test_apply_fixes_db_and_xml0/projects/proj1/script.xml
+DEBUG    cuemsutils.xml.documents:log.py:201 Call recieved
+DEBUG    cuemsutils.xml.documents:log.py:202 Using args: ('script',) and kwargs: {}
+DEBUG    cuemsutils.xml.documents:log.py:205 Finished with result: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/schemas/script.xsd
+INFO     cuemsutils.xml.xml_reader_writer:classic.py:199 Reading script document /tmp/pytest-of-adria/pytest-420/test_apply_fixes_db_and_xml0/projects/proj1/script.xml
+___________________ test_skipped_invalid_xml_does_not_abort ____________________
+tests/test_repair_durations.py:102: in test_skipped_invalid_xml_does_not_abort
+    assert '00:00:00.000' not in _xml_durations(_script_path(library))
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_repair_durations.py:10: in _xml_durations
+    d = XmlReaderWriter(schema_name='script', xmlfile=path).read()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/deprecated/classic.py:199: in wrapper_function
+    return wrapped_(*args_, **kwargs_)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../cuems-utils/src/cuemsutils/xml/xml_reader_writer.py:113: in read
+    return self.schema_object.to_dict(
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/schemas.py:2112: in decode
+    for result in self.iter_decode(source, path, schema_path, validation, *args, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/schemas.py:2098: in iter_decode
+    yield from xsd_element.iter_decode(elem, validation, **kwargs)
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/elements.py:739: in iter_decode
+    for result in content_decoder.iter_decode(obj, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/groups.py:1050: in iter_decode
+    for result in xsd_element.iter_decode(child, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/elements.py:739: in iter_decode
+    for result in content_decoder.iter_decode(obj, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/groups.py:1050: in iter_decode
+    for result in xsd_element.iter_decode(child, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/elements.py:739: in iter_decode
+    for result in content_decoder.iter_decode(obj, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/groups.py:1050: in iter_decode
+    for result in xsd_element.iter_decode(child, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/elements.py:739: in iter_decode
+    for result in content_decoder.iter_decode(obj, validation, **kwargs):
+/home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/xmlschema/validators/groups.py:1088: in iter_decode
+    raise error
+E   xmlschema.validators.exceptions.XMLSchemaChildrenValidationError: failed validating <Element 'contents' at 0x7ff3caa594e0> with Xsd11Group(model='choice', occurs=[0, None]):
+E   
+E   Reason: Unexpected child with tag 'VideoCue' at position 2.
+E   
+E   Schema component:
+E   
+E     <xs:complexType xmlns:xs="http://www.w3.org/2001/XMLSchema" name="CueListContentsType">
+E       <xs:choice minOccurs="0" maxOccurs="unbounded">
+E         
+E         <xs:element name="CueList" type="cms:CueListType" />
+E         
+E         <xs:element name="Cue" type="cms:CueClassType">
+E           <xs:alternative test="@class='audio'" type="cms:AudioCueType" />
+E           <xs:alternative test="@class='video'" type="cms:VideoCueType" />
+E           <xs:alternative test="@class='dmx'" type="cms:DmxCueType" />
+E           <xs:alternative type="cms:MediaCueType" />
+E         </xs:element>
+E         
+E         <xs:element name="ActionCue" type="cms:ActionCueType" />
+E         <xs:element name="FadeCue" type="cms:FadeCueType" />
+E       </xs:choice>
+E     </xs:complexType>
+E   
+E   Instance type: <class 'xml.etree.ElementTree.Element'>
+E   
+E   Instance:
+E   
+E     <contents><ActionCue><autoload>False</autoload><description /><enabled>True</enabled><id>58763af8-462c-4831-bd08-d3e978dc4a0a</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties><icon>icon.png</icon><color>#ffffff</color><timeline_position><x>0</x><y>0</y></timeline_position><warning>0</warning></ui_properties><action_target>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</action_target><action_type>play</action_type></ActionCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>210b9a09-b790-481e-8b01-80d5a03f8dba</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue><AudioCue><autoload>False</autoload><description /><enabled>True</enabled><id>bb391e70-e65e-47ca-8b29-5a7076bbd250</id><loop>1</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file.ext</file_name><id>0ac1d420-452b-4c1b-9eed-1224ce3adcf8</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /><master_vol>66</master_vol></AudioCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>96d6e5de-c29b-4ab2-b828-297d84293304</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>3596965a-fccc-4d5e-80e3-4e6ef6b46bfa</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue></contents>
+E   
+E   Path: /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents
+----------------------------- Captured stdout call -----------------------------
+  DB backed up to /tmp/pytest-of-adria/pytest-420/test_skipped_invalid_xml_does_0/duration_repair_backup_20261002-085213
+== Pass A: database media.duration ==
+  applied 3 DB duration update(s)
+== Pass B: project script.xml <duration> ==
+== Report ==
+  [CHANGED] file.ext (AUDIO): 00:00:00.000 -> 00:01:23.456 (+83456ms) <<<>1s
+  [NULL_FILLED] file_video.ext (MOVIE): -> 00:01:30.000
+  [SKIP_IMAGE] pic.png (IMAGE)
+  [CHANGED] tone_c.wav (AUDIO): 00:00:03.9 -> 00:00:03.000 (-9ms)
+  [MISSING] gone.wav (AUDIO) -> /tmp/pytest-of-adria/pytest-420/test_skipped_invalid_xml_does_0/media/gone.wav
+  [SKIPPED_INVALID] proj1: XMLSchemaChildrenValidationError: failed validating <Element 'contents' at 0x7ff3cabbaac0> with Xsd11Group(model='choice', occurs=[0, None]):
+Reason: Unexpected child with tag 'VideoCue' at position 2.
+Schema component:
+  <xs:complexType xmlns:xs="http://www.w3.org/2001/XMLSchema" name="CueListContentsType">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="CueList" type="cms:CueListType" />
+      <xs:element name="Cue" type="cms:CueClassType">
+        <xs:alternative test="@class='audio'" type="cms:AudioCueType" />
+        <xs:alternative test="@class='video'" type="cms:VideoCueType" />
+        <xs:alternative test="@class='dmx'" type="cms:DmxCueType" />
+        <xs:alternative type="cms:MediaCueType" />
+      </xs:element>
+      <xs:element name="ActionCue" type="cms:ActionCueType" />
+      <xs:element name="FadeCue" type="cms:FadeCueType" />
+    </xs:choice>
+  </xs:complexType>
+Instance type: <class 'xml.etree.ElementTree.Element'>
+Instance:
+  <contents><ActionCue><autoload>False</autoload><description /><enabled>True</enabled><id>58763af8-462c-4831-bd08-d3e978dc4a0a</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties><icon>icon.png</icon><color>#ffffff</color><timeline_position><x>0</x><y>0</y></timeline_position><warning>0</warning></ui_properties><action_target>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</action_target><action_type>play</action_type></ActionCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>210b9a09-b790-481e-8b01-80d5a03f8dba</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue><AudioCue><autoload>False</autoload><description /><enabled>True</enabled><id>bb391e70-e65e-47ca-8b29-5a7076bbd250</id><loop>1</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file.ext</file_name><id>0ac1d420-452b-4c1b-9eed-1224ce3adcf8</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /><master_vol>66</master_vol></AudioCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>96d6e5de-c29b-4ab2-b828-297d84293304</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>3596965a-fccc-4d5e-80e3-4e6ef6b46bfa</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue></contents>
+Path: /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents
+  [SKIPPED_INVALID] proj2: ParseError: no element found: line 1, column 15
+  --- summary ---
+    CHANGED: 2
+    MISSING: 1
+    NULL_FILLED: 1
+    SKIPPED_INVALID: 2
+    SKIP_IMAGE: 1
+  backups: /tmp/pytest-of-adria/pytest-420/test_skipped_invalid_xml_does_0/duration_repair_backup_20261002-085213
+------------------------------ Captured log call -------------------------------
+DEBUG    cuemsutils.xml.documents:log.py:201 Call recieved
+DEBUG    cuemsutils.xml.documents:log.py:202 Using args: ('script',) and kwargs: {}
+DEBUG    cuemsutils.xml.documents:log.py:205 Finished with result: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/schemas/script.xsd
+INFO     cuemsutils.xml.xml_reader_writer:classic.py:199 Reading script document /tmp/pytest-of-adria/pytest-420/test_skipped_invalid_xml_does_0/projects/proj1/script.xml
+DEBUG    cuemsutils.xml.documents:log.py:201 Call recieved
+DEBUG    cuemsutils.xml.documents:log.py:202 Using args: ('script',) and kwargs: {}
+DEBUG    cuemsutils.xml.documents:log.py:205 Finished with result: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/schemas/script.xsd
+INFO     cuemsutils.xml.xml_reader_writer:classic.py:199 Reading script document /tmp/pytest-of-adria/pytest-420/test_skipped_invalid_xml_does_0/projects/proj2/script.xml
+DEBUG    cuemsutils.xml.documents:log.py:201 Call recieved
+DEBUG    cuemsutils.xml.documents:log.py:202 Using args: ('script',) and kwargs: {}
+DEBUG    cuemsutils.xml.documents:log.py:205 Finished with result: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/schemas/script.xsd
+INFO     cuemsutils.xml.xml_reader_writer:classic.py:199 Reading script document /tmp/pytest-of-adria/pytest-420/test_skipped_invalid_xml_does_0/projects/proj1/script.xml
+=============================== warnings summary ===============================
+../../../../home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/peewee.py:281
+  /home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/hatch-test.py3.11/lib/python3.11/site-packages/peewee.py:281: DeprecationWarning: "PrimaryKeyField" has been renamed to "AutoField". Please update your code accordingly as this will be completely removed in a subsequent release.
+    warnings.warn(s, DeprecationWarning)
+tests/test_repair_durations.py::test_dry_run_changes_nothing
+tests/test_repair_durations.py::test_apply_fixes_db_and_xml
+tests/test_repair_durations.py::test_apply_is_idempotent
+tests/test_repair_durations.py::test_apply_is_idempotent
+tests/test_repair_durations.py::test_skipped_invalid_xml_does_not_abort
+tests/test_repair_durations.py::test_skipped_invalid_xml_does_not_abort
+  /disk/Projects/StageLab/cuems-editor/src/cuemseditor/repair_durations.py:204: DeprecationWarning: Call to deprecated class XmlReaderWriter. (use cuemsutils.xml.xml_reader_writer.XmlReaderWriter instead; removed in v0.1.1)
+    data = XmlReaderWriter(schema_name=schema, xmlfile=path).read()
+tests/test_repair_durations.py::test_dry_run_changes_nothing
+tests/test_repair_durations.py::test_apply_fixes_db_and_xml
+tests/test_repair_durations.py::test_apply_is_idempotent
+tests/test_repair_durations.py::test_apply_is_idempotent
+tests/test_repair_durations.py::test_skipped_invalid_xml_does_not_abort
+tests/test_repair_durations.py::test_skipped_invalid_xml_does_not_abort
+  /disk/Projects/StageLab/cuems-editor/src/cuemseditor/repair_durations.py:204: DeprecationWarning: Call to deprecated method read. (use cuemsutils.xml.xml_reader_writer.XmlReaderWriter.read instead; removed in v0.1.1)
+    data = XmlReaderWriter(schema_name=schema, xmlfile=path).read()
+tests/test_repair_durations.py::test_apply_fixes_db_and_xml
+tests/test_repair_durations.py::test_skipped_invalid_xml_does_not_abort
+  /disk/Projects/StageLab/cuems-editor/tests/test_repair_durations.py:10: DeprecationWarning: Call to deprecated class XmlReaderWriter. (use cuemsutils.xml.xml_reader_writer.XmlReaderWriter instead; removed in v0.1.1)
+    d = XmlReaderWriter(schema_name='script', xmlfile=path).read()
+tests/test_repair_durations.py::test_apply_fixes_db_and_xml
+tests/test_repair_durations.py::test_skipped_invalid_xml_does_not_abort
+  /disk/Projects/StageLab/cuems-editor/tests/test_repair_durations.py:10: DeprecationWarning: Call to deprecated method read. (use cuemsutils.xml.xml_reader_writer.XmlReaderWriter.read instead; removed in v0.1.1)
+    d = XmlReaderWriter(schema_name='script', xmlfile=path).read()
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+==================================== PASSES ====================================
+________________ test_fadecue_dangling_action_target_is_cleared ________________
+------------------------------ Captured log call -------------------------------
+WARNING  cuemseditor.CuemsDBProject:test_dangling_targets.py:26 FadeCue fade-1 has dangling action_target deleted-cue, clearing
+_________ test_new_none_duration_skips_audio_thumbnail_keeps_waveform __________
+------------------------------ Captured log call -------------------------------
+DEBUG    cuemsutils.tools.CopyMoveVersioned:CuemsDBMedia.py:171 moving file to: /tmp/pytest-of-adria/pytest-420/test_new_none_duration_skips_a0/media/incoming.wav
+WARNING  cuemseditor.CuemsDBMedia:test_media.py:56 could not get media duration; error : boom
+DEBUG    cuemseditor.CuemsDBMedia:test_media.py:56 creating thumbnail for audio: incoming.wav
+WARNING  cuemseditor.CuemsDBMedia:test_media.py:56 no duration for incoming.wav; skipping audio waveform thumbnail
+DEBUG    cuemseditor.CuemsDBMedia:test_media.py:56 new media created: 21b51b1a-87ba-44a5-8e07-caaeec75a008 incoming.wav
+__ TestNodelistModifyValidation.test_bad_uuid_never_reaches_the_engine[None] ___
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685072088272 requesting nodelist_modify for node None with action ADD
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> nodelist_modify needs a node uuid, got None
+____ TestNodelistModifyValidation.test_bad_uuid_never_reaches_the_engine[] _____
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685067165904 requesting nodelist_modify for node  with action ADD
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> nodelist_modify needs a node uuid, got ''
+____ TestNodelistModifyValidation.test_bad_uuid_never_reaches_the_engine[0] ____
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685070212432 requesting nodelist_modify for node 0 with action ADD
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> nodelist_modify needs a node uuid, got 0
+_ TestNodelistModifyValidation.test_bad_uuid_never_reaches_the_engine[bad_uuid3] _
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685067157968 requesting nodelist_modify for node [] with action ADD
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> nodelist_modify needs a node uuid, got []
+_ TestNodelistModifyValidation.test_bad_uuid_never_reaches_the_engine[bad_uuid4] _
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685067180944 requesting nodelist_modify for node {} with action ADD
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> nodelist_modify needs a node uuid, got {}
+_ TestNodelistModifyValidation.test_bad_modify_action_never_reaches_the_engine[None] _
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685067185808 requesting nodelist_modify for node 4b9b5a1e-0000-4000-8000-0123456789ab with action None
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> Invalid modify_action: None. Must be 'ADD' or 'REMOVE'
+_ TestNodelistModifyValidation.test_bad_modify_action_never_reaches_the_engine[] _
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685067102736 requesting nodelist_modify for node 4b9b5a1e-0000-4000-8000-0123456789ab with action 
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> Invalid modify_action: . Must be 'ADD' or 'REMOVE'
+_ TestNodelistModifyValidation.test_bad_modify_action_never_reaches_the_engine[ad] _
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685143848016 requesting nodelist_modify for node 4b9b5a1e-0000-4000-8000-0123456789ab with action ad
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> Invalid modify_action: ad. Must be 'ADD' or 'REMOVE'
+_ TestNodelistModifyValidation.test_bad_modify_action_never_reaches_the_engine[add] _
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685067258064 requesting nodelist_modify for node 4b9b5a1e-0000-4000-8000-0123456789ab with action add
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> Invalid modify_action: add. Must be 'ADD' or 'REMOVE'
+_ TestNodelistModifyValidation.test_bad_modify_action_never_reaches_the_engine[DELETE] _
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685075430032 requesting nodelist_modify for node 4b9b5a1e-0000-4000-8000-0123456789ab with action DELETE
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> Invalid modify_action: DELETE. Must be 'ADD' or 'REMOVE'
+_ TestNodelistModifyValidation.test_a_valid_request_is_forwarded_and_confirmed _
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685070208848 requesting nodelist_modify for node 4b9b5a1e-0000-4000-8000-0123456789ab with action ADD
+DEBUG    cuemseditor.CuemsWsUser:events.py:84 nodelist_modify for node 4b9b5a1e-0000-4000-8000-0123456789ab: OK
+WARNING  cuemseditor.CuemsWsUser:events.py:84 Failed to reload and broadcast node list update after adoption: object MagicMock can't be used in 'await' expression
+____ TestNodelistGet.test_rereads_the_map_and_answers_with_initial_mappings ____
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685069105872 requesting nodelist_get
+___ TestNodelistGet.test_unreadable_map_is_an_error_not_a_silent_empty_list ____
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685070105936 requesting nodelist_get
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'ValueError'> could not read network_map.xml
+_______ TestNetworkMapWatcher.test_broadcasts_when_the_map_is_rewritten ________
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsServer:events.py:84 watching /tmp/pytest-of-adria/pytest-420/test_broadcasts_when_the_map_i0/network_map.xml for node list changes
+DEBUG    cuemseditor.CuemsWsServer:events.py:84 network_map.xml changed on disk, broadcasting
+INFO     cuemseditor.CuemsWsServer:events.py:84 network_map watcher stopped
+___________ TestNetworkMapWatcher.test_quiet_map_broadcasts_nothing ____________
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsServer:events.py:84 watching /tmp/pytest-of-adria/pytest-420/test_quiet_map_broadcasts_noth0/network_map.xml for node list changes
+INFO     cuemseditor.CuemsWsServer:events.py:84 network_map watcher stopped
+____________ TestNetworkMapWatcher.test_missing_map_is_not_an_error ____________
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsServer:events.py:84 watching /tmp/pytest-of-adria/pytest-420/test_missing_map_is_not_an_err0/absent.xml for node list changes
+INFO     cuemseditor.CuemsWsServer:events.py:84 network_map watcher stopped
+__ TestNodeconfAvailableFlag.test_watcher_broadcasts_when_nodeconf_goes_away ___
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsServer:events.py:84 watching /tmp/pytest-of-adria/pytest-420/test_watcher_broadcasts_when_n0/network_map.xml for node list changes
+INFO     cuemseditor.CuemsWsServer:events.py:84 cuems-nodeconf availability changed: False
+INFO     cuemseditor.CuemsWsServer:events.py:84 network_map watcher stopped
+_________ TestNodeconfAvailableFlag.test_true_when_the_socket_is_there _________
+------------------------------ Captured log call -------------------------------
+DEBUG    cuemseditor.CuemsWsServer:test_nodelist_actions.py:271 Network map reloaded successfully: 0 adopted nodes, 0 new nodes
+________ TestNodeconfAvailableFlag.test_false_when_nodeconf_is_disabled ________
+------------------------------ Captured log call -------------------------------
+DEBUG    cuemseditor.CuemsWsServer:test_nodelist_actions.py:271 Network map reloaded successfully: 0 adopted nodes, 0 new nodes
+____________ TestNodeStatus.test_relays_the_engine_answer_untouched ____________
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685067189136 requesting node_status
+___ TestNodeStatus.test_a_dead_engine_is_an_error_not_a_silent_empty_answer ____
+------------------------------ Captured log call -------------------------------
+INFO     cuemseditor.CuemsWsUser:events.py:84 user 140685057050576 requesting node_status
+ERROR    cuemseditor.CuemsWsUser:events.py:84 error: <class 'cuemseditor.CuemsErrors.EngineError'> Timeout: Engine did not respond in 25s
+_________________________ test_dry_run_changes_nothing _________________________
+----------------------------- Captured stdout call -----------------------------
+*** DRY RUN — no changes will be written (use --apply to commit) ***
+== Pass A: database media.duration ==
+  3 DB duration update(s) pending (dry-run)
+== Pass B: project script.xml <duration> ==
+== Report ==
+  [CHANGED] file.ext (AUDIO): 00:00:00.000 -> 00:01:23.456 (+83456ms) <<<>1s
+  [NULL_FILLED] file_video.ext (MOVIE): -> 00:01:30.000
+  [SKIP_IMAGE] pic.png (IMAGE)
+  [CHANGED] tone_c.wav (AUDIO): 00:00:03.9 -> 00:00:03.000 (-9ms)
+  [MISSING] gone.wav (AUDIO) -> /tmp/pytest-of-adria/pytest-420/test_dry_run_changes_nothing0/media/gone.wav
+  [SKIPPED_INVALID] proj1: XMLSchemaChildrenValidationError: failed validating <Element 'contents' at 0x7ff3cac9b060> with Xsd11Group(model='choice', occurs=[0, None]):
+Reason: Unexpected child with tag 'VideoCue' at position 2.
+Schema component:
+  <xs:complexType xmlns:xs="http://www.w3.org/2001/XMLSchema" name="CueListContentsType">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="CueList" type="cms:CueListType" />
+      <xs:element name="Cue" type="cms:CueClassType">
+        <xs:alternative test="@class='audio'" type="cms:AudioCueType" />
+        <xs:alternative test="@class='video'" type="cms:VideoCueType" />
+        <xs:alternative test="@class='dmx'" type="cms:DmxCueType" />
+        <xs:alternative type="cms:MediaCueType" />
+      </xs:element>
+      <xs:element name="ActionCue" type="cms:ActionCueType" />
+      <xs:element name="FadeCue" type="cms:FadeCueType" />
+    </xs:choice>
+  </xs:complexType>
+Instance type: <class 'xml.etree.ElementTree.Element'>
+Instance:
+  <contents><ActionCue><autoload>False</autoload><description /><enabled>True</enabled><id>58763af8-462c-4831-bd08-d3e978dc4a0a</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties><icon>icon.png</icon><color>#ffffff</color><timeline_position><x>0</x><y>0</y></timeline_position><warning>0</warning></ui_properties><action_target>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</action_target><action_type>play</action_type></ActionCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>210b9a09-b790-481e-8b01-80d5a03f8dba</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue><AudioCue><autoload>False</autoload><description /><enabled>True</enabled><id>bb391e70-e65e-47ca-8b29-5a7076bbd250</id><loop>1</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file.ext</file_name><id>0ac1d420-452b-4c1b-9eed-1224ce3adcf8</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /><master_vol>66</master_vol></AudioCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>96d6e5de-c29b-4ab2-b828-297d84293304</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>3596965a-fccc-4d5e-80e3-4e6ef6b46bfa</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue></contents>
+Path: /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents
+  --- summary ---
+    CHANGED: 2
+    MISSING: 1
+    NULL_FILLED: 1
+    SKIPPED_INVALID: 1
+    SKIP_IMAGE: 1
+  (dry-run — re-run with --apply to write)
+------------------------------ Captured log call -------------------------------
+DEBUG    cuemsutils.xml.documents:log.py:201 Call recieved
+DEBUG    cuemsutils.xml.documents:log.py:202 Using args: ('script',) and kwargs: {}
+DEBUG    cuemsutils.xml.documents:log.py:205 Finished with result: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/schemas/script.xsd
+INFO     cuemsutils.xml.xml_reader_writer:classic.py:199 Reading script document /tmp/pytest-of-adria/pytest-420/test_dry_run_changes_nothing0/projects/proj1/script.xml
+___________________________ test_apply_is_idempotent ___________________________
+----------------------------- Captured stdout call -----------------------------
+  DB backed up to /tmp/pytest-of-adria/pytest-420/test_apply_is_idempotent0/duration_repair_backup_20261002-085213
+== Pass A: database media.duration ==
+  applied 3 DB duration update(s)
+== Pass B: project script.xml <duration> ==
+== Report ==
+  [CHANGED] file.ext (AUDIO): 00:00:00.000 -> 00:01:23.456 (+83456ms) <<<>1s
+  [NULL_FILLED] file_video.ext (MOVIE): -> 00:01:30.000
+  [SKIP_IMAGE] pic.png (IMAGE)
+  [CHANGED] tone_c.wav (AUDIO): 00:00:03.9 -> 00:00:03.000 (-9ms)
+  [MISSING] gone.wav (AUDIO) -> /tmp/pytest-of-adria/pytest-420/test_apply_is_idempotent0/media/gone.wav
+  [SKIPPED_INVALID] proj1: XMLSchemaChildrenValidationError: failed validating <Element 'contents' at 0x7ff3caad05e0> with Xsd11Group(model='choice', occurs=[0, None]):
+Reason: Unexpected child with tag 'VideoCue' at position 2.
+Schema component:
+  <xs:complexType xmlns:xs="http://www.w3.org/2001/XMLSchema" name="CueListContentsType">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="CueList" type="cms:CueListType" />
+      <xs:element name="Cue" type="cms:CueClassType">
+        <xs:alternative test="@class='audio'" type="cms:AudioCueType" />
+        <xs:alternative test="@class='video'" type="cms:VideoCueType" />
+        <xs:alternative test="@class='dmx'" type="cms:DmxCueType" />
+        <xs:alternative type="cms:MediaCueType" />
+      </xs:element>
+      <xs:element name="ActionCue" type="cms:ActionCueType" />
+      <xs:element name="FadeCue" type="cms:FadeCueType" />
+    </xs:choice>
+  </xs:complexType>
+Instance type: <class 'xml.etree.ElementTree.Element'>
+Instance:
+  <contents><ActionCue><autoload>False</autoload><description /><enabled>True</enabled><id>58763af8-462c-4831-bd08-d3e978dc4a0a</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties><icon>icon.png</icon><color>#ffffff</color><timeline_position><x>0</x><y>0</y></timeline_position><warning>0</warning></ui_properties><action_target>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</action_target><action_type>play</action_type></ActionCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>210b9a09-b790-481e-8b01-80d5a03f8dba</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue><AudioCue><autoload>False</autoload><description /><enabled>True</enabled><id>bb391e70-e65e-47ca-8b29-5a7076bbd250</id><loop>1</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file.ext</file_name><id>0ac1d420-452b-4c1b-9eed-1224ce3adcf8</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /><master_vol>66</master_vol></AudioCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>96d6e5de-c29b-4ab2-b828-297d84293304</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>3596965a-fccc-4d5e-80e3-4e6ef6b46bfa</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue></contents>
+Path: /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents
+  --- summary ---
+    CHANGED: 2
+    MISSING: 1
+    NULL_FILLED: 1
+    SKIPPED_INVALID: 1
+    SKIP_IMAGE: 1
+  backups: /tmp/pytest-of-adria/pytest-420/test_apply_is_idempotent0/duration_repair_backup_20261002-085213
+  DB backed up to /tmp/pytest-of-adria/pytest-420/test_apply_is_idempotent0/duration_repair_backup_20261002-085213
+== Pass A: database media.duration ==
+== Pass B: project script.xml <duration> ==
+== Report ==
+  [OK] file.ext (AUDIO)
+  [OK] file_video.ext (MOVIE)
+  [SKIP_IMAGE] pic.png (IMAGE)
+  [OK] tone_c.wav (AUDIO)
+  [MISSING] gone.wav (AUDIO) -> /tmp/pytest-of-adria/pytest-420/test_apply_is_idempotent0/media/gone.wav
+  [SKIPPED_INVALID] proj1: XMLSchemaChildrenValidationError: failed validating <Element 'contents' at 0x7ff3cabb9580> with Xsd11Group(model='choice', occurs=[0, None]):
+Reason: Unexpected child with tag 'VideoCue' at position 2.
+Schema component:
+  <xs:complexType xmlns:xs="http://www.w3.org/2001/XMLSchema" name="CueListContentsType">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="CueList" type="cms:CueListType" />
+      <xs:element name="Cue" type="cms:CueClassType">
+        <xs:alternative test="@class='audio'" type="cms:AudioCueType" />
+        <xs:alternative test="@class='video'" type="cms:VideoCueType" />
+        <xs:alternative test="@class='dmx'" type="cms:DmxCueType" />
+        <xs:alternative type="cms:MediaCueType" />
+      </xs:element>
+      <xs:element name="ActionCue" type="cms:ActionCueType" />
+      <xs:element name="FadeCue" type="cms:FadeCueType" />
+    </xs:choice>
+  </xs:complexType>
+Instance type: <class 'xml.etree.ElementTree.Element'>
+Instance:
+  <contents><ActionCue><autoload>False</autoload><description /><enabled>True</enabled><id>58763af8-462c-4831-bd08-d3e978dc4a0a</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties><icon>icon.png</icon><color>#ffffff</color><timeline_position><x>0</x><y>0</y></timeline_position><warning>0</warning></ui_properties><action_target>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</action_target><action_type>play</action_type></ActionCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>1f301cf8-dd03-4b40-ac17-ef0e5e7988be</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>210b9a09-b790-481e-8b01-80d5a03f8dba</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue><AudioCue><autoload>False</autoload><description /><enabled>True</enabled><id>bb391e70-e65e-47ca-8b29-5a7076bbd250</id><loop>1</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file.ext</file_name><id>0ac1d420-452b-4c1b-9eed-1224ce3adcf8</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /><master_vol>66</master_vol></AudioCue><VideoCue><autoload>False</autoload><description /><enabled>True</enabled><id>96d6e5de-c29b-4ab2-b828-297d84293304</id><loop>0</loop><name>empty</name><offset><CTimecode>00:00:00.000</CTimecode></offset><post_go>pause</post_go><postwait><CTimecode>00:00:00.000</CTimecode></postwait><prewait><CTimecode>00:00:00.000</CTimecode></prewait><target /><timecode>False</timecode><ui_properties /><Media><file_name>file_video.ext</file_name><id>3596965a-fccc-4d5e-80e3-4e6ef6b46bfa</id><duration>00:00:00.000</duration><regions><Region><id>0</id><loop>2</loop><in_time><CTimecode>00:00:00.000</CTimecode></in_time><out_time><CTimecode>00:00:00.000</CTimecode></out_time></Region></regions></Media><outputs /></VideoCue></contents>
+Path: /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents
+  --- summary ---
+    MISSING: 1
+    OK: 3
+    SKIPPED_INVALID: 1
+    SKIP_IMAGE: 1
+  backups: /tmp/pytest-of-adria/pytest-420/test_apply_is_idempotent0/duration_repair_backup_20261002-085213
+------------------------------ Captured log call -------------------------------
+DEBUG    cuemsutils.xml.documents:log.py:201 Call recieved
+DEBUG    cuemsutils.xml.documents:log.py:202 Using args: ('script',) and kwargs: {}
+DEBUG    cuemsutils.xml.documents:log.py:205 Finished with result: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/schemas/script.xsd
+INFO     cuemsutils.xml.xml_reader_writer:classic.py:199 Reading script document /tmp/pytest-of-adria/pytest-420/test_apply_is_idempotent0/projects/proj1/script.xml
+DEBUG    cuemsutils.xml.documents:log.py:201 Call recieved
+DEBUG    cuemsutils.xml.documents:log.py:202 Using args: ('script',) and kwargs: {}
+DEBUG    cuemsutils.xml.documents:log.py:205 Finished with result: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/xml/schemas/script.xsd
+INFO     cuemsutils.xml.xml_reader_writer:classic.py:199 Reading script document /tmp/pytest-of-adria/pytest-420/test_apply_is_idempotent0/projects/proj1/script.xml
+_______________________________ test_skip_trash ________________________________
+----------------------------- Captured stdout call -----------------------------
+  DB backed up to /tmp/pytest-of-adria/pytest-420/test_skip_trash0/duration_repair_backup_20261002-085213
+== Pass A: database media.duration ==
+  applied 2 DB duration update(s)
+== Report ==
+  [CHANGED] file.ext (AUDIO): 00:00:00.000 -> 00:01:23.456 (+83456ms) <<<>1s
+  [NULL_FILLED] file_video.ext (MOVIE): -> 00:01:30.000
+  [SKIP_IMAGE] pic.png (IMAGE)
+  [SKIP_TRASH] tone_c.wav (AUDIO)
+  [MISSING] gone.wav (AUDIO) -> /tmp/pytest-of-adria/pytest-420/test_skip_trash0/media/gone.wav
+  --- summary ---
+    CHANGED: 1
+    MISSING: 1
+    NULL_FILLED: 1
+    SKIP_IMAGE: 1
+    SKIP_TRASH: 1
+  backups: /tmp/pytest-of-adria/pytest-420/test_skip_trash0/duration_repair_backup_20261002-085213
+_____________________ test_trash_media_fixed_without_skip ______________________
+----------------------------- Captured stdout call -----------------------------
+  DB backed up to /tmp/pytest-of-adria/pytest-420/test_trash_media_fixed_without0/duration_repair_backup_20261002-085213
+== Pass A: database media.duration ==
+  applied 3 DB duration update(s)
+== Report ==
+  [CHANGED] file.ext (AUDIO): 00:00:00.000 -> 00:01:23.456 (+83456ms) <<<>1s
+  [NULL_FILLED] file_video.ext (MOVIE): -> 00:01:30.000
+  [SKIP_IMAGE] pic.png (IMAGE)
+  [CHANGED] tone_c.wav (AUDIO): 00:00:03.9 -> 00:00:03.000 (-9ms)
+  [MISSING] gone.wav (AUDIO) -> /tmp/pytest-of-adria/pytest-420/test_trash_media_fixed_without0/media/gone.wav
+  --- summary ---
+    CHANGED: 2
+    MISSING: 1
+    NULL_FILLED: 1
+    SKIP_IMAGE: 1
+  backups: /tmp/pytest-of-adria/pytest-420/test_trash_media_fixed_without0/duration_repair_backup_20261002-085213
+___________________________ test_missing_db_is_fatal ___________________________
+----------------------------- Captured stderr call -----------------------------
+FATAL: database not found at /tmp/pytest-of-adria/pytest-420/test_missing_db_is_fatal0/project-manager.db
+=========================== short test summary info ============================
+PASSED tests/test_dangling_targets.py::test_fadecue_ids_are_collected
+PASSED tests/test_dangling_targets.py::test_actioncue_targeting_fadecue_is_preserved
+PASSED tests/test_dangling_targets.py::test_fadecue_dangling_action_target_is_cleared
+PASSED tests/test_dangling_targets.py::test_fadecue_valid_action_target_is_preserved
+PASSED tests/test_dangling_targets.py::test_nested_cuelist_fadecue_ids_count
+PASSED tests/test_import_smoke.py::test_the_walk_found_the_modules
+PASSED tests/test_import_smoke.py::test_excluded_modules_are_imported_by_nothing
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsDBMedia]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsDBModel]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsDBProject]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsErrors]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsLibraryMaintenance]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsProjectManager]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsUpload]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsWsServer]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.CuemsWsUser]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.__main__]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.cli]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.repair_durations]
+PASSED tests/test_import_smoke.py::test_module_imports[cuemseditor.run_manual]
+PASSED tests/test_media.py::test_list_payload_carries_duration
+PASSED tests/test_media.py::test_list_trash_payload_carries_duration
+PASSED tests/test_media.py::test_new_none_duration_skips_audio_thumbnail_keeps_waveform
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_bad_uuid_never_reaches_the_engine[None]
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_bad_uuid_never_reaches_the_engine[]
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_bad_uuid_never_reaches_the_engine[0]
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_bad_uuid_never_reaches_the_engine[bad_uuid3]
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_bad_uuid_never_reaches_the_engine[bad_uuid4]
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_bad_modify_action_never_reaches_the_engine[None]
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_bad_modify_action_never_reaches_the_engine[]
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_bad_modify_action_never_reaches_the_engine[ad]
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_bad_modify_action_never_reaches_the_engine[add]
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_bad_modify_action_never_reaches_the_engine[DELETE]
+PASSED tests/test_nodelist_actions.py::TestNodelistModifyValidation::test_a_valid_request_is_forwarded_and_confirmed
+PASSED tests/test_nodelist_actions.py::TestNodelistGet::test_rereads_the_map_and_answers_with_initial_mappings
+PASSED tests/test_nodelist_actions.py::TestNodelistGet::test_unreadable_map_is_an_error_not_a_silent_empty_list
+PASSED tests/test_nodelist_actions.py::test_both_node_actions_are_registered
+PASSED tests/test_nodelist_actions.py::TestNetworkMapWatcher::test_broadcasts_when_the_map_is_rewritten
+PASSED tests/test_nodelist_actions.py::TestNetworkMapWatcher::test_quiet_map_broadcasts_nothing
+PASSED tests/test_nodelist_actions.py::TestNetworkMapWatcher::test_missing_map_is_not_an_error
+PASSED tests/test_nodelist_actions.py::TestNodeconfAvailableFlag::test_the_flag_is_sampled_per_message_not_cached
+PASSED tests/test_nodelist_actions.py::TestNodeconfAvailableFlag::test_watcher_broadcasts_when_nodeconf_goes_away
+PASSED tests/test_nodelist_actions.py::TestNodeconfAvailableFlag::test_true_when_the_socket_is_there
+PASSED tests/test_nodelist_actions.py::TestNodeconfAvailableFlag::test_false_when_nodeconf_is_disabled
+PASSED tests/test_nodelist_actions.py::TestNodeStatus::test_relays_the_engine_answer_untouched
+PASSED tests/test_nodelist_actions.py::TestNodeStatus::test_a_dead_engine_is_an_error_not_a_silent_empty_answer
+PASSED tests/test_nodelist_actions.py::TestNodeStatus::test_the_action_is_registered
+PASSED tests/test_probe_duration.py::test_probe_duration_values[192.450000\n-192450-00:03:12.450]
+PASSED tests/test_probe_duration.py::test_probe_duration_values[192.400000\n-192400-00:03:12.400]
+PASSED tests/test_probe_duration.py::test_probe_duration_values[192.999700\n-193000-00:03:13.000]
+PASSED tests/test_probe_duration.py::test_probe_duration_values[0.033000\n-33-00:00:00.033]
+PASSED tests/test_probe_duration.py::test_probe_duration_values[5.900000\n-5900-00:00:05.900]
+PASSED tests/test_probe_duration.py::test_probe_duration_values[0.000000\n-0-00:00:00.000]
+PASSED tests/test_probe_duration.py::test_probe_duration_failures_raise[N/A\n-0-]
+PASSED tests/test_probe_duration.py::test_probe_duration_failures_raise[-0-]
+PASSED tests/test_probe_duration.py::test_probe_duration_failures_raise[-1-moov atom not found]
+PASSED tests/test_probe_duration.py::test_probe_duration_failures_raise[nan\n-0-]
+PASSED tests/test_probe_duration.py::test_probe_duration_failures_raise[inf\n-0-]
+PASSED tests/test_probe_duration.py::test_probe_duration_failures_raise[-inf\n-0-]
+PASSED tests/test_probe_duration.py::test_probe_duration_failures_raise[garbage\n-0-]
+PASSED tests/test_probe_duration.py::test_probe_duration_failures_raise[-5\n-0-]
+PASSED tests/test_probe_duration.py::test_probe_duration_timeout_raises
+PASSED tests/test_probe_duration.py::test_probe_duration_stderr_included_in_error
+PASSED tests/test_probe_duration.py::test_probe_duration_passes_file_path_to_ffprobe
+PASSED tests/test_probe_duration.py::test_probe_duration_real_file
+PASSED tests/test_repair_durations.py::test_dry_run_changes_nothing
+PASSED tests/test_repair_durations.py::test_apply_is_idempotent
+PASSED tests/test_repair_durations.py::test_skip_trash
+PASSED tests/test_repair_durations.py::test_trash_media_fixed_without_skip
+PASSED tests/test_repair_durations.py::test_missing_db_is_fatal
+PASSED tests/test_validate_fade_durations.py::test_zero_duration_rejected_with_name_and_id
+PASSED tests/test_validate_fade_durations.py::test_none_duration_rejected
+PASSED tests/test_validate_fade_durations.py::test_missing_duration_key_rejected
+PASSED tests/test_validate_fade_durations.py::test_empty_dict_duration_rejected
+PASSED tests/test_validate_fade_durations.py::test_ctimecode_none_rejected
+PASSED tests/test_validate_fade_durations.py::test_garbage_string_rejected
+PASSED tests/test_validate_fade_durations.py::test_three_component_timecode_rejected_cleanly
+PASSED tests/test_validate_fade_durations.py::test_300ms_accepted
+PASSED tests/test_validate_fade_durations.py::test_legacy_frames_format_accepted
+PASSED tests/test_validate_fade_durations.py::test_short_ms_literal_semantics_parity_with_ctimecode
+PASSED tests/test_validate_fade_durations.py::test_nested_cuelist_recursion
+PASSED tests/test_validate_fade_durations.py::test_foreign_and_flat_items_tolerated
+PASSED tests/test_validate_fade_durations.py::test_multiple_offenders_listed_in_one_message
+PASSED tests/test_validate_fade_durations.py::test_empty_and_none_contents_pass
+FAILED tests/test_repair_durations.py::test_apply_fixes_db_and_xml - xmlschem...
+FAILED tests/test_repair_durations.py::test_skipped_invalid_xml_does_not_abort
+2 failed, 85 passed, 17 warnings in 2.20s

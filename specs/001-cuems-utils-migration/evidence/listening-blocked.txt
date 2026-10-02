@@ -1,0 +1,11 @@
+# T010 — after T007 (import line only). The module imports; the constructor does not run.
+# FR-003 (listening) is NOT claimed here. It is checked in T016, after T014 replaces create_script().
+$ hatch run python mappings-capture/construct_server.py
+Traceback (most recent call last):
+  File "/disk/Projects/StageLab/cuems-editor/specs/001-cuems-utils-migration/evidence/mappings-capture/construct_server.py", line 8, in <module>
+    CuemsWsServer(s, get_mappings())
+  File "/disk/Projects/StageLab/cuems-editor/src/cuemseditor/CuemsWsServer.py", line 87, in __init__
+    self.initital_template = create_script()
+                             ^^^^^^^^^^^^^
+NameError: name 'create_script' is not defined
+# exit: 1
