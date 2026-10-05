@@ -19,7 +19,8 @@ and the file size the same way:
   client sent that are not positive integers are stripped everywhere, since
   the parser assigns them raw and the XSD would reject the save;
 * repair tool: Pass A re-probes video rows and reports differences, Pass B
-  writes the values into every project, ``--strip-dimensions`` removes them.
+  writes the values into every project. (``--strip-dimensions`` was removed by
+  D23: the rollback is the XSD-patched utils; plan §8.)
 
 D18: every media type also stores ``file_size`` and ``file_md5`` (the MD5 the
 upload already verified); the pixel size stays VideoCue-only. A save never
@@ -131,6 +132,19 @@ def _row_md5(library, unix_name):
         return Media.get(Media.unix_name == unix_name).file_md5
     finally:
         database.close()
+
+
+def _strip_xml(path):
+    """Remove the stored values from every Media of a project file."""
+    import xml.etree.ElementTree as ET
+    ET.register_namespace('cms', 'https://stagelab.coop/cuems/')
+    ET.register_namespace('xsi', 'http://www.w3.org/2001/XMLSchema-instance')
+    tree = ET.parse(path)
+    for media in tree.getroot().iter('Media'):
+        for key in ALL:
+            for el in media.findall(key):
+                media.remove(el)
+    tree.write(path, encoding='utf-8', xml_declaration=True)
 
 
 def _project_manager(library):
@@ -498,8 +512,8 @@ class TestRepairTool:
     def test_pass_b_writes_values_into_a_project_whose_durations_are_right(
             self, library, canned_probe):
         rd.main(['--library-path', library.root, '--apply'])   # durations fixed
-        # Wipe the dimensions from the XML only: durations are now correct.
-        rd.main(['--library-path', library.root, '--apply', '--strip-dimensions'])
+        # Wipe the stored values from the XML only: durations are now correct.
+        _strip_xml(_script_path(library))
         assert all(not set(ALL) & set(m) for _, m in _media_blocks(_script_path(library)))
         rd.main(['--library-path', library.root, '--apply', '--xml-only'])
         videos = [m for t, m in _media_blocks(_script_path(library)) if t == 'VideoCue']
@@ -525,9 +539,7 @@ class TestRepairTool:
         rd.main(['--library-path', library.root, '--apply', '--no-md5'])
         assert _row_md5(library, 'file_video.ext') is None
 
-    def test_strip_dimensions_touches_only_the_projects(self, library, canned_probe):
-        rd.main(['--library-path', library.root, '--apply'])
-        rows_before = _row(library, 'file_video.ext')
-        rd.main(['--library-path', library.root, '--apply', '--strip-dimensions'])
-        assert all(not set(ALL) & set(m) for _, m in _media_blocks(_script_path(library)))
-        assert _row(library, 'file_video.ext') == rows_before
+    def test_strip_dimensions_is_no_longer_an_option(self, library):
+        # D23 (plan §8): the rollback is the XSD-patched utils debs.
+        with pytest.raises(SystemExit):
+            rd.main(['--library-path', library.root, '--apply', '--strip-dimensions'])
