@@ -11,7 +11,7 @@ import sys
 from cuemsutils.log import logged, Logger
 
 from cuemseditor.CuemsErrors import EngineError, NonExistentItemError
-from cuemseditor.CuemsMediaRefresh import refresh_media_before_load
+from cuemseditor.CuemsMediaRefresh import check_media_on_open, refresh_media_before_load
 
 TIMEOUT = 25  # TODO: make it configurable, or get from settings
 
@@ -273,9 +273,11 @@ class CuemsWsUser():
     async def project_ready(self, project_uuid, action):
         """Tell the engine to arm the project identified by *project_uuid*.
 
-        Resolves the ``unix_name`` from the DB, corrects the project's media
-        values from the files first (869fat84r D20; never blocks the load),
-        builds the ``project_ready`` engine command, and awaits the response.
+        Resolves the ``unix_name`` from the DB, checks the project's media
+        files first (869fat84r D20; never blocks the load), builds the
+        ``project_ready`` engine command, and awaits the response. After the
+        reply, the media check's ``media_check_report`` goes to this session
+        and to every other session on the project.
 
         Args:
             project_uuid: UUID string of the project to arm.
@@ -284,7 +286,7 @@ class CuemsWsUser():
         Logger.info(f"user {id(self.websocket)} requesting ready project {project_uuid}")
         try:
             unix_name = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.get_project_unix_name, project_uuid)
-            await self._refresh_media(project_uuid)
+            refresh = await self._refresh_media(project_uuid)
             action_uuid = str(new_uuid())
             engine_command = {"action": functionNameAsString(), "action_uuid": action_uuid, "value": unix_name}
 
@@ -292,22 +294,69 @@ class CuemsWsUser():
             Logger.debug(f"project {project_uuid} ready: {result}")
 
             await self.outgoing.put(json.dumps({"type": functionNameAsString(), "value": project_uuid}))
+            # After the reply, so a client waiting for it never reads this first.
+            await self._send_media_report(refresh.get('media_report') if refresh else None)
 
         except Exception as e:
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
 
     async def _refresh_media(self, project_uuid):
-        """Correct *project_uuid*'s media values before it is loaded (see
-        :mod:`cuemseditor.CuemsMediaRefresh`). Never raises: the load goes on
-        with the stored values whatever happens here."""
+        """Check *project_uuid*'s media before it is loaded (see
+        :mod:`cuemseditor.CuemsMediaRefresh`). Returns its report, or ``None``.
+        Never raises: the load goes on with the stored values whatever
+        happens here."""
         try:
-            await refresh_media_before_load(self.server.db.project, project_uuid,
-                                            executor=self.server.executor,
-                                            engine_running=self._engine_running)
+            return await refresh_media_before_load(self.server.db.project, project_uuid,
+                                                   executor=self.server.executor,
+                                                   engine_running=self._engine_running)
         except Exception as e:
             Logger.error(f'media check before loading {project_uuid} failed: '
                          f'{type(e).__name__}: {e}; loading with the stored values')
+            return None
+
+    async def _send_media_report(self, value):
+        """Send a ``media_check_report`` (plan §8.3) to this session and, for
+        the ``ready`` and ``save`` contexts, to every other session on the
+        project. Nothing when *value* is ``None``. Never raises."""
+        if not value:
+            return
+        try:
+            frame = json.dumps({"type": "media_check_report", "value": value})
+            await self.outgoing.put(frame)
+            if value.get('context') in ('ready', 'save'):
+                await self.server.send_to_project_sessions(value['project_uuid'], frame, skip=self)
+        except Exception as e:
+            Logger.error(f'could not send the media report: {type(e).__name__}: {e}')
+
+    def _in_background(self, coroutine):
+        """Run *coroutine* after the current reply, keeping a reference so the
+        task is not collected; its errors are logged, never raised."""
+        task = asyncio.ensure_future(coroutine)
+        pending = getattr(self, '_background_tasks', None)
+        if pending is None:
+            pending = self._background_tasks = set()
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+        return task
+
+    async def _report_on_open(self, project_uuid):
+        """The read-only media check of a project being opened, then its report."""
+        value = await check_media_on_open(self.server.db.project, project_uuid,
+                                          executor=self.server.executor)
+        await self._send_media_report(value)
+
+    async def _report_after_save(self, project_uuid):
+        """The read-only media check after a save; its report clears (or keeps)
+        the warning of every session on the project."""
+        try:
+            value = await self.server.event_loop.run_in_executor(
+                self.server.executor, self.server.db.project.media_report, project_uuid, 'save')
+        except Exception as e:
+            Logger.error(f'project {project_uuid}: the media check after the save failed '
+                         f'({type(e).__name__}: {e})')
+            return
+        await self._send_media_report(value)
 
     async def _engine_running(self):
         """``True`` while a show is running, ``False`` when not, ``None`` when
@@ -511,6 +560,8 @@ class CuemsWsUser():
             await self.outgoing.put(msg)
             self.server.users[self] = project_uuid
             self.server.sessions[self.session_id]['loaded_project'] = project_uuid
+            # After the project frame, never before it (869fat84r D20).
+            self._in_background(self._report_on_open(project_uuid))
         except NonExistentItemError as e:
             Logger.info(e)
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
@@ -555,6 +606,7 @@ class CuemsWsUser():
             await self.notify_user(uuid=project_uuid, action=action)
             await self.server.notify_others_list_changes(self, "project_list")
             await self.server.notify_others_same_project(self, "project_modified", project_uuid)
+            self._in_background(self._report_after_save(project_uuid))
         except Exception as e:
             Logger.error("error: {} {}".format(type(e), e))
             await self.notify_error_to_user((str(type(e)) + str(e)), uuid=project_uuid, action=action)
