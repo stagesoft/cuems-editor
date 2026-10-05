@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 SPDX-License-Identifier: GPL-3.0-or-later
 -->
 
-# UR-5 — No public way to build a config document from JSON
+# UR-5 — No public way to build a config document from JSON (resolved upstream by cuems-utils 014)
 
 **From** cuems-editor 001 (T059), 2026-10-02. cuemsutils `0.1.0rc16` @ `6213b16`.
 
@@ -34,3 +34,24 @@ is `xfail(strict=True)` and starts failing as XPASS the day the library offers t
 e.g. `ConfigManager.from_json(SchemaName, payload)` returning the root object `save_*` writes, or a
 `ConfigManager.set_document(SchemaName, payload)` that decodes through the same mapper and adapters
 as `load_*`.
+
+**Resolved by.** cuems-utils 014 adds exactly the expected call.
+
+| | |
+|---|---|
+| Pinned commit | `429f8d279d634f153be8feb938de3c4e88c61230` |
+| Subject | `feat(014): phases 3 and 4 — the public config ingestion, the release note, the budgets` |
+| Signature | `ConfigManager.from_json(schema: SchemaName, payload) -> <root config object>`. Decodes through the same `Mapper.decode_config` call `load_*` uses — `network_map` still runs the adapter table, the other three still store every scalar verbatim. Returns the object; there is deliberately no installer, so the caller writes it with the object's own `save(path)` |
+| Refuses | `SchemaName.SCRIPT` and `SchemaName.HARDWARE_OUTPUTS`, same reasons `config_save` already names |
+
+**What the editor does (T059).** `config_save` for `settings`/`network_map`/`project_mappings`/
+`project_settings` calls `ConfigManager(load_all=False).from_json(name, document)` and writes the
+result with `.save(path)` — the same body each `save_*` delegates to. The `xfail(strict=True)` on
+`tests/test_schema_descriptor.py::test_config_save_of_settings_persists_through_save_settings` is
+removed; it is a real pass.
+
+**Left open, filed separately.** `project_mappings`/`project_settings` additionally need a project
+identifier `config_save`'s wire shape did not carry (fixed locally — see below) and expose a second,
+distinct gap this report did not cover: `ConfigManager.project_path`/`conf_path` raise
+`FileNotFoundError` for a file that has never been saved before, which blocks a project's *first*
+`config_save` even once it is told which project. See `UR-6-config-path-helpers-require-existence.md`.
