@@ -837,6 +837,12 @@ class CuemsDBProject(StringSanitizer):
                 tmp_media_path = os.path.join(tmp_project_path, 'media')
                 os.makedirs(tmp_media_path)
                 for media in project_medias:
+                    if media.media is None:
+                        # A file deleted for good, still named by the project
+                        # until it is re-uploaded (869fat84r D20).
+                        Logger.warning(f'project {unix_name} uses {media.media_filename}, which '
+                                       'is no longer in the library: not exported')
+                        continue
                     media_path = os.path.join(self.media_path, media.media.unix_name)
                     try:
                         shutil.copy(media_path, tmp_media_path)
@@ -1050,7 +1056,7 @@ class CuemsDBProject(StringSanitizer):
             for cue_uuid, media in matching_media_dict.items():
                 for media_uuid, media_filename in media.items():
                     if media_uuid != old_media_uuid:
-                        Logger.warning('found different media uuid for same media filename: {} in project {},  cue {}, using first found: {}'.format(project_uuid, cue_uuid, media_filename))
+                        Logger.warning('found different media uuid for same media filename: {} in project {},  cue {}, using first found: {}'.format(media_filename, project_uuid, cue_uuid, old_media_uuid))
             try:
                 self.update_existed_media_uuid(media_filename, old_media_uuid)
             except IntegrityError:
@@ -1097,7 +1103,11 @@ class CuemsDBProject(StringSanitizer):
             media_filename: ``unix_name`` to filter on.
         """
         Logger.debug('deleting missing media references for media filename: {}'.format(media_filename))
-        missing_media_project_refs = ProjectMedia.delete().where(ProjectMedia.media_filename == media_filename and ProjectMedia.media_id.is_null()).execute()
+        # Parenthesised: Python's ``&`` binds tighter than ``==``. (It was
+        # ``and``, which deleted every dangling row of every file.)
+        missing_media_project_refs = ProjectMedia.delete().where(
+            (ProjectMedia.media_filename == media_filename) & (ProjectMedia.media.is_null())
+        ).execute()
 
     def save_xml(self, unix_name, project_object):
         """Write *project_object* to ``<projects_path>/<unix_name>/cue_script.xml``.
