@@ -411,11 +411,18 @@ class TestSavePaths:
         assert audios and all(not set(PIXEL) & set(m) for m in audios)
 
     def test_update_probes_and_stores_a_file_without_values(self, library):
+        # A row with no stored size is verified by the one probe that reads
+        # the duration and the pixel size together (D20, plan §7.9.4).
+        from cuemseditor import CuemsDBProject as p
+        from cuemseditor.CuemsDBMedia import MediaProbe, PROBE_OK
+        from cuemsutils.tools.CTimecode import CTimecode
         with open(os.path.join(library.root, 'media', 'file_video.ext'), 'wb') as f:
             f.write(b'y' * 55)
         data = _script_json(library)
         mgr = _project_manager(library)
-        with _patched_probe((1280, 720)) as probe:
+        result = MediaProbe(duration=CTimecode(start_seconds=90.0), duration_state=PROBE_OK,
+                            width=1280, height=720, picture_state=PROBE_OK)
+        with mock.patch.object(p, 'probe_media', return_value=result) as probe:
             mgr.update(_project_uuid(library), data)
         if not database.is_closed():
             database.close()
