@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import os
 import json
 import aiofiles
@@ -190,7 +193,9 @@ class CuemsUpload(StringSanitizer):
         try:
             await self.server.event_loop.run_in_executor(self.server.executor, self.check_file_integrity, self.tmp_file_path(), received_md5)
 
-            dest_filename = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.media.new, self.tmp_file_path(), self.filename)
+            # The MD5 the client sent, just verified above, is stored with the
+            # media (file_md5, 869fat84r D18): no second hash of the file.
+            dest_filename = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.media.new, self.tmp_file_path(), self.filename, received_md5)
             self.tmp_filename = None
             Logger.debug('upload completed')
             await self.server.event_loop.run_in_executor(self.server.executor, self.check_if_media_existed, dest_filename)

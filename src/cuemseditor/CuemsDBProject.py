@@ -45,9 +45,13 @@ class DurationFixStats:
         self.errors = []
 
 
-#: The stored size of a media file in a cue's ``Media`` (869fat84r), in
-#: ``MediaType`` order. VideoCues only.
-DIMENSION_KEYS = ('pixel_width', 'pixel_height', 'file_size')
+#: What a cue's ``Media`` stores about its file (869fat84r), in ``MediaType``
+#: order: the pixel size (VideoCues only), then the file's size and MD5
+#: (every media type, D18).
+PIXEL_KEYS = ('pixel_width', 'pixel_height')
+STORED_KEYS = PIXEL_KEYS + ('file_size', 'file_md5')
+#: Kept for callers of the first version of this change.
+DIMENSION_KEYS = STORED_KEYS
 
 
 def _positive_int(value):
@@ -60,17 +64,33 @@ def _positive_int(value):
     return None
 
 
+def _md5(value):
+    """A usable MD5: 32 hex digits, returned lowercase; ``None`` otherwise."""
+    if isinstance(value, str) and len(value) == 32 and all(
+            c in '0123456789abcdef' for c in value.lower()):
+        return value.lower()
+    return None
+
+
+def _valid(key, value):
+    return _md5(value) if key == 'file_md5' else _positive_int(value)
+
+
 def dimensions_of_row(media):
-    """``{'pixel_width', 'pixel_height'[, 'file_size']}`` from a ``Media`` row,
-    or ``None`` when its pixel size is unknown."""
+    """What a ``Media`` row knows about its file: ``pixel_width`` and
+    ``pixel_height`` (both or neither), ``file_size``, ``file_md5``; only the
+    valid ones. ``None`` when it knows nothing."""
+    values = {}
     width, height = _positive_int(media.pixel_width), _positive_int(media.pixel_height)
-    if not (width and height):
-        return None
-    values = {'pixel_width': width, 'pixel_height': height}
+    if width and height:
+        values.update(pixel_width=width, pixel_height=height)
     size = _positive_int(media.file_size)
     if size:
         values['file_size'] = size
-    return values
+    md5 = _md5(getattr(media, 'file_md5', None))
+    if md5:
+        values['file_md5'] = md5
+    return values or None
 
 
 def db_duration_resolver(file_name):
@@ -111,12 +131,14 @@ def fix_media_durations_in_contents(contents, resolver, dimensions_resolver=None
     For every ``Media`` block, in this order:
 
     1. a ``pixel_width`` / ``pixel_height`` / ``file_size`` that is not a
-       positive integer is removed, whatever the cue: the parser assigns
-       these keys raw, and the schema would reject the whole save;
-       an AudioCue loses them altogether (they belong to VideoCues);
+       positive integer, or a ``file_md5`` that is not 32 hex digits, is
+       removed, whatever the cue: the parser assigns these keys raw, and the
+       schema would reject the whole save; an AudioCue loses the pixel size
+       (it belongs to VideoCues);
     2. the duration, from *resolver* (an orphan stops here, untouched);
-    3. a VideoCue's stored size, from *dimensions_resolver* when given:
-       its values replace the client's, ``None`` (unknown) removes them.
+    3. the stored values, from *dimensions_resolver* when given: the pixel
+       size, size and MD5 on a VideoCue, size and MD5 on an AudioCue (D18).
+       They replace the client's; ``None`` (unknown) removes them.
 
     One block that fails is logged and skipped; the walk goes on.
 
@@ -153,8 +175,8 @@ def strip_media_dimensions_in_contents(contents):
                 walk(item['CueList'].get('contents', []))
             for cue_type in ('AudioCue', 'VideoCue'):
                 media = (item.get(cue_type) or {}).get('Media')
-                if isinstance(media, dict) and any(k in media for k in DIMENSION_KEYS):
-                    for key in DIMENSION_KEYS:
+                if isinstance(media, dict) and any(k in media for k in STORED_KEYS):
+                    for key in STORED_KEYS:
                         media.pop(key, None)
                     changed += 1
 
@@ -163,27 +185,39 @@ def strip_media_dimensions_in_contents(contents):
 
 
 def _dimensions_snapshot(media):
-    return {key: media[key] for key in DIMENSION_KEYS if key in media}
+    return {key: media[key] for key in STORED_KEYS if key in media}
 
 
-def _set_dimensions(media, values):
-    """Make *media*'s stored size exactly *values* (``None``: none)."""
-    for key in DIMENSION_KEYS:
+def _allowed_keys(cue_type):
+    """The stored keys a cue may carry: all of them on a VideoCue, size and
+    MD5 on an AudioCue (D18), all on a flat structure (type unknown)."""
+    if cue_type == 'AudioCue':
+        return STORED_KEYS[len(PIXEL_KEYS):]
+    return STORED_KEYS
+
+
+def _set_dimensions(media, values, cue_type='VideoCue'):
+    """Make *media*'s stored values exactly *values* (``None``: none),
+    keeping only what *cue_type* may carry."""
+    for key in STORED_KEYS:
         media.pop(key, None)
-    for key in DIMENSION_KEYS:  # appended after what is there, i.e. after regions
-        if values and _positive_int(values.get(key)):
-            media[key] = _positive_int(values[key])
+    for key in _allowed_keys(cue_type):  # appended after what is there, i.e. after regions
+        value = _valid(key, (values or {}).get(key))
+        if value:
+            media[key] = value
 
 
 def _fix_one_media(cue_type, media, resolver, dimensions_resolver, stats):
     file_name = media.get('file_name')
     before = _dimensions_snapshot(media)
     try:
-        # 1. Never let an invalid client value reach the schema.
-        for key in DIMENSION_KEYS:
+        # 1. Never let an invalid client value reach the schema, and never
+        #    a pixel size on an AudioCue.
+        allowed = _allowed_keys(cue_type)
+        for key in STORED_KEYS:
             if key in media:
-                value = _positive_int(media[key])
-                if value is None or cue_type == 'AudioCue':
+                value = _valid(key, media[key])
+                if value is None or key not in allowed:
                     del media[key]
                 else:
                     media[key] = value
@@ -201,13 +235,13 @@ def _fix_one_media(cue_type, media, resolver, dimensions_resolver, stats):
             if media.get('duration') != new_value:
                 media['duration'] = new_value
                 stats.replacements += 1
-        # 3. A VideoCue's stored size.
-        if cue_type == 'VideoCue' and dimensions_resolver is not None:
+        # 3. The stored values, from the DB, on Audio and Video cues.
+        if cue_type in ('VideoCue', 'AudioCue') and dimensions_resolver is not None:
             try:
                 values = dimensions_resolver(file_name)
             except KeyError:
                 return
-            _set_dimensions(media, values)
+            _set_dimensions(media, values, cue_type)
     except Exception as e:
         stats.errors.append(file_name)
         Logger.warning(f'media metadata fix skipped for {file_name!r}: '
@@ -527,12 +561,14 @@ class CuemsDBProject(StringSanitizer):
             Logger.warning(f"Could not fix media durations: {e}")
 
     def _dimensions_resolver(self):
-        """The save path's resolver for a VideoCue's stored size (869fat84r).
+        """The save path's resolver for a cue's stored values (869fat84r).
 
-        Reads the ``Media`` row. A row with no pixel size yet (uploaded
-        before the size was stored) is probed once here and the result
-        stored, so old libraries heal as their projects are saved. A failed
-        probe stores nothing and returns ``None``: the engine then probes.
+        Reads the ``Media`` row. A movie or image row with no pixel size yet
+        (uploaded before it was stored) is probed once here, and any row
+        without a file size gets one (a ``stat``), so old libraries heal as
+        their projects are saved. The MD5 is never computed here: hashing a
+        large file would make the save wait; it comes from the upload or the
+        repair tool (D18). A failed probe stores nothing.
         Memoised per save: a file used by several cues is read once.
         """
         cache = {}
@@ -544,20 +580,23 @@ class CuemsDBProject(StringSanitizer):
                 media = Media.get(Media.unix_name == file_name)
             except DoesNotExist:
                 raise KeyError(file_name)
-            values = dimensions_of_row(media)
-            if values is None:
-                path = self._media_file_path(media)
+            values = dimensions_of_row(media) or {}
+            path = self._media_file_path(media)
+            update = {}
+            if 'pixel_width' not in values and media.media_type in ('MOVIE', 'IMAGE'):
                 width, height = probe_dimensions(path)
                 if width and height:
-                    size = media_file_size(path)
-                    Media.update(pixel_width=width, pixel_height=height,
-                                 file_size=size).where(Media.uuid == media.uuid).execute()
-                    values = {'pixel_width': width, 'pixel_height': height}
-                    if size:
-                        values['file_size'] = size
+                    update.update(pixel_width=width, pixel_height=height)
                     Logger.info(f'stored the pixel size of {file_name}: {width}x{height}')
-            cache[file_name] = values
-            return values
+            if 'file_size' not in values or update:
+                size = media_file_size(path)
+                if size:
+                    update['file_size'] = size
+            if update:
+                Media.update(**update).where(Media.uuid == media.uuid).execute()
+                values.update(update)
+            cache[file_name] = values or None
+            return cache[file_name]
 
         return resolve
 

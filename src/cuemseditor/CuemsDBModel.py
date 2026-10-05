@@ -108,8 +108,11 @@ class Media(CuemsBaseModel):
             first video stream, measured at upload like the duration, so the
             engine does not probe the file when it arms a cue (869fat84r);
             ``None`` when unknown.
-        file_size: the file's size in bytes when they were measured; the
-            engine compares it with its own copy to notice a replaced file.
+        file_size: the file's size in bytes; the engine compares it with its
+            own copy to notice a replaced file. Every media type.
+        file_md5: the file's MD5 (lowercase hex), from the upload, which
+            already carries it; identifies the file for integrity checks.
+            Every media type (D18).
     """
 
     uuid = UUIDField(index=True, unique=True, primary_key=True)
@@ -126,6 +129,7 @@ class Media(CuemsBaseModel):
     pixel_width = IntegerField(null=True)
     pixel_height = IntegerField(null=True)
     file_size = IntegerField(null=True)
+    file_md5 = CharField(null=True)
 
     @staticmethod
     def all_fields():
@@ -135,7 +139,7 @@ class Media(CuemsBaseModel):
             List of Peewee field descriptors covering every column on
             ``Media``.
         """
-        return [Media.uuid, Media.name, Media.unix_name, Media.description, Media.created, Media.modified, Media.duration, Media.media_type, Media.in_trash, Media.pixel_width, Media.pixel_height, Media.file_size]
+        return [Media.uuid, Media.name, Media.unix_name, Media.description, Media.created, Media.modified, Media.duration, Media.media_type, Media.in_trash, Media.pixel_width, Media.pixel_height, Media.file_size, Media.file_md5]
 
     def projects(self):
         """Query all ``Project`` records that reference this media file.
@@ -202,7 +206,12 @@ class ProjectMedia(CuemsBaseModel):
 
 
 #: Columns added to ``media`` after databases already existed in the field.
-MEDIA_ADDED_COLUMNS = ('pixel_width', 'pixel_height', 'file_size')
+MEDIA_ADDED_COLUMNS = {
+    'pixel_width': 'INTEGER',
+    'pixel_height': 'INTEGER',
+    'file_size': 'INTEGER',
+    'file_md5': 'VARCHAR(255)',
+}
 
 
 def missing_media_columns(db):
@@ -230,7 +239,8 @@ def ensure_media_columns(db):
     added = []
     for name in missing_media_columns(db):
         db.execute_sql(
-            f'ALTER TABLE "{Media._meta.table_name}" ADD COLUMN "{name}" INTEGER')
+            f'ALTER TABLE "{Media._meta.table_name}" ADD COLUMN "{name}" '
+            f'{MEDIA_ADDED_COLUMNS[name]}')
         Logger.info(f'database migration: added column media.{name}')
         added.append(name)
     return added

@@ -177,7 +177,7 @@ class CuemsDBMedia(StringSanitizer):
         except KeyError as e:
             Logger.error(f'can not read settings {e}')
 
-    def new(self, tmp_file_path, filename):
+    def new(self, tmp_file_path, filename, md5=None):
         """Intake a newly uploaded file: move it into the media library and create sidecars.
 
         Steps performed atomically:
@@ -196,6 +196,8 @@ class CuemsDBMedia(StringSanitizer):
         Args:
             tmp_file_path: Absolute path to the file in the tmp upload directory.
             filename: Sanitised target filename (no directory component).
+            md5: the file's MD5 as the upload verified it (``None`` when the
+                caller has none); stored as ``file_md5`` (869fat84r, D18).
 
         Returns:
             The actual destination filename (may differ from *filename* if
@@ -249,19 +251,21 @@ class CuemsDBMedia(StringSanitizer):
                     Logger.error(f'could not generate {_type} thumbnail or waveform; error : {e}')
                     media_thumbnail_binary_data = None
 
-                # Pixel size + file size of a movie, stored like the duration so
-                # the engine does not probe the file when it arms a cue
-                # (869fat84r). A failed probe stores nothing; never fatal.
-                pixel_width = pixel_height = file_size = None
+                # Stored like the duration (869fat84r): a movie's pixel size, so
+                # the engine does not probe the file when it arms a cue (a
+                # failed probe stores nothing; never fatal); and, for every
+                # media type, the file's size and the MD5 the upload verified.
+                dest_path = self.get_file_path(dest_filename)
+                pixel_width = pixel_height = None
                 if _type is MediaType.MOVIE:
-                    dest_path = self.get_file_path(dest_filename)
                     width, height = probe_dimensions(dest_path)
                     if width and height:
                         pixel_width, pixel_height = width, height
-                        file_size = media_file_size(dest_path)
+                file_size = media_file_size(dest_path)
+                file_md5 = md5.lower() if isinstance(md5, str) and len(md5) == 32 else None
 
                 media_uuid = new_uuid()
-                Media.create(uuid=str(media_uuid), name=dest_filename, unix_name=dest_filename, created=new_datetime(), modified=new_datetime(), duration=media_duration, media_type=_type.name, in_trash=False, pixel_width=pixel_width, pixel_height=pixel_height, file_size=file_size)
+                Media.create(uuid=str(media_uuid), name=dest_filename, unix_name=dest_filename, created=new_datetime(), modified=new_datetime(), duration=media_duration, media_type=_type.name, in_trash=False, pixel_width=pixel_width, pixel_height=pixel_height, file_size=file_size, file_md5=file_md5)
                 Logger.debug(f'new media created: {media_uuid} {dest_filename}')
                 return dest_filename
             except Exception as e:

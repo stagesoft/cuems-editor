@@ -20,8 +20,11 @@ This tool re-probes every media file with the fixed :func:`probe_duration` and:
 - **Pass B** rewrites ``<duration>`` in each project ``script.xml`` from the
   (now-corrected) DB, and each VideoCue's ``pixel_width`` / ``pixel_height`` /
   ``file_size``, reusing the exact walk the editor's save path uses.
-- ``--strip-dimensions`` instead removes those three elements from every
-  project, for a box going back to a cuemsutils that does not know them.
+- Pass A also fills and checks every file's size and MD5 (D18; ``MD5_CHANGED``
+  means the file is not the one its row was made for). ``--no-md5`` skips the
+  hashing, which reads every media file once.
+- ``--strip-dimensions`` instead removes those elements from every project,
+  for a box going back to a cuemsutils that does not know them.
 
 The DB gains the three columns here if the editor has not added them yet. A
 dry-run never writes the DB: on a database that lacks them it reads a migrated
@@ -34,6 +37,7 @@ Invoke as a console script (``cuems-editor-repair-durations``) or module
 (``python -m cuemseditor.repair_durations``).
 """
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -153,36 +157,60 @@ def backup_file(settings, path, backup_dir):
     shutil.copy2(path, dest)
 
 
-def _check_dimensions(media, path, label, report, dim_updates):
-    """Re-probe a movie's pixel size and file size against the DB row."""
-    width, height = probe_dimensions(path)
-    if not (width and height):
-        report.add('DIMS_PROBE_FAILED', label, dirty=True)
-        return
-    new = (width, height, media_file_size(path))
-    old = (media.pixel_width, media.pixel_height, media.file_size)
-    if old == new:
-        report.add('DIMS_OK', label)
-        return
-    if old == (None, None, None):
-        report.add('DIMS_FILLED', f'{label}: -> {new[0]}x{new[1]}, {new[2]} bytes')
-    else:
-        report.add('DIMS_CHANGED', f'{label}: {old[0]}x{old[1]}, {old[2]} bytes -> '
-                                   f'{new[0]}x{new[1]}, {new[2]} bytes')
-    dim_updates.append((media.uuid, new))
+def _file_md5(path):
+    digest = hashlib.md5()
+    with open(path, 'rb') as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _check_stored(media, path, label, args, report, stored_updates):
+    """Re-measure what the row stores about its file (869fat84r): the pixel
+    size of a movie, and the size and MD5 of every file (D18)."""
+    update = {}
+    size = media_file_size(path)
+    if media.media_type == 'MOVIE':
+        width, height = probe_dimensions(path)
+        if not (width and height):
+            report.add('DIMS_PROBE_FAILED', label, dirty=True)
+        else:
+            new = (width, height, size)
+            old = (media.pixel_width, media.pixel_height, media.file_size)
+            if old == new:
+                report.add('DIMS_OK', label)
+            elif old == (None, None, None):
+                report.add('DIMS_FILLED', f'{label}: -> {width}x{height}, {size} bytes')
+            else:
+                report.add('DIMS_CHANGED', f'{label}: {old[0]}x{old[1]}, {old[2]} bytes -> '
+                                           f'{width}x{height}, {size} bytes')
+            if old != new:
+                update.update(pixel_width=width, pixel_height=height)
+    if size and media.file_size != size:
+        update['file_size'] = size
+    if not args.no_md5:
+        md5 = _file_md5(path)
+        if media.file_md5 is None:
+            report.add('MD5_FILLED', f'{label}: {md5}')
+            update['file_md5'] = md5
+        elif media.file_md5 == md5:
+            report.add('MD5_OK', label)
+        else:
+            # The file is not the one the row was made for: replaced, or corrupt.
+            report.add('MD5_CHANGED', f'{label}: {media.file_md5} -> {md5}', dirty=True)
+            update['file_md5'] = md5
+    if update:
+        stored_updates.append((media.uuid, update))
 
 
 def pass_a_db(settings, args, report):
     """Re-probe every media file, report/apply corrected durations and, for
     movies, pixel sizes."""
-    print('\n== Pass A: database media.duration + movie pixel size ==')
+    print('\n== Pass A: database media.duration + stored pixel size, size, MD5 ==')
     updates = []  # (uuid, new_str)
-    dim_updates = []  # (uuid, (width, height, file_size))
+    stored_updates = []  # (uuid, {column: value})
     for media in Media.select():
         label = f'{media.unix_name} ({media.media_type})'
-        if media.media_type == 'IMAGE':
-            report.add('SKIP_IMAGE', label)
-            continue
         if args.skip_trash and media.in_trash:
             report.add('SKIP_TRASH', label)
             continue
@@ -190,8 +218,10 @@ def pass_a_db(settings, args, report):
         if not os.path.exists(path):
             report.add('MISSING', f'{label} -> {path}', dirty=True)
             continue
-        if media.media_type == 'MOVIE':
-            _check_dimensions(media, path, label, report, dim_updates)
+        _check_stored(media, path, label, args, report, stored_updates)
+        if media.media_type == 'IMAGE':
+            report.add('SKIP_IMAGE', label)
+            continue
         try:
             new_tc = probe_duration(path)
         except NotTimeCodeError as e:
@@ -222,14 +252,13 @@ def pass_a_db(settings, args, report):
         print(f'  applied {len(updates)} DB duration update(s)')
     elif updates:
         print(f'  {len(updates)} DB duration update(s) pending (dry-run)')
-    if args.apply and dim_updates:
+    if args.apply and stored_updates:
         with database.atomic():
-            for uuid, (width, height, size) in dim_updates:
-                Media.update(pixel_width=width, pixel_height=height,
-                             file_size=size).where(Media.uuid == uuid).execute()
-        print(f'  applied {len(dim_updates)} DB pixel-size update(s)')
-    elif dim_updates:
-        print(f'  {len(dim_updates)} DB pixel-size update(s) pending (dry-run)')
+            for uuid, update in stored_updates:
+                Media.update(**update).where(Media.uuid == uuid).execute()
+        print(f'  applied {len(stored_updates)} DB pixel-size/size/MD5 update(s)')
+    elif stored_updates:
+        print(f'  {len(stored_updates)} DB pixel-size/size/MD5 update(s) pending (dry-run)')
     return updates
 
 
@@ -309,6 +338,9 @@ def main(argv=None):
     group.add_argument('--db-only', action='store_true', help='run Pass A only')
     group.add_argument('--xml-only', action='store_true', help='run Pass B only')
     parser.add_argument('--skip-trash', action='store_true', help='skip trashed media and projects')
+    parser.add_argument('--no-md5', action='store_true',
+                        help='do not hash the media files (Pass A then fills and checks '
+                             'pixel size and file size only)')
     parser.add_argument('--strip-dimensions', action='store_true',
                         help='remove pixel_width/pixel_height/file_size from every project '
                              '(XML only; the DB keeps them), e.g. before going back to an '
