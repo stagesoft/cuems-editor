@@ -223,7 +223,14 @@ class CuemsUpload(StringSanitizer):
         if projectmedia_list:
             for projectmedia in projectmedia_list:
                 Logger.info("file {} already existed in project: {}".format(filename, projectmedia.project_id))
-                self.server.db.project.update_projects_existed_media(projectmedia.project_id, filename)
+                # One project that cannot be relinked must not stop the others
+                # nor fail the upload: the file is already in the library
+                # (869fat84r D20, Q2).
+                try:
+                    self.server.db.project.update_projects_existed_media(projectmedia.project_id, filename)
+                except Exception as e:
+                    Logger.error(f'could not relink {filename} in project {projectmedia.project_id}: '
+                                 f'{type(e).__name__}: {e}')
         else:
             Logger.debug("file did not exist in any project, no action needed")
 

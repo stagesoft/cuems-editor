@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import json
 import asyncio
 from datetime import datetime, timedelta
@@ -8,6 +11,7 @@ import sys
 from cuemsutils.log import logged, Logger
 
 from cuemseditor.CuemsErrors import EngineError, NonExistentItemError
+from cuemseditor.CuemsMediaRefresh import refresh_media_before_load
 
 TIMEOUT = 25  # TODO: make it configurable, or get from settings
 
@@ -269,8 +273,9 @@ class CuemsWsUser():
     async def project_ready(self, project_uuid, action):
         """Tell the engine to arm the project identified by *project_uuid*.
 
-        Resolves the ``unix_name`` from the DB, builds the ``project_ready``
-        engine command, and awaits the response.
+        Resolves the ``unix_name`` from the DB, corrects the project's media
+        values from the files first (869fat84r D20; never blocks the load),
+        builds the ``project_ready`` engine command, and awaits the response.
 
         Args:
             project_uuid: UUID string of the project to arm.
@@ -279,6 +284,7 @@ class CuemsWsUser():
         Logger.info(f"user {id(self.websocket)} requesting ready project {project_uuid}")
         try:
             unix_name = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.get_project_unix_name, project_uuid)
+            await self._refresh_media(project_uuid)
             action_uuid = str(new_uuid())
             engine_command = {"action": functionNameAsString(), "action_uuid": action_uuid, "value": unix_name}
 
@@ -290,6 +296,32 @@ class CuemsWsUser():
         except Exception as e:
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
+
+    async def _refresh_media(self, project_uuid):
+        """Correct *project_uuid*'s media values before it is loaded (see
+        :mod:`cuemseditor.CuemsMediaRefresh`). Never raises: the load goes on
+        with the stored values whatever happens here."""
+        try:
+            await refresh_media_before_load(self.server.db.project, project_uuid,
+                                            executor=self.server.executor,
+                                            engine_running=self._engine_running)
+        except Exception as e:
+            Logger.error(f'media check before loading {project_uuid} failed: '
+                         f'{type(e).__name__}: {e}; loading with the stored values')
+
+    async def _engine_running(self):
+        """``True`` while a show is running, ``False`` when not, ``None`` when
+        the engine does not answer (its ``project_status``)."""
+        action_uuid = str(new_uuid())
+        command = {"action": "project_status", "action_uuid": action_uuid}
+        try:
+            result = await self.comunicate_with_engine('project_status', action_uuid, command,
+                                                       query_mode=True)
+        except Exception as e:
+            Logger.info(f'project_status before the media check: {e}')
+            return None
+        status = result.get('status') if isinstance(result, dict) else None
+        return {'running': True, 'none': False}.get(status)
 
     async def hw_discovery(self, action):
         """Ask the engine to run a hardware discovery scan.

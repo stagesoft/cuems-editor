@@ -1,9 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+import contextlib
+import glob
 import os
+import threading
+import time
 import traceback
 import shutil
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from peewee import DoesNotExist, IntegrityError, prefetch
 
 from cuemsutils.tools.StringSanitizer import StringSanitizer
@@ -17,7 +23,9 @@ from cuemsutils.log import logged, Logger
 
 from cuemseditor.CuemsErrors import *
 from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia
-from cuemseditor.CuemsDBMedia import media_file_size, probe_dimensions
+from cuemseditor.CuemsDBMedia import (
+    INDEX_STALE, INDEX_VALID, PROBE_FAILED, PROBE_OK, is_indexed_video,
+    probe_dimensions, probe_media, video_index_state)
 
 
 class DurationFixStats:
@@ -343,6 +351,161 @@ def validate_fade_durations_in_contents(contents):
         )
 
 
+# --- A media file that changed after its values were stored (869fat84r D20) --
+#
+# Before a project is loaded (CuemsMediaRefresh) and when a save meets a row
+# with no stored size, the editor checks the files a project uses against
+# their rows, re-probes what changed, corrects the rows, and rewrites the
+# project only when a value present in it is wrong. Design: cuems-RELATIONS
+# Plans/2026-10-01-engine-late-go-media-probe.md §7.
+
+#: Seconds a load (or a save) may spend probing files; the files not reached
+#: wait for the next load or save. A module constant, not a config key.
+REFRESH_DEADLINE_S = 20
+#: Backups kept next to a project file that the editor rewrote on its own.
+BACKUPS_KEPT = 3
+
+# In-memory marks, keyed by (path, size, mtime_ns), for the editor process's
+# lifetime: a file whose duration could not be read is not probed again until
+# it changes (or the editor restarts); a file verified is not re-verified for
+# a stale index alone; an index that could not be rebuilt is not retried.
+_FAILED_MARKS = set()
+_VERIFIED_MARKS = set()
+_INDEX_FAILED_MARKS = set()
+# Per project: files the last load did not reach before its deadline.
+_NOT_REACHED = {}
+
+_PROJECT_LOCKS = {}
+_PROJECT_LOCKS_GUARD = threading.Lock()
+# Files a project copy does not take from its source.
+_NOT_COPIED = ('*.pre-refresh-*', '.*.tmp')
+
+
+def reset_refresh_marks():
+    """Forget every in-memory mark (tests)."""
+    for marks in (_FAILED_MARKS, _VERIFIED_MARKS, _INDEX_FAILED_MARKS, _NOT_REACHED):
+        marks.clear()
+
+
+def _file_key(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (path, st.st_size, st.st_mtime_ns)
+
+
+def mark_index_failed(path):
+    """Do not try to rebuild *path*'s index again until the file changes."""
+    key = _file_key(path)
+    if key:
+        _INDEX_FAILED_MARKS.add(key)
+
+
+def _project_rlock(project_uuid):
+    with _PROJECT_LOCKS_GUARD:
+        return _PROJECT_LOCKS.setdefault(str(project_uuid), threading.RLock())
+
+
+_LIGHT_KEYS = ('file_name', 'duration') + STORED_KEYS
+
+
+def _light_media_blocks(path):
+    """``[(cue_type, {key: text})]`` for every cue ``Media`` of a project
+    file, read without the schema (milliseconds). ``Media`` occurs only in
+    AudioCues and VideoCues, at any CueList depth, and is not namespaced."""
+    root = ET.parse(path).getroot()
+    blocks = []
+    for cue_type in ('AudioCue', 'VideoCue'):
+        for cue in root.iter(cue_type):
+            media = cue.find('Media')
+            if media is None:
+                continue
+            blocks.append((cue_type, {child.tag: (child.text or '').strip()
+                                      for child in media if child.tag in _LIGHT_KEYS}))
+    return blocks
+
+
+def _block_is_wrong(cue_type, values, row):
+    """Would the fill change a value that is PRESENT in this ``Media`` block?
+
+    The same decisions as :func:`_fix_one_media`, on normalised values, so a
+    value read as a string from the file is compared as the int the fill
+    writes. A value that is only missing (a project written before rc15) is
+    not wrong: the next save adds it.
+    """
+    allowed = _allowed_keys(cue_type)
+    for key in STORED_KEYS:          # the fill's step 1 removes these
+        if key in values and (key not in allowed or _valid(key, values[key]) is None):
+            return True
+    if not values.get('file_name') or row is None:   # orphan: the fill stops
+        return False
+    if row.duration and 'duration' in values and values['duration'] != str(row.duration):
+        return True
+    expected = {k: v for k, v in (dimensions_of_row(row) or {}).items() if k in allowed}
+    return any(key in values and _valid(key, values[key]) != expected.get(key)
+               for key in allowed)
+
+
+def _media_rows(blocks):
+    rows = {}
+    for _, values in blocks:
+        name = values.get('file_name')
+        if name and name not in rows:
+            rows[name] = Media.get_or_none(Media.unix_name == name)
+    return rows
+
+
+def _project_needs_rewrite(blocks, rows):
+    return any(_block_is_wrong(cue_type, values, rows.get(values.get('file_name')))
+               for cue_type, values in blocks)
+
+
+class MediaFileCheck:
+    """Step 1's verdict on one file a project uses.
+
+    ``state``: ``unchanged``, ``changed`` (its size differs from the row, or
+    its video index was made for another file), ``legacy`` (the row has no
+    stored size yet), or ``skipped`` (its duration could not be read before
+    and the file has not changed since).
+    """
+
+    def __init__(self, file_name, path, media_type, size, mtime_ns):
+        self.file_name = file_name
+        self.path = path
+        self.media_type = media_type
+        self.size = size
+        self.mtime_ns = mtime_ns
+        self.state = 'unchanged'
+        self.index = None            # None: not a video the sync carries
+        self.needs_index = False
+
+    def __repr__(self):
+        return f'MediaFileCheck({self.file_name!r}, {self.state}, index={self.index})'
+
+
+class RefreshPlan:
+    """What a load must do before the engine is asked (step 1, read-only)."""
+
+    def __init__(self, project_uuid, unix_name):
+        self.project_uuid = str(project_uuid)
+        self.unix_name = unix_name
+        self.checks = []
+        self.needs_rewrite = False
+
+    @property
+    def to_verify(self):
+        return [c for c in self.checks if c.state in ('changed', 'legacy')]
+
+    @property
+    def to_index(self):
+        return [c for c in self.checks if c.needs_index]
+
+    @property
+    def has_work(self):
+        return bool(self.needs_rewrite or self.to_verify or self.to_index)
+
+
 class CuemsDBProject(StringSanitizer):
     """Project CRUD, XML script I/O, and filesystem directory management.
 
@@ -493,48 +656,51 @@ class CuemsDBProject(StringSanitizer):
                 trash.
             Exception: Re-raises any error after rolling back the transaction.
         """
-        try:
-            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
-        except DoesNotExist:
-            raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
-
-        try:
-            del data['CuemsScript']['unix_name']
-        except KeyError:
-            pass
-
-        # SAFETY NET: older frontends send Media.duration as '00:00:00.000';
-        # overwrite from the DB (source of truth) before saving.
-        # As of the media-duration fix, the frontend copies the real duration
-        # from the file_list payload (CuemsDBMedia.list() now carries a
-        # 'duration' key) — remove this net only once ALL deployed frontends
-        # AND editors are >= those versions.
-        self._fix_media_durations(data)
-
-        self._clean_dangling_targets(data)
-
-        # Reject zero/unparseable FadeCue durations BEFORE parsing: the parser
-        # bypasses FadeCue.set_duration, and a saved zero later becomes a
-        # silent no-op at reveal (gradient-motiond drops dur <= 0).
-        validate_fade_durations_in_contents(
-            (data.get('CuemsScript', {}).get('CueList') or {}).get('contents') or []
-        )
-
-        with self.db.atomic() as transaction:
+        # One writer at a time per project, the lock taken before the fill and
+        # before the transaction (869fat84r D20).
+        with self.project_lock(uuid):
             try:
-                project.name = StringSanitizer.sanitize_name(data['CuemsScript']['name'])
-                now = new_datetime()
-                data['CuemsScript']['modified'] = now
-                project.modified = now
-                project.description = StringSanitizer.sanitize_text_size(data['CuemsScript']['description'])
-                project.save()
-                project_object = CuemsParser(data).parse()
-                self.update_media_relations(project, project_object)
-                self.save_xml(project.unix_name, project_object)
-            except Exception as e:
-                Logger.error("error: {} {} trying to update  project, rolling back database update".format(type(e), e))
-                transaction.rollback()
-                raise e
+                project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
+            except DoesNotExist:
+                raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
+
+            try:
+                del data['CuemsScript']['unix_name']
+            except KeyError:
+                pass
+
+            # SAFETY NET: older frontends send Media.duration as '00:00:00.000';
+            # overwrite from the DB (source of truth) before saving.
+            # As of the media-duration fix, the frontend copies the real duration
+            # from the file_list payload (CuemsDBMedia.list() now carries a
+            # 'duration' key) — remove this net only once ALL deployed frontends
+            # AND editors are >= those versions.
+            self._fix_media_durations(data)
+
+            self._clean_dangling_targets(data)
+
+            # Reject zero/unparseable FadeCue durations BEFORE parsing: the parser
+            # bypasses FadeCue.set_duration, and a saved zero later becomes a
+            # silent no-op at reveal (gradient-motiond drops dur <= 0).
+            validate_fade_durations_in_contents(
+                (data.get('CuemsScript', {}).get('CueList') or {}).get('contents') or []
+            )
+
+            with self.db.atomic() as transaction:
+                try:
+                    project.name = StringSanitizer.sanitize_name(data['CuemsScript']['name'])
+                    now = new_datetime()
+                    data['CuemsScript']['modified'] = now
+                    project.modified = now
+                    project.description = StringSanitizer.sanitize_text_size(data['CuemsScript']['description'])
+                    project.save()
+                    project_object = CuemsParser(data).parse()
+                    self.update_media_relations(project, project_object)
+                    self.save_xml(project.unix_name, project_object)
+                except Exception as e:
+                    Logger.error("error: {} {} trying to update  project, rolling back database update".format(type(e), e))
+                    transaction.rollback()
+                    raise e
 
     # SAFETY NET (see update()): overwrite frontend-sent Media durations from
     # the DB. Delegates to the module-level fix_media_durations_in_contents so
@@ -551,8 +717,7 @@ class CuemsDBProject(StringSanitizer):
         try:
             cuelist = data.get('CuemsScript', {}).get('CueList', {})
             contents = cuelist.get('contents', [])
-            stats = fix_media_durations_in_contents(
-                contents, db_duration_resolver, self._dimensions_resolver())
+            stats = fix_media_durations_in_contents(contents, *self._save_resolvers())
             if stats.orphans:
                 Logger.warning(
                     f"media duration fix: {len(stats.orphans)} cue(s) reference "
@@ -560,45 +725,73 @@ class CuemsDBProject(StringSanitizer):
         except Exception as e:
             Logger.warning(f"Could not fix media durations: {e}")
 
-    def _dimensions_resolver(self):
-        """The save path's resolver for a cue's stored values (869fat84r).
+    def _save_resolvers(self):
+        """The save path's resolvers, ``(duration, stored values)``, for one
+        save (869fat84r).
 
-        Reads the ``Media`` row. A movie or image row with no pixel size yet
-        (uploaded before it was stored) is probed once here, and any row
-        without a file size gets one (a ``stat``), so old libraries heal as
-        their projects are saved. The MD5 is never computed here: hashing a
-        large file would make the save wait; it comes from the upload or the
-        repair tool (D18). A failed probe stores nothing.
-        Memoised per save: a file used by several cues is read once.
+        Both read the ``Media`` row. A row with no stored size yet (written
+        before rc15) is first verified, as a load verifies it (D20, plan
+        §7.9.4): one probe for its duration and pixel size, the size written
+        last as the "checked" mark; so the save writes the verified duration.
+        Verification stops at :data:`REFRESH_DEADLINE_S`; the rows not reached
+        are verified at a later save or load. A movie or image row with a size
+        but no pixel size is probed for it once (D13). The MD5 is never
+        computed here: hashing a large file would make the save wait; it comes
+        from the upload or the repair tool (D18). A failed probe stores
+        nothing. Memoised per save: a file used by several cues is read once.
         """
-        cache = {}
+        deadline = time.monotonic() + REFRESH_DEADLINE_S
+        rows = {}
+        values_cache = {}
 
-        def resolve(file_name):
-            if file_name in cache:
-                return cache[file_name]
-            try:
-                media = Media.get(Media.unix_name == file_name)
-            except DoesNotExist:
-                raise KeyError(file_name)
+        def row_of(file_name):
+            if file_name not in rows:
+                try:
+                    media = Media.get(Media.unix_name == file_name)
+                except DoesNotExist:
+                    raise KeyError(file_name)
+                if _positive_int(media.file_size) is None:
+                    media = self._verify_legacy_row(media, deadline)
+                rows[file_name] = media
+            return rows[file_name]
+
+        def duration(file_name):
+            return row_of(file_name).duration
+
+        def stored_values(file_name):
+            if file_name in values_cache:
+                return values_cache[file_name]
+            media = row_of(file_name)
             values = dimensions_of_row(media) or {}
-            path = self._media_file_path(media)
-            update = {}
-            if 'pixel_width' not in values and media.media_type in ('MOVIE', 'IMAGE'):
-                width, height = probe_dimensions(path)
+            if ('pixel_width' not in values and 'file_size' in values
+                    and media.media_type in ('MOVIE', 'IMAGE')):
+                width, height = probe_dimensions(self._media_file_path(media))
                 if width and height:
-                    update.update(pixel_width=width, pixel_height=height)
+                    Media.update(pixel_width=width, pixel_height=height).where(
+                        Media.uuid == media.uuid).execute()
+                    values.update(pixel_width=width, pixel_height=height)
                     Logger.info(f'stored the pixel size of {file_name}: {width}x{height}')
-            if 'file_size' not in values or update:
-                size = media_file_size(path)
-                if size:
-                    update['file_size'] = size
-            if update:
-                Media.update(**update).where(Media.uuid == media.uuid).execute()
-                values.update(update)
-            cache[file_name] = values or None
-            return cache[file_name]
+            values_cache[file_name] = values or None
+            return values_cache[file_name]
 
-        return resolve
+        return duration, stored_values
+
+    def _verify_legacy_row(self, media, deadline):
+        """Verify a row with no stored size, unless the save's deadline has
+        passed, its file is missing or empty, or it failed before and has not
+        changed. Returns the row as it is now."""
+        if time.monotonic() >= deadline:
+            return media
+        path = self._media_file_path(media)
+        key = _file_key(path)
+        if key is None or key[1] <= 0 or key in _FAILED_MARKS:
+            return media
+        try:
+            self._verify_media_row(media, path, legacy=True)
+        except Exception as e:
+            Logger.error(f'could not verify {media.unix_name}: {type(e).__name__}: {e}')
+            return media
+        return Media.get_or_none(Media.uuid == media.uuid) or media
 
     def _media_file_path(self, media):
         """Absolute path of a media file, honouring its trash state."""
@@ -701,34 +894,35 @@ class CuemsDBProject(StringSanitizer):
             Logger.error("error: {} {} ;trying to read  project data".format(type(e), e))
             raise e
 
-        # Same metadata fill and save-time gate as update().
-        self._fix_media_durations(data)
-        validate_fade_durations_in_contents(
-            (data.get('CuemsScript', {}).get('CueList') or {}).get('contents') or []
-        )
+        with self.project_lock(project_uuid):
+            # Same metadata fill and save-time gate as update().
+            self._fix_media_durations(data)
+            validate_fade_durations_in_contents(
+                (data.get('CuemsScript', {}).get('CueList') or {}).get('contents') or []
+            )
 
-        with self.db.atomic() as transaction:
-            try:
-                project = Project.create(uuid=project_uuid, unix_name=unix_name, name=StringSanitizer.sanitize_name(data['CuemsScript']['name']), description=StringSanitizer.sanitize_text_size(data['CuemsScript']['description']), created=now, modified=now)
-                os.mkdir(os.path.join(self.projects_path, unix_name))
-                Logger.debug('data is now: {}'.format(data))
-                project_object = CuemsParser(data).parse()
-                Logger.debug(f'project_object is now: {type(project_object)},{project_object}')
-                self.add_media_relations(project, project_object)
-                self.save_xml(unix_name, project_object)
-                return project_uuid
-            except IntegrityError as e:
-                transaction.rollback()
-                Logger.error("error: {} {} ;name or unix_name already exists, rolling back database insert".format(type(e), e))
-                raise e
-            except Exception as e:
-                transaction.rollback()
-                Logger.error("error: {} {} ;trying to make new  project, rolling back database insert".format(type(e), e))
+            with self.db.atomic() as transaction:
+                try:
+                    project = Project.create(uuid=project_uuid, unix_name=unix_name, name=StringSanitizer.sanitize_name(data['CuemsScript']['name']), description=StringSanitizer.sanitize_text_size(data['CuemsScript']['description']), created=now, modified=now)
+                    os.mkdir(os.path.join(self.projects_path, unix_name))
+                    Logger.debug('data is now: {}'.format(data))
+                    project_object = CuemsParser(data).parse()
+                    Logger.debug(f'project_object is now: {type(project_object)},{project_object}')
+                    self.add_media_relations(project, project_object)
+                    self.save_xml(unix_name, project_object)
+                    return project_uuid
+                except IntegrityError as e:
+                    transaction.rollback()
+                    Logger.error("error: {} {} ;name or unix_name already exists, rolling back database insert".format(type(e), e))
+                    raise e
+                except Exception as e:
+                    transaction.rollback()
+                    Logger.error("error: {} {} ;trying to make new  project, rolling back database insert".format(type(e), e))
 
-                if os.path.exists(os.path.join(self.projects_path, unix_name)):
-                    shutil.rmtree(os.path.join(self.projects_path, unix_name))
+                    if os.path.exists(os.path.join(self.projects_path, unix_name)):
+                        shutil.rmtree(os.path.join(self.projects_path, unix_name))
 
-                raise e
+                    raise e
 
     def _is_name_available(self, unix_name, display_name):
         """Check that both unix_name and display_name are free in the DB
@@ -758,7 +952,8 @@ class CuemsDBProject(StringSanitizer):
         """
         try:
             project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
-            with self.db.atomic() as transaction:
+            # The source's lock first, then the transaction (869fat84r D20).
+            with self.project_lock(uuid), self.db.atomic() as transaction:
                 try:
                     new_unix_name = None
                     project_path = os.path.join(self.projects_path, project.unix_name)
@@ -776,7 +971,8 @@ class CuemsDBProject(StringSanitizer):
                         candidate_unix = f"{base_unix}-{i:03d}"
                         candidate_display = f"{base_display} ({i})"
 
-                    shutil.copytree(project_path, os.path.join(self.projects_path, candidate_unix))
+                    shutil.copytree(project_path, os.path.join(self.projects_path, candidate_unix),
+                                    ignore=shutil.ignore_patterns(*_NOT_COPIED))
                     new_unix_name = candidate_unix
 
                     project.unix_name = new_unix_name
@@ -979,6 +1175,207 @@ class CuemsDBProject(StringSanitizer):
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
 
+    # --- A media file that changed after its values were stored (D20) -------
+
+    @contextlib.contextmanager
+    def project_lock(self, project_uuid):
+        """One writer at a time per project: ``update``, ``new``,
+        ``duplicate``, the load-time correction and the re-upload relink all
+        hold it around their fill and save. Re-entrant. The lock order is:
+        this lock first, then SQLite's write lock, never the other way."""
+        with _project_rlock(project_uuid):
+            yield
+
+    def _script_path(self, unix_name):
+        return os.path.join(self.projects_path, unix_name, self.script_file_name)
+
+    def plan_media_refresh(self, project_uuid):
+        """Step 1 of the load-time check: read and compare, write nothing.
+
+        Reads the project file without the schema, finds each file it uses,
+        compares the file with its row (size; and the ``.idx`` header of a
+        video the sync carries), and decides whether a value present in the
+        project is wrong.
+
+        Raises:
+            NonExistentItemError: no live project with *project_uuid*.
+        """
+        try:
+            project = Project.get((Project.uuid == project_uuid) & (Project.in_trash == False))
+        except DoesNotExist:
+            raise NonExistentItemError("item with uuid: {} does not exist".format(project_uuid))
+        plan = RefreshPlan(project_uuid, project.unix_name)
+        blocks = _light_media_blocks(self._script_path(project.unix_name))
+        rows = _media_rows(blocks)
+        plan.needs_rewrite = _project_needs_rewrite(blocks, rows)
+        for row in rows.values():
+            if row is not None:     # an orphan is skipped; the node's check covers it
+                check = self._check_media_file(row)
+                if check is not None:
+                    plan.checks.append(check)
+        return plan
+
+    def _check_media_file(self, row):
+        path = self._media_file_path(row)
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None             # missing on the controller: the node's check covers it
+        if st.st_size <= 0:
+            return None
+        key = (path, st.st_size, st.st_mtime_ns)
+        check = MediaFileCheck(row.unix_name, path, row.media_type, st.st_size, st.st_mtime_ns)
+        if row.media_type == 'MOVIE' and not row.in_trash and is_indexed_video(row.unix_name):
+            check.index = video_index_state(path)
+        stored = _positive_int(row.file_size)
+        if key in _FAILED_MARKS:
+            check.state = 'skipped'
+        elif stored is None:
+            check.state = 'legacy'
+        elif stored != st.st_size:
+            check.state = 'changed'
+        elif check.index == INDEX_STALE and key not in _VERIFIED_MARKS:
+            check.state = 'changed'     # same size, but not the file the index was made for
+        check.needs_index = (check.index is not None and check.index != INDEX_VALID
+                             and check.state != 'skipped' and key not in _INDEX_FAILED_MARKS)
+        return check
+
+    def verify_media_files(self, plan, deadline, clock=time.monotonic):
+        """Step 2: re-probe each changed or legacy file and correct its row.
+
+        Stops at *deadline* (a *clock* value); the files not reached go first
+        at the next load. One file that fails is logged and skipped.
+
+        Returns:
+            ``dict`` of file-name lists: ``verified``, ``changed``,
+            ``legacy``, ``failed``, ``in_copy``, ``not_reached``.
+        """
+        report = {k: [] for k in ('verified', 'changed', 'legacy', 'failed',
+                                  'in_copy', 'not_reached')}
+        first = _NOT_REACHED.get(plan.project_uuid, [])
+        todo = sorted(plan.to_verify, key=lambda c: c.file_name not in first)
+        for check in todo:
+            if clock() >= deadline:
+                report['not_reached'].append(check.file_name)
+                continue
+            row = Media.get_or_none(Media.unix_name == check.file_name)
+            if row is None:
+                continue
+            try:
+                self._verify_media_row(row, check.path, legacy=(check.state == 'legacy'),
+                                       report=report)
+            except Exception as e:
+                report['failed'].append(check.file_name)
+                Logger.error(f'could not verify {check.file_name}: {type(e).__name__}: {e}')
+        if report['not_reached']:
+            _NOT_REACHED[plan.project_uuid] = report['not_reached']
+            Logger.warning(f'project {plan.unix_name}: {len(report["not_reached"])} media '
+                           f'file(s) not checked before the {REFRESH_DEADLINE_S} s limit, '
+                           f'left for the next load: {report["not_reached"]}')
+        else:
+            _NOT_REACHED.pop(plan.project_uuid, None)
+        return report
+
+    def _verify_media_row(self, row, path, legacy, report=None):
+        """Probe *path* once and make *row* match it. Returns ``True`` when the
+        row was written.
+
+        stat, probe, stat again: a file still being copied is left alone. The
+        values are written in one statement with ``file_size`` (the "checked"
+        mark) in it, and only when the duration was read: a failed duration
+        probe leaves the row untouched, so the next load tries again (after
+        the file changes or the editor restarts). The pixel size is only an
+        arm-time saving: when it cannot be read the engine probes it, so it
+        never holds the row back. A changed file's MD5 is cleared (the repair
+        tool refills it); hashing here would cost seconds.
+        """
+        started = time.monotonic()
+        name = row.unix_name
+        report = report if report is not None else {}
+        try:
+            st1 = os.stat(path)
+            result = probe_media(path)
+            st2 = os.stat(path)
+        except OSError as e:
+            Logger.warning(f'could not check {name}: {e}')
+            return False
+        if (st1.st_size, st1.st_mtime_ns) != (st2.st_size, st2.st_mtime_ns):
+            report.setdefault('in_copy', []).append(name)
+            Logger.warning(f'{name} changed while it was being checked (still being '
+                           'copied?); left for the next load')
+            return False
+        key = (path, st1.st_size, st1.st_mtime_ns)
+        update = {}
+        old_duration = row.duration
+        if row.media_type in ('MOVIE', 'AUDIO'):
+            if result.duration_state != PROBE_OK:
+                _FAILED_MARKS.add(key)
+                report.setdefault('failed', []).append(name)
+                Logger.error(f'could not read the duration of {name} '
+                             f'({result.duration_state}): its stored values are kept '
+                             f'(duration {old_duration}); it is tried again when the file '
+                             'changes or the editor restarts')
+                return False
+            if str(result.duration) != (old_duration or ''):
+                update['duration'] = str(result.duration)
+        if row.media_type in ('MOVIE', 'IMAGE'):
+            if result.picture_state == PROBE_OK:
+                if (row.pixel_width, row.pixel_height) != (result.width, result.height):
+                    update.update(pixel_width=result.width, pixel_height=result.height)
+            else:
+                if result.picture_state == PROBE_FAILED:
+                    Logger.warning(f'could not read the pixel size of {name}: the engine '
+                                   'probes it when it arms the cue')
+                if not legacy and (row.pixel_width or row.pixel_height):
+                    update.update(pixel_width=None, pixel_height=None)
+        if not legacy and row.file_md5:
+            update['file_md5'] = None
+        update['file_size'] = st1.st_size
+        Media.update(**update).where(Media.uuid == row.uuid).execute()
+        _VERIFIED_MARKS.add(key)
+        report.setdefault('verified', []).append(name)
+        report.setdefault('legacy' if legacy else 'changed', []).append(name)
+        ms = int((time.monotonic() - started) * 1000)
+        new_duration = update.get('duration', old_duration)
+        if not legacy:
+            Logger.warning(f'media file {name} changed after its values were stored: size '
+                           f'{row.file_size} -> {st1.st_size}, duration {old_duration} -> '
+                           f'{new_duration}; values corrected ({ms} ms)')
+        elif 'duration' in update:
+            Logger.warning(f'media file {name}: stored duration {old_duration} corrected to '
+                           f'{new_duration} (editors before 2026-07-06 stored some durations '
+                           f'up to 0.9 s short) ({ms} ms)')
+        else:
+            Logger.info(f'media file {name}: stored values verified ({ms} ms)')
+        return True
+
+    def rewrite_project_media(self, project_uuid):
+        """Step 4: bring a project's media values in line with the DB.
+
+        Under the project's lock it re-reads the file and re-runs step 1's
+        comparison; only when a value present in the file is wrong does it run
+        the fill (read-only resolvers) and save, atomically, keeping a backup.
+        The project's ``modified`` date is not touched: that records user
+        edits. Returns ``True`` when the file was rewritten.
+        """
+        with self.project_lock(project_uuid):
+            try:
+                project = Project.get((Project.uuid == project_uuid) & (Project.in_trash == False))
+            except DoesNotExist:
+                return False
+            blocks = _light_media_blocks(self._script_path(project.unix_name))
+            if not _project_needs_rewrite(blocks, _media_rows(blocks)):
+                return False
+            data = self.load_xml(project.unix_name)
+            contents = ((data.get('CuemsScript') or {}).get('CueList') or {}).get('contents') or []
+            stats = fix_media_durations_in_contents(contents, db_duration_resolver,
+                                                    db_dimensions_resolver)
+            self.save_xml(project.unix_name, CuemsParser(data).parse(), backup=True)
+            Logger.info(f'project {project.unix_name}: media values corrected from the '
+                        f'database ({stats.replacements} duration(s), '
+                        f'{stats.dimension_changes} block(s) of stored values)')
+            return True
+
     def add_media_relations(self, project, project_object):
         """Create ``ProjectMedia`` join rows for all media referenced by *project_object*.
 
@@ -1040,7 +1437,25 @@ class CuemsDBProject(StringSanitizer):
             project_uuid: UUID of the project to update.
             media_filename: ``unix_name`` of the re-uploaded media file.
         """
-        project_object = CuemsParser(self.load(project_uuid, include_trash=True)).parse()
+        # A trashed project lives in the trash, not where load() reads; it is
+        # relinked when it is restored and saved (869fat84r D20, Q2).
+        try:
+            project = Project.get(Project.uuid == project_uuid)
+        except DoesNotExist:
+            Logger.warning(f'no project {project_uuid} to relink {media_filename} in')
+            return
+        if project.in_trash:
+            Logger.info(f'project {project.unix_name} is in the trash: not relinking {media_filename}')
+            return
+        with self.project_lock(project_uuid):
+            self._relink_existed_media(project, media_filename)
+        # The re-uploaded row has fresh values; the project still has the old
+        # file's: correct them now, as a load would.
+        self.rewrite_project_media(project_uuid)
+
+    def _relink_existed_media(self, project, media_filename):
+        project_uuid = str(project.uuid)
+        project_object = CuemsParser(self.load(project_uuid)).parse()
         media_dict = project_object.get_media()
         matching_media_dict = dict()
         for cue_uuid, media_object in media_dict.items():
@@ -1062,7 +1477,6 @@ class CuemsDBProject(StringSanitizer):
             except IntegrityError:
                 Logger.warning('error updating media uuid for media filename: {} from project: {}. Media uuid inconsistency detected'.format(media_filename, project_uuid))
             self.deletele_mising_media_references(media_filename)
-            project = Project.get(Project.uuid == project_uuid)
             self.update_media_relations(project, project_object)
         else:
             Logger.warning('no cues found for media filename: {}'.format(media_filename))
@@ -1109,18 +1523,58 @@ class CuemsDBProject(StringSanitizer):
             (ProjectMedia.media_filename == media_filename) & (ProjectMedia.media.is_null())
         ).execute()
 
-    def save_xml(self, unix_name, project_object):
+    def save_xml(self, unix_name, project_object, backup=False):
         """Write *project_object* to ``<projects_path>/<unix_name>/cue_script.xml``.
 
         Validates against ``script.xsd`` before writing; raises if the
         ``CuemsScript`` object fails schema validation.
 
+        The file is replaced atomically (869fat84r D20): written to a
+        temporary file in the same directory, given the old file's mode (the
+        nodes' rsync reads it as ``nobody``), then renamed over it, so a power
+        cut never leaves a truncated project. A directory the editor cannot
+        create files in falls back to writing in place, as before.
+
         Args:
             unix_name: Project directory name.
             project_object: ``CuemsScript`` instance to serialize.
+            backup: keep a timestamped copy of the old file next to it (the
+                last :data:`BACKUPS_KEPT`), for a write the user did not ask for.
         """
-        writer = XmlReaderWriter(schema_name=self.script_schema_name, xmlfile=(os.path.join(self.projects_path, unix_name, self.script_file_name)))
-        writer.write_from_object(project_object)
+        final = self._script_path(unix_name)
+        directory = os.path.dirname(final)
+        tmp = os.path.join(directory, f'.{self.script_file_name}.{os.getpid()}.{os.urandom(4).hex()}.tmp')
+        try:
+            open(tmp, 'xb').close()
+        except OSError as e:
+            Logger.warning(f'cannot create a temporary file in {directory} ({e}); writing '
+                           f'{final} in place')
+            if backup:
+                self._backup_script(final)
+            XmlReaderWriter(schema_name=self.script_schema_name, xmlfile=final).write_from_object(project_object)
+            return
+        try:
+            XmlReaderWriter(schema_name=self.script_schema_name, xmlfile=tmp).write_from_object(project_object)
+            if os.path.exists(final):
+                shutil.copymode(final, tmp)
+                if backup:
+                    self._backup_script(final)
+            os.replace(tmp, final)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+            raise
+
+    def _backup_script(self, final):
+        """Keep a copy of *final* before the editor rewrites it on its own; the
+        last :data:`BACKUPS_KEPT` are kept. A failure only warns."""
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+        try:
+            shutil.copy2(final, f'{final}.pre-refresh-{stamp}')
+            for old in sorted(glob.glob(glob.escape(final) + '.pre-refresh-*'))[:-BACKUPS_KEPT]:
+                os.remove(old)
+        except OSError as e:
+            Logger.warning(f'could not keep a backup of {final}: {e}')
 
     def load_xml(self, unix_name):
         """Read and parse ``<projects_path>/<unix_name>/cue_script.xml``.

@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+import asyncio
+import json
 import os
 import math
 import shutil
@@ -110,6 +112,164 @@ def probe_duration(file_path):
     if seconds < 0:
         raise NotTimeCodeError(f'ffprobe returned negative duration {seconds} for {file_path}')
     return CTimecode(start_seconds=seconds)
+
+
+# --- One probe for a file that changed (869fat84r D20) ----------------------
+
+PROBE_OK = 'ok'
+PROBE_NO_STREAM = 'no_stream'   # an audio file's picture, an image's duration
+PROBE_FAILED = 'failed'         # ffprobe failed, timed out, or said nonsense
+
+
+class MediaProbe:
+    """What one ffprobe call says about a file: its duration and the pixel
+    size of its first video stream, each with a state, so "this file has no
+    picture" is never mistaken for "the probe failed"."""
+
+    def __init__(self, duration=None, duration_state=PROBE_FAILED,
+                 width=None, height=None, picture_state=PROBE_FAILED):
+        self.duration = duration
+        self.duration_state = duration_state
+        self.width = width
+        self.height = height
+        self.picture_state = picture_state
+
+    def __repr__(self):
+        return (f'MediaProbe(duration={self.duration!s} [{self.duration_state}], '
+                f'picture={self.width}x{self.height} [{self.picture_state}])')
+
+
+def probe_media(file_path, timeout=DIMENSIONS_PROBE_TIMEOUT):
+    """Read a file's duration and pixel size with ONE ffprobe call.
+
+    The duration is the same ``format=duration`` field :func:`probe_duration`
+    reads, made into the same ``CTimecode``, so an unchanged file gives the
+    same stored string. Never raises.
+    """
+    cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+           '-show_entries', 'stream=width,height:format=duration',
+           '-of', 'json', file_path]
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        Logger.warning(f'could not probe {file_path}: {e}')
+        return MediaProbe()
+    if result.returncode != 0:
+        Logger.warning(f'could not probe {file_path} (ffprobe rc={result.returncode}): '
+                       f'{result.stderr.decode("utf8", errors="replace").strip()}')
+        return MediaProbe()
+    try:
+        data = json.loads(result.stdout.decode('utf8', errors='replace') or '{}')
+    except ValueError:
+        return MediaProbe()
+    probe = MediaProbe()
+    # Duration.
+    raw = (data.get('format') or {}).get('duration')
+    if raw in (None, '', 'N/A'):
+        probe.duration_state = PROBE_NO_STREAM
+    else:
+        try:
+            seconds = float(raw)
+            if math.isfinite(seconds) and seconds >= 0:
+                probe.duration = CTimecode(start_seconds=seconds)
+                probe.duration_state = PROBE_OK
+        except (TypeError, ValueError, OverflowError):
+            pass
+    # Picture.
+    streams = data.get('streams') or []
+    if not streams:
+        probe.picture_state = PROBE_NO_STREAM
+    else:
+        width, height = streams[0].get('width'), streams[0].get('height')
+        if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+            probe.width, probe.height, probe.picture_state = width, height, PROBE_OK
+    return probe
+
+
+# --- The videocomposer's frame index (869fat84r D20) -------------------------
+
+#: The video extensions whose ``.idx`` the engine's media sync carries to the
+#: nodes (``CuemsDeploy``, ``NodeEngine.ensure_video_indexes``). An index for
+#: any other movie is built by each node at arm, as before.
+INDEXED_VIDEO_EXTENSIONS = ('.mp4', '.mov', '.avi', '.mkv', '.mpg')
+VIDEO_INDEXER = 'cuems-videoindexer'
+VIDEO_INDEXER_TIMEOUT = 300  # seconds, as at upload
+
+INDEX_VALID = 'valid'
+INDEX_STALE = 'stale'       # a readable header for another size or mtime
+INDEX_MISSING = 'missing'   # no index, unreadable, or a format we do not know
+
+# videocomposer VideoFileInput.cpp IdxHeader: magic, uint32 version, int64
+# video_size, int64 video_mtime (whole seconds), int64 frameCount, ...
+_IDX_HEAD = struct.Struct('<4sIqqq')
+_IDX_MAGIC = b'CXID'
+_IDX_VERSION = 1
+
+
+def is_indexed_video(file_name):
+    return os.path.splitext(file_name)[1].lower() in INDEXED_VIDEO_EXTENSIONS
+
+
+def video_index_path(file_path):
+    """``/lib/media/a.mp4`` -> ``/lib/media/indexes/a.mp4.idx`` (the
+    videocomposer's ``getIndexPath``)."""
+    return os.path.join(os.path.dirname(file_path), 'indexes',
+                        os.path.basename(file_path) + '.idx')
+
+
+def video_index_state(file_path):
+    """Is the video's ``.idx`` the one the videocomposer would accept?
+
+    It compares what the videocomposer compares: magic, version, the video's
+    size and mtime (whole seconds), and a positive frame count. Fails closed:
+    anything it cannot read counts as missing.
+    """
+    try:
+        st = os.stat(file_path)
+        with open(video_index_path(file_path), 'rb') as f:
+            head = f.read(_IDX_HEAD.size)
+        magic, version, size, mtime, frames = _IDX_HEAD.unpack(head)
+    except (OSError, struct.error):
+        return INDEX_MISSING
+    if magic != _IDX_MAGIC or version != _IDX_VERSION or frames <= 0:
+        return INDEX_MISSING
+    if size != st.st_size or mtime != st.st_mtime_ns // 1_000_000_000:
+        return INDEX_STALE
+    return INDEX_VALID
+
+
+async def run_video_indexer(file_path, timeout=VIDEO_INDEXER_TIMEOUT):
+    """Run ``cuems-videoindexer`` on *file_path* as an asyncio subprocess (no
+    executor thread is held while it works).
+
+    Success is the exit code AND an index the videocomposer will accept, not
+    "an .idx file exists": a stale one exists too. Never raises.
+    """
+    exe = shutil.which(VIDEO_INDEXER)
+    if not exe:
+        Logger.warning(f'{VIDEO_INDEXER} is not installed: cannot rebuild the index of '
+                       f'{file_path}')
+        return False
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            exe, file_path, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            Logger.warning(f'{VIDEO_INDEXER} timed out after {timeout}s for {file_path}')
+            return False
+    except Exception as e:
+        Logger.warning(f'{VIDEO_INDEXER} could not run for {file_path}: {type(e).__name__}: {e}')
+        return False
+    if proc.returncode == 0 and video_index_state(file_path) == INDEX_VALID:
+        return True
+    tail = (out or b'').decode('utf8', errors='replace').strip()[-300:]
+    Logger.warning(f'{VIDEO_INDEXER} did not produce a valid index for {file_path} '
+                   f'(rc={proc.returncode}): {tail}')
+    return False
 
 
 class MediaType(Enum):

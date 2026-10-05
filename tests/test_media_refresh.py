@@ -23,7 +23,6 @@ Design: cuems-RELATIONS Plans/2026-10-01-engine-late-go-media-probe.md §7.
 """
 import asyncio
 import os
-import re
 import shutil
 import stat
 import struct
