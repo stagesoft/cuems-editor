@@ -21,6 +21,10 @@ and the file size the same way:
 * repair tool: Pass A re-probes video rows and reports differences, Pass B
   writes the values into every project, ``--strip-dimensions`` removes them.
 
+D18: every media type also stores ``file_size`` and ``file_md5`` (the MD5 the
+upload already verified); the pixel size stays VideoCue-only. A save never
+hashes a file; the repair tool fills and checks the MD5.
+
 Design: cuems-RELATIONS Plans/2026-10-01-engine-late-go-media-probe.md §3.2.
 """
 import hashlib
@@ -37,6 +41,9 @@ from cuemseditor.CuemsDBModel import Media, Project, database
 from cuemsutils.xml.XmlReaderWriter import XmlReaderWriter
 
 DIMS = ('pixel_width', 'pixel_height', 'file_size')
+PIXEL = ('pixel_width', 'pixel_height')
+ALL = DIMS + ('file_md5',)          # D18: every column / element this change adds
+MD5 = 'd41d8cd98f00b204e9800998ecf8427e'
 OLD_MEDIA_COLUMNS = ('uuid', 'name', 'unix_name', 'description', 'created',
                      'modified', 'duration', 'media_type', 'in_trash')
 
@@ -71,7 +78,7 @@ def _make_old_schema(db_path):
         con.commit()
     finally:
         con.close()
-    assert not set(DIMS) & set(_columns(db_path))
+    assert not set(ALL) & set(_columns(db_path))
 
 
 def _md5(path):
@@ -114,6 +121,14 @@ def _row(library, unix_name):
     try:
         row = Media.get(Media.unix_name == unix_name)
         return row.pixel_width, row.pixel_height, row.file_size
+    finally:
+        database.close()
+
+
+def _row_md5(library, unix_name):
+    library.connect()
+    try:
+        return Media.get(Media.unix_name == unix_name).file_md5
     finally:
         database.close()
 
@@ -184,11 +199,11 @@ class TestMigration:
         _make_old_schema(library.db_path)
         library.connect()
         try:
-            assert sorted(ensure_media_columns(database)) == sorted(DIMS)
+            assert sorted(ensure_media_columns(database)) == sorted(ALL)
             assert ensure_media_columns(database) == []
         finally:
             database.close()
-        assert set(DIMS) <= set(_columns(library.db_path))
+        assert set(ALL) <= set(_columns(library.db_path))
 
     def test_old_rows_survive_and_an_old_query_still_works(self, library):
         from cuemseditor.CuemsDBModel import ensure_media_columns
@@ -209,7 +224,7 @@ class TestMigration:
         _make_old_schema(library.db_path)
         CuemsDBManager(_settings(library))
         database.close()
-        assert set(DIMS) <= set(_columns(library.db_path))
+        assert set(ALL) <= set(_columns(library.db_path))
 
     def test_a_failing_migration_stops_the_editor(self, library):
         from cuemseditor import CuemsProjectManager as pm
@@ -227,7 +242,7 @@ class TestMigration:
 # ---------------------------------------------------------------------------
 
 class TestUpload:
-    def _upload(self, library, tmp_path, name, content=b'x' * 1234, dims=(3840, 2160)):
+    def _upload(self, library, tmp_path, name, content=b'x' * 1234, dims=(3840, 2160), md5=None):
         from cuemseditor import CuemsDBMedia as m
         settings = _settings(library)
         library.connect()
@@ -239,7 +254,7 @@ class TestUpload:
              mock.patch.object(mgr, 'create_video_thumbnail', return_value=None), \
              mock.patch.object(mgr, 'create_video_index', return_value=None), \
              mock.patch.object(mgr, 'create_audio_waveform', return_value=None):
-            dest = mgr.new(str(upload), name)
+            dest = mgr.new(str(upload), name, md5) if md5 else mgr.new(str(upload), name)
         database.close()
         return dest, probe
 
@@ -248,14 +263,29 @@ class TestUpload:
         probe.assert_called_once()
         assert _row(library, dest) == (3840, 2160, 1234)
 
-    def test_audio_stores_nothing_and_is_not_probed(self, library, tmp_path):
+    def test_audio_stores_its_size_only_and_is_not_probed(self, library, tmp_path):
         dest, probe = self._upload(library, tmp_path, 'song.wav')
         probe.assert_not_called()
-        assert _row(library, dest) == (None, None, None)
+        assert _row(library, dest) == (None, None, 1234)
+
+    def test_the_verified_md5_is_stored_lowercase(self, library, tmp_path):
+        dest, _ = self._upload(library, tmp_path, 'song2.wav', md5=MD5.upper())
+        assert _row_md5(library, dest) == MD5
+
+    def test_without_an_md5_none_is_stored(self, library, tmp_path):
+        dest, _ = self._upload(library, tmp_path, 'clip2.mov')
+        assert _row_md5(library, dest) is None
+
+    def test_the_upload_session_passes_the_verified_md5(self):
+        import inspect
+        from cuemseditor.CuemsUpload import CuemsUpload
+        src = inspect.getsource(CuemsUpload.upload_done)
+        assert 'self.server.db.media.new, self.tmp_file_path(), self.filename, received_md5' in src
+        assert src.index('check_file_integrity') < src.index('db.media.new')
 
     def test_a_failed_probe_stores_nothing_and_the_upload_succeeds(self, library, tmp_path):
         dest, _ = self._upload(library, tmp_path, 'odd.mov', dims=(None, None))
-        assert _row(library, dest) == (None, None, None)
+        assert _row(library, dest) == (None, None, 1234)
 
 
 # ---------------------------------------------------------------------------
@@ -286,28 +316,34 @@ def _cue(cue_type, file_name, **media):
                                  **media}}}
 
 
-STORED = {'pixel_width': 1920, 'pixel_height': 1080, 'file_size': 4096}
+STORED = {'pixel_width': 1920, 'pixel_height': 1080, 'file_size': 4096, 'file_md5': MD5}
 
 
 class TestFill:
-    def test_video_cues_get_the_stored_values_audio_cues_none(self):
+    def test_video_cues_get_everything_audio_cues_size_and_md5(self):
         contents = [_cue('VideoCue', 'file_video.ext'), _cue('AudioCue', 'file.ext')]
         stats = _walk(contents, {'file_video.ext': STORED, 'file.ext': STORED})
         video, audio = contents[0]['VideoCue']['Media'], contents[1]['AudioCue']['Media']
-        assert {k: video[k] for k in DIMS} == STORED
-        assert not set(DIMS) & set(audio)
-        assert stats.dimension_changes == 1
+        assert {k: video[k] for k in ALL} == STORED
+        assert {k: audio[k] for k in ('file_size', 'file_md5')} == {'file_size': 4096, 'file_md5': MD5}
+        assert not set(PIXEL) & set(audio)
+        assert stats.dimension_changes == 2
+
+    def test_an_md5_is_stored_lowercase(self):
+        contents = [_cue('AudioCue', 'file.ext', file_md5=MD5.upper())]
+        _walk(contents, {'file.ext': None}, known=())
+        assert contents[0]['AudioCue']['Media']['file_md5'] == MD5
 
     def test_the_stored_values_replace_what_the_client_sent(self):
         contents = [_cue('VideoCue', 'file_video.ext', pixel_width=10, pixel_height=10,
                          file_size=10)]
         _walk(contents, {'file_video.ext': STORED})
-        assert {k: contents[0]['VideoCue']['Media'][k] for k in DIMS} == STORED
+        assert {k: contents[0]['VideoCue']['Media'][k] for k in ALL} == STORED
 
     def test_unknown_values_remove_what_the_client_sent(self):
         contents = [_cue('VideoCue', 'file_video.ext', pixel_width=10, pixel_height=10)]
         stats = _walk(contents, {'file_video.ext': None})
-        assert not set(DIMS) & set(contents[0]['VideoCue']['Media'])
+        assert not set(ALL) & set(contents[0]['VideoCue']['Media'])
         assert stats.dimension_changes == 1
 
     @pytest.mark.parametrize('bad', [None, 0, -5, 'abc', '', 1.5, True])
@@ -316,22 +352,23 @@ class TestFill:
             _cue('VideoCue', 'orphan.mov', pixel_width=bad),
             _cue('AudioCue', 'file.ext', file_size=bad),
             _cue('VideoCue', 'file_video.ext', pixel_height=bad),
+            _cue('AudioCue', 'orphan.wav', file_md5=bad),
         ]
         _walk(contents, {'file_video.ext': None})
         for item in contents:
             (cue,) = item.values()
-            assert not set(DIMS) & set(cue['Media'])
+            assert not set(ALL) & set(cue['Media'])
 
     def test_an_orphan_keeps_valid_values(self):
         contents = [_cue('VideoCue', 'orphan.mov', **STORED)]
         stats = _walk(contents, {})
-        assert {k: contents[0]['VideoCue']['Media'][k] for k in DIMS} == STORED
+        assert {k: contents[0]['VideoCue']['Media'][k] for k in ALL} == STORED
         assert stats.orphans == ['orphan.mov']
 
     def test_one_bad_cue_does_not_stop_the_others(self):
         contents = [_cue('VideoCue', 'file.ext'), _cue('VideoCue', 'file_video.ext')]
         _walk(contents, {'file.ext': RuntimeError('db'), 'file_video.ext': STORED})
-        assert {k: contents[1]['VideoCue']['Media'][k] for k in DIMS} == STORED
+        assert {k: contents[1]['VideoCue']['Media'][k] for k in ALL} == STORED
 
     def test_nested_cuelists_are_walked(self):
         inner = [_cue('VideoCue', 'file_video.ext')]
@@ -371,7 +408,7 @@ class TestSavePaths:
         audios = [m for t, m in blocks if t == 'AudioCue']
         assert videos and all((m['pixel_width'], m['pixel_height'], m['file_size'])
                               == (3840, 2160, 777) for m in videos)
-        assert audios and all(not set(DIMS) & set(m) for m in audios)
+        assert audios and all(not set(PIXEL) & set(m) for m in audios)
 
     def test_update_probes_and_stores_a_file_without_values(self, library):
         with open(os.path.join(library.root, 'media', 'file_video.ext'), 'wb') as f:
@@ -398,7 +435,7 @@ class TestSavePaths:
         if not database.is_closed():
             database.close()
         videos = [m for t, m in _media_blocks(_script_path(library)) if t == 'VideoCue']
-        assert videos and all(not set(DIMS) & set(m) for m in videos)
+        assert videos and all(not set(PIXEL) & set(m) for m in videos)
 
     def test_new_fills_the_values(self, library):
         _set_row_dims(library, 'file_video.ext', 3840, 2160, 777)
@@ -438,7 +475,7 @@ class TestRepairTool:
         xml_before = _md5(_script_path(library))
         rd.main(['--library-path', library.root])
         assert _md5(library.db_path) == db_before
-        assert not set(DIMS) & set(_columns(library.db_path))
+        assert not set(ALL) & set(_columns(library.db_path))
         assert _md5(_script_path(library)) == xml_before
 
     def test_apply_migrates_fills_the_db_and_the_projects(self, library, canned_probe):
@@ -447,6 +484,7 @@ class TestRepairTool:
             f.write(b'v' * 321)
         rd.main(['--library-path', library.root, '--apply'])
         assert _row(library, 'file_video.ext') == (1920, 1080, 321)
+        assert _row_md5(library, 'file_video.ext') == hashlib.md5(b'v' * 321).hexdigest()
         videos = [m for t, m in _media_blocks(_script_path(library)) if t == 'VideoCue']
         assert videos and all(m['pixel_width'] == 1920 for m in videos)
 
@@ -455,7 +493,7 @@ class TestRepairTool:
         rd.main(['--library-path', library.root, '--apply'])   # durations fixed
         # Wipe the dimensions from the XML only: durations are now correct.
         rd.main(['--library-path', library.root, '--apply', '--strip-dimensions'])
-        assert all(not set(DIMS) & set(m) for _, m in _media_blocks(_script_path(library)))
+        assert all(not set(ALL) & set(m) for _, m in _media_blocks(_script_path(library)))
         rd.main(['--library-path', library.root, '--apply', '--xml-only'])
         videos = [m for t, m in _media_blocks(_script_path(library)) if t == 'VideoCue']
         assert videos and all(m['pixel_width'] == 1920 for m in videos)
@@ -466,9 +504,23 @@ class TestRepairTool:
         out = capsys.readouterr().out
         assert 'DIMS_CHANGED' in out and 'file_video.ext' in out
 
+    def test_pass_a_reports_a_changed_md5_as_dirty(self, library, canned_probe, capsys):
+        library.connect()
+        Media.update(file_md5=MD5).where(Media.unix_name == 'file.ext').execute()
+        database.close()
+        with open(os.path.join(library.root, 'media', 'file.ext'), 'wb') as f:
+            f.write(b'changed')
+        rd.main(['--library-path', library.root])
+        out = capsys.readouterr().out
+        assert 'MD5_CHANGED' in out and 'file.ext' in out
+
+    def test_no_md5_skips_the_hashing(self, library, canned_probe):
+        rd.main(['--library-path', library.root, '--apply', '--no-md5'])
+        assert _row_md5(library, 'file_video.ext') is None
+
     def test_strip_dimensions_touches_only_the_projects(self, library, canned_probe):
         rd.main(['--library-path', library.root, '--apply'])
         rows_before = _row(library, 'file_video.ext')
         rd.main(['--library-path', library.root, '--apply', '--strip-dimensions'])
-        assert all(not set(DIMS) & set(m) for _, m in _media_blocks(_script_path(library)))
+        assert all(not set(ALL) & set(m) for _, m in _media_blocks(_script_path(library)))
         assert _row(library, 'file_video.ext') == rows_before
