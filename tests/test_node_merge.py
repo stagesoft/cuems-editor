@@ -153,14 +153,15 @@ def test_initial_mappings_is_the_mapping_document_alone(server):
         assert not {'online', 'adopted', 'node_role'} & set(item['node'])
 
 
-def test_merged_nodes_carry_the_string_wire_form(server):
+def test_merged_nodes_carry_the_real_boolean_wire_form(server):
+    """cuemsutils 014: ``adopted``/``online`` are JSON booleans, not the string enum."""
     frame = json.loads(server.node_list_message())
     for key in ('nodes', 'new_nodes'):
         for item in frame['value'][key]:
             node = item['node']
             assert isinstance(node['uuid'], str)
-            assert node['adopted'] in ('True', 'False')
-            assert node['online'] in ('True', 'False')
+            assert isinstance(node['adopted'], bool)
+            assert isinstance(node['online'], bool)
             assert 'node_role' in node
             assert 'node_type' not in node
 

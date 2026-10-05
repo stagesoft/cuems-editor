@@ -18,10 +18,12 @@ Sanctioned deltas, applied to the capture by ``apply_project_deltas``:
     ``FadeCue`` and ``CueList`` keep their keys. ``AudioCue`` is not written
     back onto the wire;
 (d) a video cue whose document has no ``<opacity>`` carries ``"opacity": 100``,
-    the ``VideoCue`` default, before ``class`` (spec clarification 2026-10-02).
+    the ``VideoCue`` default, before ``class`` (spec clarification 2026-10-02);
+(e) ``autoload``, ``enabled`` and ``timecode`` are JSON booleans, not the
+    ``"True"``/``"False"`` string enum (cuemsutils 014, xs:boolean).
 
-Everything else is compared as serialised JSON text, so key order and the
-string booleans are part of the check. ``cuems-utils`` golden XML is not.
+Everything else is compared as serialised JSON text, so key order is part of
+the check. ``cuems-utils`` golden XML is not.
 
 The second half pins the save path's duration fix (FR-012, FR-015): a client
 cue keyed ``Cue`` with a zero media duration is accepted and corrected from the
@@ -55,10 +57,19 @@ HARDWARE_OUTPUTS = {'AudioCueOutput': 'audio', 'VideoCueOutput': 'video', 'DmxCu
 
 DB_DURATIONS = {'file.ext': '00:01:23.456', 'file_video.ext': '00:01:30.000'}
 VIDEO_OPACITY_DEFAULT = 100
+BOOL_FIELDS = {'autoload', 'enabled', 'timecode'}
+BOOL_LITERALS = {'True': True, 'False': False}
 
 
 def apply_project_deltas(value):
-    """The captured ``value`` moved through deltas (a)–(d), and nothing else."""
+    """The captured ``value`` moved through deltas (a)–(e), and nothing else."""
+    def move_field(key, item, parent):
+        if parent == 'Media' and key == 'duration' and isinstance(item, str):
+            return {'CTimecode': item}                    # (b)
+        if key in BOOL_FIELDS and item in BOOL_LITERALS:
+            return BOOL_LITERALS[item]                     # (e)
+        return move(item, key)
+
     def move(node, parent=None):
         if isinstance(node, list):
             return [move(item, parent) for item in node]
@@ -67,22 +78,16 @@ def apply_project_deltas(value):
         if len(node) == 1:
             (key, body), = node.items()
             if key in HARDWARE_CUES:                      # (c)
-                moved = {k: move(v, k) for k, v in body.items()}
+                moved = {k: move_field(k, v, key) for k, v in body.items()}
                 if key == 'VideoCue' and 'opacity' not in moved:
                     moved['opacity'] = VIDEO_OPACITY_DEFAULT  # (d)
                 moved['class'] = HARDWARE_CUES[key]
                 return {'Cue': moved}
             if key in HARDWARE_OUTPUTS:                   # (c)
-                moved = {k: move(v, k) for k, v in body.items()}
+                moved = {k: move_field(k, v, key) for k, v in body.items()}
                 moved['class'] = HARDWARE_OUTPUTS[key]
                 return {'CueOutput': moved}
-        moved = {}
-        for key, item in node.items():
-            if parent == 'Media' and key == 'duration' and isinstance(item, str):
-                moved[key] = {'CTimecode': item}          # (b)
-            else:
-                moved[key] = move(item, key)
-        return moved
+        return {key: move_field(key, item, parent) for key, item in node.items()}
 
     value = {k: v for k, v in value.items() if k != SCHEMA_LOCATION}  # (a)
     return move(value)
@@ -151,7 +156,7 @@ def test_open_frame_differs_from_the_capture_by_the_sanctioned_deltas_only(lib):
 
     assert _sha256(lib.script) == before, 'opening a project wrote its script'
     expected = apply_project_deltas(_capture()['value'])
-    # Text comparison: key order and "True"/"False" are part of the contract.
+    # Text comparison: key order is part of the contract.
     assert json.dumps(frame['value']) == json.dumps(expected)
     assert 'doc_version' not in json.dumps(frame)
 
