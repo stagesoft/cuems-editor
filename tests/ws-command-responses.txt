@@ -51,7 +51,7 @@ Commands 													 ->	Responses
 {"action" : "nodelist_modify", "value" : "node_uuid", "modify_action" : "ADD|REMOVE"}		->  {"type": "nodelist_modify", "value": "OK"}
 {"action" : "nodelist_get"}										->  {"type": "node_list", "value": {"nodes": [...], "new_nodes": [...], "nodeconf_available": bool}}
 {"action" : "schema_descriptor", "value" : "script|settings|network_map|project_mappings|project_settings|hardware_outputs"}	->  {"type": "schema_descriptor", "value": {"schema": "name", "types": [{"key": "schema:TypeName", "fields": [{"name", "xsd_type", "required", "repeated", "order", "kind", "enum_values", "default", "repairability"}], "instance": {...}}]}}
-{"action" : "config_save", "value" : {"schema": "name", "document": {...}}}	->  {"type": "config_save", "value": "OK"}		(settings/network_map only: see below)
+{"action" : "config_save", "value" : {"schema": "name", "document": {...}, "project_uuid": "uuid"}}	->  {"type": "config_save", "value": "OK"}		(project_uuid only for project_mappings/project_settings; see below)
 {"action" : "node_status"}										->  {"type": "node_status", "value": {"alive": [...], "adopted": [...], "controller": "uuid", "age_s": 0.1, "missing": [...], "unreachable": [...]}}
 
 
@@ -77,12 +77,17 @@ named schema, rendered as JSON: enums as their values, a default that is a
 factory or absent as null (as "instance" renders it). An unknown name is the
 error frame. config_save refuses "script" (use project_save),
 "hardware_outputs" (no model bindings), anything that is not a schema name,
-and default_mappings.xml. "settings" and "network_map" persist through
+and default_mappings.xml. All four remaining domains persist through
 ConfigManager.from_json (cuemsutils 014 closed 001 upstream report UR-5); a
 successful "network_map" save also runs the all-session node refresh, same as
-nodelist_modify. "project_mappings" / "project_settings" still answer the
-error frame: save_project_mappings / save_project_settings need a
-project_uname this action's wire shape does not carry.
+nodelist_modify. "project_mappings" / "project_settings" additionally need
+"project_uuid" in the inbound value — the document alone does not say which
+project it belongs to — resolved to a unix_name the same way project_ready
+resolves one (CuemsDBProject.get_project_unix_name); missing or unknown is
+the error frame. Pending cuems-utils UR-6, a project's config_save still
+fails the first time regardless: ConfigManager.project_path/conf_path raise
+FileNotFoundError for a file that was never saved before, the ordinary state
+of a project's settings.xml/mappings.xml before an operator customises it.
 
 initial_template (retired at payload version 1)
 

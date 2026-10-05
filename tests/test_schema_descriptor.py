@@ -8,10 +8,12 @@ the library puts in it. ``config_save`` must refuse ``script`` (that is
 ``project_save``), ``hardware_outputs`` (no model bindings), anything that is
 not a ``SchemaName``, and any write of ``default_mappings.xml``.
 
-Persisting ``settings``/``network_map`` goes through ``ConfigManager.from_json``
-(cuemsutils 014, UR-5). ``project_mappings``/``project_settings`` still have
-no project identifier on this action's wire shape, so ``config_save`` of
-either still answers an error.
+All four domains persist through ``ConfigManager.from_json`` (cuemsutils 014,
+UR-5). ``project_mappings``/``project_settings`` additionally need
+``value["project_uuid"]``, resolved to a ``unix_name`` the same way
+``project_ready`` resolves one. Pending cuems-utils UR-6, a project's
+``config_save`` still fails before the target file has ever been saved —
+``ConfigManager.project_path`` raises ``FileNotFoundError`` for it.
 """
 
 import asyncio
@@ -23,6 +25,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from cuemseditor.CuemsErrors import NonExistentItemError
 from cuemseditor.CuemsWsUser import CuemsWsUser
 from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
 
@@ -95,3 +98,76 @@ def test_config_save_of_settings_persists_through_save_settings(user, conf):
     document = manager.to_wire('settings')
     frames = _call(user, user.config_save({'schema': 'settings', 'document': document}, 'config_save'))
     assert frames == [{'type': 'config_save', 'value': 'OK'}]
+
+
+# ─── project_mappings / project_settings need a project_uuid ─────────────
+
+
+@pytest.fixture
+def project_dir(monkeypatch, tmp_path):
+    """Redirects ``ConfigManager.library_path`` at a scratch directory, so the
+    real, unmodified ``project_path`` resolves under it instead of under
+    ``/opt/cuems_library`` (``tests/fixtures/conf/settings.xml``'s value — a
+    real path this sandbox must not touch, and which happens to exist on some
+    dev machines via a sibling repo's fixtures). ``project_path``'s existence
+    check — the thing cuems-utils UR-6 is petitioning to relax — runs for
+    real here, unlike cuems-utils' own ``project_config_manager`` fixture
+    (``tests/integration/test_config_manager_save_accessors.py``), which
+    monkeypatches ``project_path`` itself and so never exercises it.
+    """
+    directory = tmp_path / 'projects' / 'test_project'
+    directory.mkdir(parents=True)
+    monkeypatch.setattr(ConfigManager, 'library_path', property(lambda self: str(tmp_path)))
+    return directory
+
+
+@pytest.mark.parametrize('schema', ['project_mappings', 'project_settings'])
+def test_config_save_of_a_project_schema_needs_a_project_uuid(user, conf, schema):
+    frames = _call(user, user.config_save({'schema': schema, 'document': {}}, 'config_save'))
+    assert frames[0]['type'] == 'error' and frames[0]['action'] == 'config_save'
+    assert 'project_uuid' in frames[0]['value']
+
+
+@pytest.mark.parametrize('schema', ['project_mappings', 'project_settings'])
+def test_config_save_of_a_project_schema_refuses_an_unknown_project(user, conf, schema):
+    user.server.db.project.get_project_unix_name.side_effect = NonExistentItemError(
+        "item with uuid: bogus does not exist")
+    frames = _call(user, user.config_save(
+        {'schema': schema, 'document': {}, 'project_uuid': 'bogus'}, 'config_save'))
+    assert frames[0]['type'] == 'error' and frames[0]['action'] == 'config_save'
+
+
+def test_config_save_of_project_settings_fails_before_the_file_exists_pending_ur6(user, conf, project_dir):
+    """cuems-utils UR-6: project_path raises for a project's first config_save.
+
+    This project_uname resolves and the document decodes cleanly — the only
+    thing standing between this and a real save is the existence check this
+    gate is petitioning cuems-utils to relax. When UR-6 lands, this test
+    should be replaced by one that asserts the save succeeds.
+    """
+    user.server.db.project.get_project_unix_name.return_value = 'test_project'
+    document = {'setting': [{'name': 'example', 'value': '1'}]}
+    frames = _call(user, user.config_save(
+        {'schema': 'project_settings', 'document': document, 'project_uuid': 'irrelevant-here'}, 'config_save'))
+    assert frames[0]['type'] == 'error' and frames[0]['action'] == 'config_save'
+    assert 'not found' in frames[0]['value']
+
+
+def test_config_save_of_project_settings_persists_once_the_file_exists(user, conf, project_dir):
+    (project_dir / 'settings.xml').write_text(
+        "<?xml version='1.0' encoding='utf-8'?>"
+        '<cms:CuemsProjectSettings xmlns:cms="https://stagelab.coop/cuems/" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        'xsi:schemaLocation="https://stagelab.coop/cuems/ project_settings.xsd">'
+        '<setting><name>previous</name><value>0</value></setting>'
+        '</cms:CuemsProjectSettings>', encoding='utf-8')
+    user.server.db.project.get_project_unix_name.return_value = 'test_project'
+    document = {'setting': [{'name': 'example', 'value': '1'}]}
+
+    frames = _call(user, user.config_save(
+        {'schema': 'project_settings', 'document': document, 'project_uuid': 'some-uuid'}, 'config_save'))
+
+    assert frames == [{'type': 'config_save', 'value': 'OK'}]
+    saved = (project_dir / 'settings.xml').read_text(encoding='utf-8')
+    assert '<name>example</name>' in saved and '<value>1</value>' in saved
+    assert 'previous' not in saved

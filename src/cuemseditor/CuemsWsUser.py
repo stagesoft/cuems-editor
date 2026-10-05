@@ -110,22 +110,29 @@ CONFIG_SAVE_REFUSED = {
     'hardware_outputs': 'hardware_outputs is reserved and has no model bindings',
 }
 
-# The two system-wide domains config_save can persist, and the file each
-# writes through ConfigManager.conf_path. project_mappings/project_settings
-# are not here: ConfigManager.from_json builds them too, but save() needs a
-# project_uname and config_save's wire shape ({"schema", "document"}) carries
-# no project identifier.
-CONFIG_SAVE_FILENAMES = {
-    'settings': 'settings.xml',
-    'network_map': 'network_map.xml',
+# The four domains config_save can persist, the file each writes, and
+# whether that file is system-wide (ConfigManager.conf_path) or per-project
+# (ConfigManager.project_path, which needs the unix_name config_save's
+# "project_uuid" resolves). cuems-utils UR-6: project_path/conf_path raise
+# FileNotFoundError when the target has never been saved before, which is
+# the ordinary state for a project's settings.xml/mappings.xml before an
+# operator customises them — so a project's *first* config_save still fails
+# until that is fixed upstream.
+CONFIG_SAVE_TARGETS = {
+    'settings': ('conf', 'settings.xml'),
+    'network_map': ('conf', 'network_map.xml'),
+    'project_mappings': ('project', 'mappings.xml'),
+    'project_settings': ('project', 'settings.xml'),
 }
 
 
-def _save_config_document(name, document):
+def _save_config_document(name, document, project_uname=None):
     """Build and write one ``config_save`` document. Runs in the executor."""
     manager = ConfigManager(load_all=False)
     built = manager.from_json(name, document)
-    built.save(manager.conf_path(CONFIG_SAVE_FILENAMES[name.value]))
+    kind, file_name = CONFIG_SAVE_TARGETS[name.value]
+    path = manager.conf_path(file_name) if kind == 'conf' else manager.project_path(project_uname, file_name)
+    built.save(path)
 
 
 def load_failed_value(project_uuid, error):
@@ -633,18 +640,25 @@ class CuemsWsUser():
         model bindings), and anything that is not a ``SchemaName`` —
         ``default_mappings.xml`` included, which is not a target.
 
-        ``settings`` and ``network_map`` are built with
-        ``ConfigManager.from_json`` (cuemsutils 014, UR-5) and written with the
-        object's own ``save(path)`` — the same body
-        ``save_settings``/``save_network_map`` delegate to. A successful
-        ``network_map`` save also refreshes all sessions, same as
-        ``nodelist_modify``. ``project_mappings``/``project_settings`` build the
-        same way but have nowhere documented to land: ``save_project_mappings``/
-        ``save_project_settings`` need a ``project_uname`` this action's wire
-        shape does not carry, so those two still answer with an error.
+        All four domains are built with ``ConfigManager.from_json`` (cuemsutils
+        014, UR-5) and written with the object's own ``save(path)`` — the same
+        body ``save_settings``/``save_network_map``/``save_project_mappings``/
+        ``save_project_settings`` delegate to. ``project_mappings`` and
+        ``project_settings`` additionally need ``value["project_uuid"]``, since
+        the document alone does not say which project it belongs to; it is
+        resolved to a ``unix_name`` the same way ``project_ready`` does
+        (``CuemsDBProject.get_project_unix_name``). A successful ``network_map``
+        save also refreshes all sessions, same as ``nodelist_modify``.
+
+        Pending cuems-utils UR-6, a project's config_save still fails the first
+        time: ``ConfigManager.project_path``/``conf_path`` raise
+        ``FileNotFoundError`` for a file that has never been saved before,
+        which is the ordinary state of a project's ``settings.xml``/
+        ``mappings.xml`` before an operator customises them.
 
         Args:
-            value: ``{"schema": <SchemaName value>, "document": {...}}``.
+            value: ``{"schema": <SchemaName value>, "document": {...}}``, plus
+                ``"project_uuid"`` for ``project_mappings``/``project_settings``.
             action: Action name from the WebSocket frame.
         """
         schema = value.get('schema') if isinstance(value, dict) else None
@@ -656,16 +670,28 @@ class CuemsWsUser():
         if name.value in CONFIG_SAVE_REFUSED:
             await self.notify_error_to_user(f"config_save: {CONFIG_SAVE_REFUSED[name.value]}", action=action)
             return
-        if name.value not in CONFIG_SAVE_FILENAMES:
-            await self.notify_error_to_user(
-                f"config_save of {name.value} is not available: it needs a project identifier "
-                f"this action does not carry", action=action)
+        if name.value not in CONFIG_SAVE_TARGETS:
+            await self.notify_error_to_user(f"config_save: {name.value} is not a target", action=action)
             return
         document = value.get('document') if isinstance(value, dict) else None
+        project_uname = None
+        if CONFIG_SAVE_TARGETS[name.value][0] == 'project':
+            project_uuid = value.get('project_uuid') if isinstance(value, dict) else None
+            if not project_uuid or not isinstance(project_uuid, str):
+                await self.notify_error_to_user(
+                    f"config_save of {name.value} needs a project_uuid", action=action)
+                return
+            try:
+                project_uname = await self.server.event_loop.run_in_executor(
+                    self.server.executor, self.server.db.project.get_project_unix_name, project_uuid)
+            except Exception as e:
+                Logger.error(f"error: {type(e)} {e}")
+                await self.notify_error_to_user(str(e), action=action)
+                return
         try:
             await self.server.event_loop.run_in_executor(
                 self.server.executor,
-                functools.partial(_save_config_document, name, document))
+                functools.partial(_save_config_document, name, document, project_uname))
         except Exception as e:
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), action=action)
