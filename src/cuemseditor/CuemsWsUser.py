@@ -110,6 +110,23 @@ CONFIG_SAVE_REFUSED = {
     'hardware_outputs': 'hardware_outputs is reserved and has no model bindings',
 }
 
+# The two system-wide domains config_save can persist, and the file each
+# writes through ConfigManager.conf_path. project_mappings/project_settings
+# are not here: ConfigManager.from_json builds them too, but save() needs a
+# project_uname and config_save's wire shape ({"schema", "document"}) carries
+# no project identifier.
+CONFIG_SAVE_FILENAMES = {
+    'settings': 'settings.xml',
+    'network_map': 'network_map.xml',
+}
+
+
+def _save_config_document(name, document):
+    """Build and write one ``config_save`` document. Runs in the executor."""
+    manager = ConfigManager(load_all=False)
+    built = manager.from_json(name, document)
+    built.save(manager.conf_path(CONFIG_SAVE_FILENAMES[name.value]))
+
 
 def load_failed_value(project_uuid, error):
     """The ``value`` of ``document_load_failed`` for a :class:`DocumentLoadFailed`."""
@@ -616,13 +633,15 @@ class CuemsWsUser():
         model bindings), and anything that is not a ``SchemaName`` —
         ``default_mappings.xml`` included, which is not a target.
 
-        The four config domains would be written through
-        ``ConfigManager.save_settings`` / ``save_network_map`` /
-        ``save_project_mappings`` / ``save_project_settings``. Those save the
-        object a ``ConfigManager`` holds, and cuemsutils offers no public way to
-        build that object from a client's JSON document. The editor does not
-        hand-build one or write XML itself, so this answers with an error
-        naming that gap (upstream report UR-5) until the library has the call.
+        ``settings`` and ``network_map`` are built with
+        ``ConfigManager.from_json`` (cuemsutils 014, UR-5) and written with the
+        object's own ``save(path)`` — the same body
+        ``save_settings``/``save_network_map`` delegate to. A successful
+        ``network_map`` save also refreshes all sessions, same as
+        ``nodelist_modify``. ``project_mappings``/``project_settings`` build the
+        same way but have nowhere documented to land: ``save_project_mappings``/
+        ``save_project_settings`` need a ``project_uname`` this action's wire
+        shape does not carry, so those two still answer with an error.
 
         Args:
             value: ``{"schema": <SchemaName value>, "document": {...}}``.
@@ -637,10 +656,26 @@ class CuemsWsUser():
         if name.value in CONFIG_SAVE_REFUSED:
             await self.notify_error_to_user(f"config_save: {CONFIG_SAVE_REFUSED[name.value]}", action=action)
             return
-        await self.notify_error_to_user(
-            f"config_save of {name.value} is not available: cuemsutils has no public way to "
-            f"build a {name.value} document from JSON (cuems-editor 001 upstream report UR-5)",
-            action=action)
+        if name.value not in CONFIG_SAVE_FILENAMES:
+            await self.notify_error_to_user(
+                f"config_save of {name.value} is not available: it needs a project identifier "
+                f"this action does not carry", action=action)
+            return
+        document = value.get('document') if isinstance(value, dict) else None
+        try:
+            await self.server.event_loop.run_in_executor(
+                self.server.executor,
+                functools.partial(_save_config_document, name, document))
+        except Exception as e:
+            Logger.error(f"error: {type(e)} {e}")
+            await self.notify_error_to_user(str(e), action=action)
+            return
+        await self.outgoing.put(json.dumps({"type": "config_save", "value": "OK"}))
+        if name is SchemaName.NETWORK_MAP:
+            try:
+                await self.server.notify_all_node_list_update()
+            except Exception as e:
+                Logger.warning(f'Failed to reload and broadcast node list update after config_save: {e}')
 
     async def node_status(self, action):
         """Ask the engine which nodes are answering right now.

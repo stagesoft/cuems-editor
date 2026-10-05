@@ -51,7 +51,7 @@ Commands 													 ->	Responses
 {"action" : "nodelist_modify", "value" : "node_uuid", "modify_action" : "ADD|REMOVE"}		->  {"type": "nodelist_modify", "value": "OK"}
 {"action" : "nodelist_get"}										->  {"type": "node_list", "value": {"nodes": [...], "new_nodes": [...], "nodeconf_available": bool}}
 {"action" : "schema_descriptor", "value" : "script|settings|network_map|project_mappings|project_settings|hardware_outputs"}	->  {"type": "schema_descriptor", "value": {"schema": "name", "types": [{"key": "schema:TypeName", "fields": [{"name", "xsd_type", "required", "repeated", "order", "kind", "enum_values", "default", "repairability"}], "instance": {...}}]}}
-{"action" : "config_save", "value" : {"schema": "name", "document": {...}}}	->  {"type": "config_save", "value": "OK"}		(not yet: see below)
+{"action" : "config_save", "value" : {"schema": "name", "document": {...}}}	->  {"type": "config_save", "value": "OK"}		(settings/network_map only: see below)
 {"action" : "node_status"}										->  {"type": "node_status", "value": {"alive": [...], "adopted": [...], "controller": "uuid", "age_s": 0.1, "missing": [...], "unreachable": [...]}}
 
 
@@ -77,9 +77,12 @@ named schema, rendered as JSON: enums as their values, a default that is a
 factory or absent as null (as "instance" renders it). An unknown name is the
 error frame. config_save refuses "script" (use project_save),
 "hardware_outputs" (no model bindings), anything that is not a schema name,
-and default_mappings.xml. For settings / network_map / project_mappings /
-project_settings it currently answers the error frame too: cuemsutils has no
-public way to build those documents from JSON yet (001 upstream report UR-5).
+and default_mappings.xml. "settings" and "network_map" persist through
+ConfigManager.from_json (cuemsutils 014 closed 001 upstream report UR-5); a
+successful "network_map" save also runs the all-session node refresh, same as
+nodelist_modify. "project_mappings" / "project_settings" still answer the
+error frame: save_project_mappings / save_project_settings need a
+project_uname this action's wire shape does not carry.
 
 initial_template (retired at payload version 1)
 

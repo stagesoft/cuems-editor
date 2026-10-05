@@ -432,8 +432,9 @@ class CuemsWsServer():
         A node the mappings already know keeps every key of its mapping node,
         output blocks included and copied through whatever their ``class``,
         and takes ``NODE_STATUS_FIELDS`` from the node's ``to_wire()``: string
-        ``uuid``, ``"True"`` / ``"False"`` for ``adopted`` and ``online``,
-        ``node_role``. A node the mappings do not know is its own ``to_wire()``.
+        ``uuid``, real booleans for ``adopted`` and ``online`` (cuemsutils 014,
+        xs:boolean), ``node_role``. A node the mappings do not know is its own
+        ``to_wire()``.
 
         Args:
             existing_nodes: ``[{"node": <mapping node, wire form>}, ...]``.

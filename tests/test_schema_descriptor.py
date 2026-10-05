@@ -8,10 +8,10 @@ the library puts in it. ``config_save`` must refuse ``script`` (that is
 ``project_save``), ``hardware_outputs`` (no model bindings), anything that is
 not a ``SchemaName``, and any write of ``default_mappings.xml``.
 
-Persisting the four config domains is ``xfail(strict=True)``: cuemsutils has
-no public way to turn a client document into the object ``save_*`` writes
-(upstream report UR-5). When it gains one this test starts passing and the
-marker must go.
+Persisting ``settings``/``network_map`` goes through ``ConfigManager.from_json``
+(cuemsutils 014, UR-5). ``project_mappings``/``project_settings`` still have
+no project identifier on this action's wire shape, so ``config_save`` of
+either still answers an error.
 """
 
 import asyncio
@@ -90,7 +90,6 @@ def test_config_save_refuses(user, conf, schema):
     assert {p.name: p.read_bytes() for p in conf.iterdir()} == before
 
 
-@pytest.mark.xfail(strict=True, reason='UR-5: no public JSON ingestion for config documents in cuemsutils')
 def test_config_save_of_settings_persists_through_save_settings(user, conf):
     manager = ConfigManager(load_all=False)
     document = manager.to_wire('settings')
