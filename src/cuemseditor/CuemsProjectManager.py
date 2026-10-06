@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 from peewee import *
 import os
 from random import randint
@@ -10,7 +13,7 @@ from cuemsutils.log import logged, Logger
 
 from cuemseditor.CuemsDBMedia import CuemsDBMedia
 from cuemseditor.CuemsDBProject import CuemsDBProject
-from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia, database
+from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia, database, ensure_media_columns
 from cuemseditor.CuemsErrors import *
 
 
@@ -86,5 +89,12 @@ class CuemsDBManager():
                 Logger.warning(f'table "{model._meta.table_name}" does not exist, creating')  # pylint: disable=maybe-no-member
         # safe=True uses IF NOT EXIST on table create
         database.create_tables(self.models, safe=True)
+        # create_tables never adds a column to an existing table (869fat84r).
+        try:
+            ensure_media_columns(database)
+        except Exception as e:
+            Logger.error(f'database migration failed for {self.db_path}: {e}; '
+                         'the editor cannot run on this database')
+            raise
         self.project = CuemsDBProject(self.settings_dict, database)
         self.media = CuemsDBMedia(self.settings_dict, database)
