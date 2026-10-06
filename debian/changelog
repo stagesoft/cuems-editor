@@ -1,3 +1,16 @@
+cuems-editor (0.1.0rc1-4) bookworm; urgency=medium
+
+  * Merge rc1 into debian/bookworm (869fat84r): store each media file's
+    pixel size (video), size and MD5 at upload and write them into every
+    cue of a project on save (new, update, duplicate); legacy rows are
+    measured once at save, never hashed. At load and save, check the
+    project's media against the library and send a media_check_report to
+    the project's sessions; the project file is never rewritten at load.
+  * debian/control: require cuems-utils (>= 0.1.0rc15). An older utils
+    schema rejects every save of a project with a video cue.
+
+ -- Ion Reguera <ion@stagelab.coop>  Tue, 06 Oct 2026 20:18:57 +0200
+
 cuems-editor (0.1.0rc1-3) bookworm; urgency=medium
 
   * Merge rc1 into debian/bookworm (43 commits since 0.1.0rc1-2, 2026-03-
