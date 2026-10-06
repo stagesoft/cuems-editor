@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 Source: cuems-editor
 Section: python
 Priority: optional
@@ -15,7 +18,7 @@ Package: cuems-editor
 Architecture: all
 Depends: ${misc:Depends},
          ${python3:Depends},
-         cuems-utils (>= 0.1.0rc10),
+         cuems-utils (>= 0.1.0rc15),
          cuems-common (>= 1.0.0),
          python3 (>= 3.11)
 Description: CUEMS Editor - Collaborative Universal Edit Management System
