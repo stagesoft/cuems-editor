@@ -1,3 +1,18 @@
+cuems-editor (0.1.0rc1-5) bookworm; urgency=medium
+
+  * Save gate (869fej07m): new / update refuse a project in which an audio
+    or video cue arrives without a usable media block (no Media, null, an
+    empty object, no or empty file_name, no id) or names a file the library
+    has never seen, before anything is written - project row, ProjectMedia
+    rows and the XML stay untouched. A file in the media trash still passes
+    (it can be restored). The WS error carries the plain message naming the
+    cue instead of "<class 'KeyError'> 'file_name'". Closes the path by
+    which a save from the edit page silently emptied a cue's <Media/>.
+    No new cuems-utils floor (>= 0.1.0rc15 stays; rc16 adds the matching
+    guards in the library itself).
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 08 Oct 2026 21:15:57 +0200
+
 cuems-editor (0.1.0rc1-4) bookworm; urgency=medium
 
   * Merge rc1 into debian/bookworm (869fat84r): store each media file's
