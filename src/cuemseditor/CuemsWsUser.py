@@ -569,6 +569,18 @@ class CuemsWsUser():
             Logger.error("error: {} {}".format(type(e), e))
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
 
+    @staticmethod
+    def _error_text(e):
+        """What the client shows for a failed save.
+
+        A ``ValueError`` is a save-time gate speaking to the operator (fade
+        duration, media cue without a file): forward its text as is. Anything
+        else keeps the ``<class '…'>`` prefix the UI has always shown.
+        """
+        if isinstance(e, ValueError):
+            return str(e)
+        return str(type(e)) + str(e)
+
     async def received_new_project(self, data, action, unix_name):
         """Create a new project and notify the client and other users.
 
@@ -588,7 +600,7 @@ class CuemsWsUser():
             await self.server.notify_others_same_project(self, "project_modified", project_uuid)
         except Exception as e:
             Logger.error("error: {} {}".format(type(e), e))
-            await self.notify_error_to_user((str(type(e)) + str(e)), action="project_new")
+            await self.notify_error_to_user(self._error_text(e), action="project_new")
 
     async def received_project(self, data, action):
         """Save an edited project and notify the client and other users.
@@ -609,7 +621,7 @@ class CuemsWsUser():
             self._in_background(self._report_after_save(project_uuid))
         except Exception as e:
             Logger.error("error: {} {}".format(type(e), e))
-            await self.notify_error_to_user((str(type(e)) + str(e)), uuid=project_uuid, action=action)
+            await self.notify_error_to_user(self._error_text(e), uuid=project_uuid, action=action)
 
     async def list_project_trash(self, action):
         """Send the list of trashed projects to the client.
