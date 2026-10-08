@@ -24,6 +24,8 @@ branch and bootstrap, a constitution step (this repository has none), the `/spec
 | [`02-consumer-audit-findings.md`](02-consumer-audit-findings.md) | C2, C3, C4, C5 and the minor half of C11 | Five of the audit's twelve findings are this repository's. That is not an accident — see below |
 | [`03-migration-inventory.md`](03-migration-inventory.md) | Every call site, measured 2026-09-25 against the base branch with `rc1` in brackets | Your working inventory. **§8a is scope no upstream document carries** |
 | [`04-wire-contract.md`](04-wire-contract.md) | The `project_load` payload contract, as amended | **The highest-risk artefact in this repository.** Read it before writing a line of the spec |
+| [`FROM-cuems-frontend-001.md`](FROM-cuems-frontend-001.md) | Findings `cuems-frontend` 001 addressed to this editor (2026-10-07) | Input to feature 002 |
+| [`002-specify-prompt.md`](002-specify-prompt.md) | The prompt that starts feature 002 (config round trip and the frontend round's fixes) | Paste it into a new session on `feat/xml-refactor` |
 
 ## The one thing to understand before starting
 
