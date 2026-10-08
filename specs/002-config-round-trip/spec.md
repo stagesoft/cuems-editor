@@ -64,8 +64,10 @@ These were decided before this spec. `/speckit-clarify` does not reopen them.
   change, an IP change, or any adopt or un-adopt. The fields have these owners:
   - `uuid`, `name`, `node_role`, `ip`, `online`: discovery, which overwrites them on every pass;
   - `adopted`: nodeconf, through `nodelist_modify` ADD/REMOVE;
-  - `alias`: the operator, per the XSD comment. `role_id` and `hostname` are also the operator's
-    during the transition. Nodeconf publishes `alias` over mDNS.
+  - `role_id` and `hostname`: nodeconf (`cuems-common` `docs/node-identity-contract.md:35-37`).
+    **Not editable from the UI**, by any action (M7);
+  - `alias`: the operator (UI), and the **only** node field the operator owns. Nodeconf publishes
+    `alias` over mDNS.
 
   So `config_save` stops accepting `network_map`. Reading it through `config_load` is fine. Alias
   edits go to nodeconf over IPC (US4).
@@ -126,14 +128,17 @@ and that "a correction is a new file that names the one it supersedes"
 (`evidence/README.md:8-10`). Editing the script would also falsify the record of what produced the
 committed bytes. FR-030 decides accordingly.
 
-**M7. The ownership of `role_id` / `hostname` has two statements.** S5 (from the prompt) and
-CLAUDE.md say that operators hand-populate `role_id`, `alias` and `hostname` during the nodeconf
-transition. `cuems-common` `docs/node-identity-contract.md:35-37`, which is the contract, gives
-`role_id` and `hostname` to **nodeconf** and only `alias` to the operator (UI). `cuems-utils`
-requirements doc §0a G4 follows the contract. The two agree on what this feature needs: the UI edits
-`alias` and nothing else. So `node_set` carries `alias` only (FR-024). The hand-population note in
-CLAUDE.md describes how a transition is done, not who owns a field, and this feature leaves it
-alone.
+**M7. `role_id` and `hostname` are nodeconf's, and are not editable — settled 2026-10-08.** The
+prompt's S5 and CLAUDE.md said operators hand-populate `role_id`, `alias` and `hostname` during the
+nodeconf transition. `cuems-common` `docs/node-identity-contract.md:35-37`, which is the contract,
+gives `role_id` and `hostname` to **nodeconf** and only `alias` to the operator (UI). `cuems-utils`
+requirements doc §0a G4 follows the contract, and S5 above has been corrected to match it. So:
+- `node_set` carries `alias` only (FR-024);
+- a request naming `role_id` or `hostname` is refused before anything is sent (US4 scenario 4);
+- `config_save` cannot reach them either, because it refuses `network_map` (FR-019).
+
+The hand-population note in CLAUDE.md describes how a manual transition is done on the file, not
+who owns a field through the UI. This feature leaves it alone.
 
 **M8. G4 has two owners.** `cuems-utils` §0a G4 (added 2026-10-08) asks the library for
 `NodeIndex.set_alias(node_uuid, alias) -> bool`, an in-place setter, because nodeconf delegates
@@ -297,8 +302,8 @@ written.
 3. **Given** nodeconf answers with an error, **When** it is relayed, **Then** the error text reaches
    the client unchanged, with no retry (as 001 FR-036 does for `nodelist_modify`).
 4. **Given** a `node_set` that tries to change a field discovery or nodeconf owns (`name`,
-   `node_role`, `ip`, `online`, `adopted`, or the uuid itself), **Then** the editor refuses it before
-   sending anything.
+   `node_role`, `ip`, `online`, `adopted`, `role_id`, `hostname`, or the uuid itself), **Then** the
+   editor refuses it before sending anything, and the refusal names the field.
 
 ---
 
@@ -497,8 +502,9 @@ there. Run the tip capture script and confirm it produces a `project` frame.
 
 - **FR-024**: A new action `node_set` with `{node_uuid, alias}` MUST forward
   `{"action": "node_set", "node_uuid": …, "alias": …}` to nodeconf over IPC. Q2 decides the route.
-  Only operator-owned fields are accepted. In this feature that is `alias`. A request carrying any
-  field owned by discovery or by nodeconf is refused before anything is sent. The identity check
+  Only operator-owned fields are accepted, and `alias` is the only one (M7). A request carrying any
+  field owned by discovery or by nodeconf, **`role_id` and `hostname` included**, is refused before
+  anything is sent. The identity check
   uses `cuemsutils.tools.coerce_identity` (001 FR-035).
 - **FR-025**: Where `nodeconf_available` is false, `node_set` MUST answer `unavailable` at once,
   without an IPC attempt or a timeout. The editor MUST NOT write `network_map.xml` as a fallback,
