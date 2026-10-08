@@ -77,7 +77,8 @@ repositories (cuems-utils requirements doc §4).
      editable from the UI.
    - `alias`: the operator (UI), and the only node field the operator owns.
 
-   nodeconf also publishes `alias` over mDNS. So: `config_save` stops accepting `network_map`;
+   (Correction 2026-10-08: nodeconf does **not** publish the operator `alias` over mDNS; its
+   `_ui_alias` is a deployment constant.) So: `config_save` stops accepting `network_map`;
    reading it through `config_load` is fine; alias edits go to nodeconf over IPC (§3, item D).
 6. **Every upstream gap stays a strict xfail that flips when the library fixes it**, never a
    hand-rolled workaround. Do not duplicate the `library_path/projects/<uname>/<file>` convention.

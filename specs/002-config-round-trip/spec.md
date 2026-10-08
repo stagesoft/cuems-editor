@@ -12,9 +12,8 @@ maintainer's call.
 
 **Created**: 2026-10-08
 
-**Status**: Draft. Ready for `/speckit-clarify`, which has three agenda items (see the
-[Clarification agenda](#clarification-agenda)). The decisions in [Settled](#settled-inputs) are not
-reopened there.
+**Status**: Clarified 2026-10-08 (four questions; see [Clarifications](#clarifications)). Ready for
+`/speckit-plan`.
 
 **Input**: `specs/planning/xml-refactor/002-specify-prompt.md` (committed at `a3309ab`), which
 takes up `specs/planning/xml-refactor/FROM-cuems-frontend-001.md` items 1 to 6. Line numbers below
@@ -30,6 +29,27 @@ and verified before this branch was created.
 collide between repositories (`cuems-utils` `specs/planning/upcoming-feature-requirements-2026-10-02.md`
 §4). Requirements from 001 are cited as `001 FR-<n>`. A bare `FR-<n>` in this file is one of
 this feature's.
+
+---
+
+## Clarifications
+
+### Session 2026-10-08
+
+- Q: Should the repair gate be tracked per browser session or per project? (Q1) → A: **B.** The
+  file-level facts (`report_id`, `outcome`, `file_differs_from_loaded`, `preserved`) are server
+  state keyed by project UUID. Acknowledgments are recorded per `session_id` inside that state.
+  Reconnects, second sessions and stale tabs are all covered, and 001 FR-021 ("another session's
+  acknowledgment does not count") is kept (FR-006).
+- Q: When should the editor check the script file on disk before saving? → A: **B.** It checks
+  when it holds no record of the project (FR-009), and also when a record exists but the file's
+  md5 differs from the md5 taken when the report was made. A changed file gets a fresh report, and
+  the old acknowledgments are dropped. A clean, unchanged project gets no extra load (FR-009a).
+- Q: Should `node_set` go straight to nodeconf or through the engine? (Q2) → A: **A, direct.** The
+  editor opens `/tmp/nodeconf.ipc` itself. `cuems-engine` is not a party to the contract, and
+  `nodelist_modify` keeps its engine route (FR-024).
+- Q: Must every `config_save` carry `base_revision`? (Q3) → A: **A, required.** A request without
+  the key is refused. `null` means "I expect no file" (FR-015).
 
 ---
 
@@ -66,8 +86,9 @@ These were decided before this spec. `/speckit-clarify` does not reopen them.
   - `adopted`: nodeconf, through `nodelist_modify` ADD/REMOVE;
   - `role_id` and `hostname`: nodeconf (`cuems-common` `docs/node-identity-contract.md:35-37`).
     **Not editable from the UI**, by any action (M7);
-  - `alias`: the operator (UI), and the **only** node field the operator owns. Nodeconf publishes
-    `alias` over mDNS.
+  - `alias`: the operator (UI), and the **only** node field the operator owns. Nothing publishes it
+    over mDNS: nodeconf's alias publishing (`_ui_alias`) publishes a deployment constant
+    (`../cuems-nodeconf/specs/planning/12-node-set-alias.md`, R3).
 
   So `config_save` stops accepting `network_map`. Reading it through `config_load` is fine. Alias
   edits go to nodeconf over IPC (US4).
@@ -94,7 +115,7 @@ nodeconf handler that answers `{"OK": false, "error": "unknown action: …"}` is
 `CuemsNodeConf.engine_callback` on `cuems-nodeconf` `origin/feat/xml-refactor` @ `2045897`
 (`cuemsnodeconf/CuemsNodeConf.py:368`, `:419`). "Shaped like `nodelist_modify`" therefore has two
 readings: a direct editor → nodeconf hop, or a new verb on the engine route. They differ in whether
-`cuems-engine` is a party to the contract. This is agenda item **Q2**.
+`cuems-engine` is a party to the contract. This was agenda item **Q2**, resolved as direct (Clarifications).
 
 **M2. A repair gate held only in editor memory does not survive an editor restart.** The prompt's
 risk is a stale tab or a dropped socket. A server-side gate keyed by project UUID covers both.
@@ -183,7 +204,7 @@ process over the same library (the restart case).
    was shown, **Then** it gets the echo, not the error frame. The next save moves the original into
    the trash and then writes.
 3. **Given** a second session that never loaded the project, **When** it sends `project_save` for
-   that project, **Then** the save is refused (under the default for Q1).
+   that project, **Then** the save is refused (Clarifications, Q1).
 4. **Given** an editor restart, **When** a reconnecting tab sends `project_save` for a project whose
    file on disk the library would still repair or convert, **Then** the save is refused and the
    original stays in place (FR-009).
@@ -338,17 +359,17 @@ there. Run the tip capture script and confirm it produces a `project` frame.
   new one): the repair gate must not depend on the client's id surviving. FR-008 and FR-009 cover
   it.
 - **The file on disk changes between load and save** (another session saved it, or a hand edit):
-  the report the operator acknowledged describes a document that no longer exists. Under Q1's
-  default, the gate is checked against the file as it is when the save arrives (FR-009), not
-  against the old acknowledgment alone.
+  the report the operator acknowledged describes a document that no longer exists. The file's md5
+  differs from the one recorded with the report, so the gate is re-derived from the file, and old
+  acknowledgments are dropped (FR-009a).
 - **A preserve that fails**: unchanged from 001 FR-021a. Nothing is saved (reason
   `preserve_failed`).
 - **`config_save` with `base_revision` for a file that did not exist when loaded** (`revision: null`)
   and still does not exist: the save is accepted. If the file has appeared since, the save gets
   `config_conflict`. For project domains it is still blocked by `cuems-editor` UR-6 until that is
   fixed.
-- **`config_save` with no `base_revision` key**: refused (Q3 default). An omitted revision is not a
-  wildcard.
+- **`config_save` with no `base_revision` key**: refused (Clarifications, Q3). An omitted revision
+  is not a wildcard.
 - **Two sessions saving different files**: locks are per target file, so these saves do not wait on
   each other. A project's `settings.xml` and the controller's `settings.xml` are different targets.
 - **A hand edit, or a nodeconf write, that leaves the bytes unchanged**: the md5 is the same, so no
@@ -398,7 +419,7 @@ there. Run the tip capture script and confirm it produces a `project` frame.
   `session_id`, sends `project_save`, and expects `repair_save_refused`. Its failing run against
   `a3309ab` MUST be captured in this feature's `evidence/`.
 - **FR-006**: Repair-gate state MUST be held where a reconnect does not drop it, and a stale or
-  second session cannot bypass it. The default (Q1) splits it in two:
+  second session cannot bypass it (Clarifications, Q1). It is split in two:
   - the file-level facts (`report_id`, `outcome`, `file_differs_from_loaded`, `preserved`) are server
     state keyed by **project UUID**;
   - acknowledgment is recorded per `session_id` within that project's state.
@@ -419,6 +440,15 @@ there. Run the tip capture script and confirm it produces a `project` frame.
   load, in the executor. A non-clean outcome is refused as `unacknowledged`, and the refusal names a
   report the session can obtain by loading the project. A clean outcome saves as today. The original
   MUST NOT be overwritten unpreserved on any path (Principle III).
+- **FR-009a**: The project's gate state MUST record the md5 of the script file's bytes as loaded
+  for the report. On `project_save` of a project with non-clean gate state, the editor MUST re-hash
+  the file in the executor before deciding.
+  - If the hash differs, the state is re-derived from the file as in FR-009. That makes a new
+    `report_id` and drops every acknowledgment. The save is refused as `unacknowledged` unless the
+    new outcome is clean.
+  - If the hash is the same, the recorded acknowledgments decide.
+
+  Projects whose gate state is clean need no hash and no extra load (Clarifications).
 - **FR-010**: `project_unload` (`CuemsWsUser.py:515-518`) MUST clear that session's acknowledgment
   for the project. When no session still references the project's state, that state MUST be dropped.
   A successful save that writes the repaired document MUST retire the outstanding report, because the
@@ -448,8 +478,9 @@ there. Run the tip capture script and confirm it produces a `project` frame.
   MUST be resolved with `CuemsDBProject.get_project_unix_name`, as `config_save` resolves it. A
   missing or unknown `project_uuid` is the error frame. The editor MUST NOT build the
   `projects/<uname>/<file>` path itself (S6).
-- **FR-015**: `config_save` MUST take `base_revision` (the md5 from `config_load`, or `null` for "no
-  file yet"). Under one asyncio lock per resolved target file, the editor MUST re-hash the file:
+- **FR-015**: `config_save` MUST require `base_revision`: the md5 from `config_load`, or `null` for
+  "no file yet". A request without the key is refused with the error frame and writes nothing
+  (Clarifications, Q3). Under one asyncio lock per resolved target file, the editor MUST re-hash the file:
   - if the hash does not match, it refuses with
     `{"type": "config_conflict", "value": {schema, project_uuid, revision, document}}`, carrying the
     current revision and document, and writes nothing;
@@ -501,7 +532,9 @@ there. Run the tip capture script and confirm it produces a `project` frame.
 **D. Alias editing through nodeconf (US4)**
 
 - **FR-024**: A new action `node_set` with `{node_uuid, alias}` MUST forward
-  `{"action": "node_set", "node_uuid": …, "alias": …}` to nodeconf over IPC. Q2 decides the route.
+  `{"action": "node_set", "node_uuid": …, "alias": …}` directly to nodeconf on `/tmp/nodeconf.ipc`. The engine does not relay it (Clarifications, Q2).
+  `nodelist_modify` keeps its engine route, because the engine must refuse adoption while a project
+  is loaded.
   Only operator-owned fields are accepted, and `alias` is the only one (M7). A request carrying any
   field owned by discovery or by nodeconf, **`role_id` and `hostname` included**, is refused before
   anything is sent. The identity check
@@ -580,7 +613,8 @@ the gate list is complete there as well.
   `null` means "no file". It is used only for the stale-write check, and it is not a version
   (neither `doc_version` nor the payload version).
 - **Repair gate state**: per project, the outstanding load report (`report_id`, `outcome`, whether
-  the file differs, whether it has been preserved) and the set of sessions that acknowledged it. It
+  the file differs, whether it has been preserved, and the md5 of the file the report describes)
+  and the set of sessions that acknowledged it. It
   lives as long as the file it describes is stale. When the process restarts, the gate is
   re-derived from the file (FR-009).
 - **Restart notice**: the list of services whose cached configuration a save has made stale.
@@ -619,14 +653,13 @@ the gate list is complete there as well.
 
 ## Clarification agenda
 
-`/speckit-clarify` resolves these. Each has a default, so the spec is complete as written. Clarify
-ratifies or overrides the default.
+All three were resolved on 2026-10-08, each taking its default (see [Clarifications](#clarifications)).
 
 | # | Question | Default in this spec |
 |---|---|---|
-| **Q1** | Key the repair gate by `session_id` (fixes reconnects only) or by project UUID on the server (also covers a second session and a stale tab)? | **By project UUID** (the prompt's recommendation, because the risk is to the file on disk), with acknowledgment recorded per `session_id` inside the project's state. This keeps 001 FR-021's "another session's acknowledgment does not count". Plus FR-009: with no state in this process (an editor restart), the gate is re-derived from the file before writing (M2). Neither keying alone covers a restart |
-| **Q2** | `node_set` route: the editor opens `/tmp/nodeconf.ipc` directly, or the engine relays it as it relays `nodelist_modify` (M1)? | **Direct to `/tmp/nodeconf.ipc`**, as the prompt states. A direct hop keeps `cuems-engine` out of a contract that is about a file the engine never writes. `nodelist_modify` stays on its engine route, because the engine must refuse adoption while a project is loaded. An alias change has no such engine precondition |
-| **Q3** | Is `base_revision` required on every `config_save`, or optional, meaning "last writer wins"? | **Required.** `config_save` has not shipped in any released UI (it is part of version 1), so requiring it breaks no deployed consumer. An optional revision would leave the overwrite this feature exists to prevent as the easy path |
+| **Q1** | Key the repair gate by `session_id` (fixes reconnects only) or by project UUID on the server (also covers a second session and a stale tab)? | **Resolved 2026-10-08 (B): by project UUID** (the prompt's recommendation, because the risk is to the file on disk), with acknowledgment recorded per `session_id` inside the project's state. This keeps 001 FR-021's "another session's acknowledgment does not count". Plus FR-009: with no state in this process (an editor restart), the gate is re-derived from the file before writing (M2). Neither keying alone covers a restart |
+| **Q2** | `node_set` route: the editor opens `/tmp/nodeconf.ipc` directly, or the engine relays it as it relays `nodelist_modify` (M1)? | **Resolved 2026-10-08 (A): direct to `/tmp/nodeconf.ipc`**, as the prompt states. A direct hop keeps `cuems-engine` out of a contract that is about a file the engine never writes. `nodelist_modify` stays on its engine route, because the engine must refuse adoption while a project is loaded. An alias change has no such engine precondition |
+| **Q3** | Is `base_revision` required on every `config_save`, or optional, meaning "last writer wins"? | **Resolved 2026-10-08 (A): required.** `config_save` has not shipped in any released UI (it is part of version 1), so requiring it breaks no deployed consumer. An optional revision would leave the overwrite this feature exists to prevent as the easy path |
 
 ## Out of scope
 
