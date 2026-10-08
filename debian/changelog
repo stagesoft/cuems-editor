@@ -1,3 +1,13 @@
+cuems-editor (0.1.0rc1-5+nodeadopt2) bookworm; urgency=medium
+
+  * Test-rig integration build for the taller rigs test (demo) and test2
+    (not a release): 0.1.0rc1-5 merged with feat/nodelist-adoption-api
+    (node adoption over the editor WebSocket: nodelist_get, nodelist_modify
+    relay, node_status). Successor of 0.1.0rc1-4+nodeadopt1; the only
+    conflict was tests/ws-command-responses.txt (both sides kept).
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 08 Oct 2026 21:34:03 +0200
+
 cuems-editor (0.1.0rc1-5) bookworm; urgency=medium
 
   * Save gate (869fej07m): new / update refuse a project in which an audio
