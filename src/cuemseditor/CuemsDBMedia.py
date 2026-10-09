@@ -337,6 +337,24 @@ class CuemsDBMedia(StringSanitizer):
         except KeyError as e:
             Logger.error(f'can not read settings {e}')
 
+    def _free_filename(self, filename):
+        """Return *filename*, or ``<base>-NNN<ext>``, free on disk AND in the DB.
+
+        ``CopyMoveVersioned`` only looks at ``media_path``, but a trashed
+        media keeps its DB row (and the unique ``name``/``unix_name``
+        constraints) while its file sits in the trash directory, so an
+        upload with the same name passed the disk check and then failed
+        ``Media.create`` with an ``IntegrityError``.
+        """
+        (base, ext) = os.path.splitext(filename)
+        candidate = filename
+        i = 0
+        while (os.path.exists(os.path.join(self.media_path, candidate))
+               or Media.select().where((Media.unix_name == candidate) | (Media.name == candidate)).exists()):
+            i += 1
+            candidate = base + "-{:03d}".format(i) + ext
+        return candidate
+
     def new(self, tmp_file_path, filename, md5=None):
         """Intake a newly uploaded file: move it into the media library and create sidecars.
 
@@ -370,7 +388,7 @@ class CuemsDBMedia(StringSanitizer):
             trash_state = False
             try:
                 dest_filename = None
-                dest_filename = CopyMoveVersioned.move(tmp_file_path, self.media_path, filename)
+                dest_filename = CopyMoveVersioned.move(tmp_file_path, self.media_path, self._free_filename(filename))
 
                 try:
                     _type = self.get_type(dest_filename)
@@ -633,13 +651,40 @@ class CuemsDBMedia(StringSanitizer):
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
 
+    def _move_keeping_name(self, src_path, dest_dir, moves):
+        """Move *src_path* into *dest_dir* under the same name, logging it in *moves*.
+
+        Projects reference media by filename (``ProjectMedia.media_filename``,
+        the cue XML), so a trashed or restored file must keep its
+        ``unix_name``: ``CopyMoveVersioned`` would rename the moved file
+        instead and leave the DB row pointing at a path that does not exist.
+        ``unix_name`` is unique, so a file already at the destination is not
+        tracked by any row; it is moved aside to ``<base>-NNN<ext>``.
+        """
+        dest_path = os.path.join(dest_dir, os.path.basename(src_path))
+        if os.path.exists(dest_path):
+            aside = CopyMoveVersioned.move(dest_path, dest_dir)
+            moves.append((dest_path, os.path.join(dest_dir, aside)))
+            Logger.warning(f'{dest_path} is not tracked by the media library; moved it aside to {aside}')
+        shutil.move(src_path, dest_path)
+        moves.append((src_path, dest_path))
+
+    def _undo_moves(self, moves):
+        """Reverse the moves logged by ``_move_keeping_name``, newest first."""
+        for src_path, dest_path in reversed(moves):
+            try:
+                if os.path.exists(dest_path) and not os.path.exists(src_path):
+                    shutil.move(dest_path, src_path)
+            except Exception as e:
+                Logger.error(f'error: {type(e)} {e}; trying to move {dest_path} back to {src_path}')
+
     def delete(self, uuid):
         """Soft-delete a media file by moving it and its sidecars to the trash.
 
         Moves the media file, thumbnail, and (for audio) waveform to the
-        corresponding trash sub-directories via ``CopyMoveVersioned.move``.
-        Sets ``Media.in_trash = True`` atomically.  Reverses filesystem moves
-        on transaction rollback.
+        corresponding trash sub-directories via ``_move_keeping_name``, so
+        ``unix_name`` stays valid.  Sets ``Media.in_trash = True``
+        atomically.  Reverses filesystem moves on transaction rollback.
 
         Args:
             uuid: UUID of the live media file to trash.
@@ -652,54 +697,26 @@ class CuemsDBMedia(StringSanitizer):
             media = Media.get((Media.uuid == uuid) & (Media.in_trash == trash_state))
 
             with self.db.atomic() as transaction:
+                moves = []
                 try:
-                    dest_filename = None
-                    dest_thumbnail_filename = None
-                    file_path = self.get_file_path(media.unix_name)
                     file_thumbnail_path = self.get_thumbnail_path(media.unix_name)
-
-                    try:
-                        if os.path.exists(file_thumbnail_path):
-                            dest_thumbnail_filename = CopyMoveVersioned.move(file_thumbnail_path, self.thumbnail_trash_path)
-                    except Exception as e:
-                        Logger.error("error: {} {}; trying to move thumbnail to trash".format(type(e), e))
-                        raise e
+                    if os.path.exists(file_thumbnail_path):
+                        self._move_keeping_name(file_thumbnail_path, self.thumbnail_trash_path, moves)
 
                     if self.is_audio(media):
-                        dest_waveform_filename = None
                         file_waveform_path = self.get_waveform_path(media.unix_name)
-                        try:
-                            if os.path.exists(file_waveform_path):
-                                dest_waveform_filename = CopyMoveVersioned.move(file_waveform_path, self.waveform_trash_path)
-                        except Exception as e:
-                            Logger.error("error: {} {}; trying to move waveform to trash".format(type(e), e))
-                            raise e
+                        if os.path.exists(file_waveform_path):
+                            self._move_keeping_name(file_waveform_path, self.waveform_trash_path, moves)
 
-                    dest_filename = CopyMoveVersioned.move(file_path, self.trash_path)
+                    self._move_keeping_name(self.get_file_path(media.unix_name), self.trash_path, moves)
                     media.in_trash = True
                     media.save()
                     Logger.debug('updating instance in db: {}'.format(media))
                 except Exception as e:
                     Logger.error("error: {} {}; trying to move file to trash, rolling back database".format(type(e), e))
                     transaction.rollback()
-                    if dest_filename is None and dest_thumbnail_filename is None:
-                        if self.is_audio(media):
-                            if dest_waveform_filename is None:
-                                raise e
-                        else:
-                            raise e
-
                     Logger.debug("moving files back to media folder")
-                    if os.path.exists(self.get_file_path(dest_filename, trash_state=True)):
-                        shutil.move(self.get_file_path(dest_filename, trash_state=True), self.get_file_path(media.unix_name))
-
-                    if os.path.exists(self.get_thumbnail_path(dest_thumbnail_filename, trash_state=True)):
-                        shutil.move(self.get_thumbnail_path(dest_thumbnail_filename, trash_state=True), self.get_thumbnail_path(media.unix_name))
-
-                    if self.is_audio(media):
-                        if os.path.exists(self.get_waveform_path(dest_waveform_filename, trash_state=True)):
-                            shutil.move(self.get_waveform_path(dest_waveform_filename, trash_state=True), self.get_waveform_path(media.unix_name))
-
+                    self._undo_moves(moves)
                     raise e
 
         except DoesNotExist:
@@ -709,68 +726,50 @@ class CuemsDBMedia(StringSanitizer):
         """Restore a trashed media file and its sidecars back to the media library.
 
         Moves files from the trash sub-directories back to the live media
-        directories via ``CopyMoveVersioned.move``.  Sets
-        ``Media.in_trash = False`` atomically.  Reverses filesystem moves
-        on transaction rollback.
+        directories via ``_move_keeping_name``, so ``unix_name`` stays valid.
+        Sets ``Media.in_trash = False`` atomically.  Reverses filesystem
+        moves on transaction rollback.
+
+        A live file already at ``<media_path>/<unix_name>`` is not tracked by
+        the library, but cues may play it by name, so the restore is refused
+        rather than moving it aside.
 
         Args:
             uuid: UUID of a trashed media file to restore.
 
         Raises:
             NonExistentItemError: If no trashed media file with *uuid* exists.
+            FileExistsError: If an untracked file already holds the name in
+                the media directory.
         """
         try:
             trash_state = True
             media_trash = Media.get((Media.uuid == uuid) & (Media.in_trash == trash_state))
 
-            with self.db.atomic() as transaction:
-                try:
-                    dest_filename = None
-                    dest_thumbnail_filename = None
-                    file_path = self.get_file_path(media_trash.unix_name, trash_state=True)
-                    file_thumbnail_path = self.get_thumbnail_path(media_trash.unix_name, trash_state=True)
+            if os.path.exists(self.get_file_path(media_trash.unix_name)):
+                raise FileExistsError(f'cannot restore {media_trash.unix_name}: a file with that name, not tracked by the media library, '
+                                      f'is already in {self.media_path}; move it away first')
 
-                    try:
-                        if os.path.exists(file_thumbnail_path):
-                            dest_thumbnail_filename = CopyMoveVersioned.move(file_thumbnail_path, self.thumbnail_path)
-                    except Exception as e:
-                        Logger.error("error: {} {}; trying to move thumbnail from trash".format(type(e), e))
-                        raise e
+            with self.db.atomic() as transaction:
+                moves = []
+                try:
+                    file_thumbnail_path = self.get_thumbnail_path(media_trash.unix_name, trash_state=True)
+                    if os.path.exists(file_thumbnail_path):
+                        self._move_keeping_name(file_thumbnail_path, self.thumbnail_path, moves)
 
                     if self.is_audio(media_trash):
-                        dest_waveform_filename = None
                         file_waveform_path = self.get_waveform_path(media_trash.unix_name, trash_state=True)
-                        try:
-                            if os.path.exists(file_waveform_path):
-                                dest_waveform_filename = CopyMoveVersioned.move(file_waveform_path, self.waveform_path)
-                        except Exception as e:
-                            Logger.error("error: {} {}; trying to waveform from trash".format(type(e), e))
-                            raise e
+                        if os.path.exists(file_waveform_path):
+                            self._move_keeping_name(file_waveform_path, self.waveform_path, moves)
 
-                    dest_filename = CopyMoveVersioned.move(file_path, self.media_path)
+                    self._move_keeping_name(self.get_file_path(media_trash.unix_name, trash_state=True), self.media_path, moves)
                     media_trash.in_trash = False
                     media_trash.save()
                     Logger.debug('updating instance in db: {}'.format(media_trash))
                 except Exception as e:
-                    Logger.error("error: {} {}; trying to move file to trash, rolling back database".format(type(e), e))
+                    Logger.error("error: {} {}; trying to move file from trash, rolling back database".format(type(e), e))
                     transaction.rollback()
-                    if dest_filename is None and dest_thumbnail_filename is None:  # if move or copy where not successful we don't need to clean and can end here forwarding the exception, else continue cleaning and then forward the exception
-                        if self.is_audio(media_trash):
-                            if dest_waveform_filename is None:
-                                raise e
-                        else:
-                            raise e
-
-                    if os.path.exists(self.get_file_path(dest_filename)):
-                        shutil.move(self.get_file_path(dest_filename), self.get_file_path(media_trash.unix_name, trash_state=True))
-
-                    if os.path.exists(self.get_thumbnail_path(dest_thumbnail_filename)):
-                        shutil.move(self.get_thumbnail_path(dest_thumbnail_filename), self.get_thumbnail_path(media_trash.unix_name, trash_state=True))
-
-                    if self.is_audio(media_trash):
-                        if os.path.exists(self.get_waveform_path(dest_waveform_filename)):
-                            shutil.move(self.get_waveform_path(dest_waveform_filename), self.get_waveform_path(media_trash.unix_name, trash_state=True))
-
+                    self._undo_moves(moves)
                     raise e
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
