@@ -15,13 +15,16 @@ Commands 													 ->	Responses
 
 {"action" : "project_list"}  									->  {"type": "project_list", "value": "project_list_json"}
 {"action" : "project_load", "value" : "project_uuid"}   		->  {"type": "project", "value": "project_json"}
+																->  then {"type": "media_check_report", "value": media_report}   (context "open", to the requester)
 {"action" : "project_ready", "value" : "project_uuid"}   		->  {"type": "project_ready", "value": "project_uuid"}
+																->  then {"type": "media_check_report", "value": media_report}   (to the requester and every session on the project)
 {"action" : "project_deploy", "value" : "project_uuid"}   		->  {"type": "project_deploy", "value": "project_uuid"}
 {"action" : "project_status"}  									->  {"type": "project_status", "value":  {"status ": "none|running", "project_uuid": "project_uuid"}
 {"action" : "project_unload", "value" : "project_uuid"}   		->  {"type": "project_unload", "value": "project_uuid"}
 
 {"action" : "project_new", "value" : "project_json", "unix_name" : "unix_name_string"}   		->  {"type": "project_save", "value": "project_uuid"}
 {"action" : "project_save", "value" : "project_json"}   		->  {"type": "project_save", "value": "project_uuid"}
+																->  then {"type": "media_check_report", "value": media_report}   (context "save", to every session on the project)
 {"action" : "project_delete", "value" : "project_uuid"} 		->  {"type": "project_delete", "value": "project_uuid"}
 {"action" : "project_trash_list"}  							 	->  {"type": "project_trash_list", "value": "project_trash_list_json"}
 {"action" : "project_restore", "value" : "project_uuid"}  		->  {"type": "project_recover", "value": "project_uuid"}
@@ -123,6 +126,21 @@ Error responses
 
 				->  {"type": "error", "value": "unsupported event: event"}
 				->  {"type": "error", "value": "unsupported action: action"}
+
+
+media_check_report (869fat84r D20, cuems-RELATIONS Plans/2026-10-01-engine-late-go-media-probe.md §8.3)
+
+  media_report = {"project_uuid": "...", "project_name": "...", "context": "ready" | "open" | "save",
+                  "complete": true | false,
+                  "reason": null | "engine_running" | "engine_silent" | "deadline" | "probe_failed" | "copy_in_progress",
+                  "files": [{"file_name": "...", "cues": 3,
+                             "changes": [{"field": "duration" | "pixel_size" | "file_size" | "file_md5",
+                                          "stored": "00:00:10.010", "current": "00:00:20.020" | null}]}],
+                  "unverified": ["file names whose file changed and is not measured yet"],
+                  "total_files": 1}
+
+  "files" lists at most 20 files; "total_files" counts them all.
+  An all-clear is complete && no files && no unverified; a client clears a warning only on that.
 
 SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 SPDX-License-Identifier: GPL-3.0-or-later

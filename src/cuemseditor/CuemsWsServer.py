@@ -342,6 +342,19 @@ class CuemsWsServer():
                     await user.outgoing.put(message)
                     Logger.debug('notifing {} {}'.format(user, list_type))
 
+    async def send_to_project_sessions(self, project_uuid, message, skip=None):
+        """Send *message* (an encoded frame), as given, to every session whose
+        last loaded, saved or created project is *project_uuid*, except
+        *skip* (869fat84r D20: ``media_check_report``).
+
+        ``users`` holds the last project a session touched, not strictly the
+        one open now: a session that moved on may receive a report for its
+        previous project, which the UI keys by project.
+        """
+        for user, project in list(self.users.items()):
+            if user is not skip and str(project) == str(project_uuid):
+                await user.outgoing.put(message)
+
     async def notify_others_same_project(self, calling_user, msg_type, project_uuid=None):
         """Notify users who have the same project loaded that it was modified.
 

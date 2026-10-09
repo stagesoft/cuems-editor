@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 """pytest bootstrap for cuems-editor.
 
 Ensures the package under ``src/`` is importable when the editor is not
@@ -105,9 +108,17 @@ def library(tmp_path):
         database.close()
 
 
+# Canned pixel sizes keyed by media unix_name (869fat84r): the repair tool's
+# Pass A re-probes video rows. Anything else probes as unknown.
+CANNED_DIMS = {
+    'file_video.ext': (1920, 1080),
+}
+
+
 @pytest.fixture
 def canned_probe(monkeypatch):
-    """Patch repair_durations.probe_duration with the CANNED_SECONDS map."""
+    """Patch repair_durations.probe_duration with the CANNED_SECONDS map, and
+    repair_durations.probe_dimensions with CANNED_DIMS."""
     from cuemsutils.tools.CTimecode import CTimecode
     import cuemseditor.repair_durations as rd
 
@@ -119,4 +130,8 @@ def canned_probe(monkeypatch):
         return CTimecode(start_seconds=CANNED_SECONDS[name])
 
     monkeypatch.setattr(rd, 'probe_duration', _fake)
+    monkeypatch.setattr(
+        rd, 'probe_dimensions',
+        lambda path: CANNED_DIMS.get(os.path.basename(path), (None, None)),
+        raising=False)
     return _fake
