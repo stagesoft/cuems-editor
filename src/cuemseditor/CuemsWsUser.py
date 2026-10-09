@@ -139,6 +139,8 @@ class CuemsWsUser():
                     "hw_discovery": lambda: self.hw_discovery(action),
                     "nodeconf": lambda: self.nodeconf(action),
                     "nodelist_modify": lambda: self.nodelist_modify(value, action, data.get("modify_action")),
+                    "nodelist_get": lambda: self.nodelist_get(action),
+                    "node_status": lambda: self.node_status(action),
                     "project_status": lambda: self.project_status(action),
                     "project_unload": lambda: self.project_unload(action),
                 }
@@ -478,6 +480,11 @@ class CuemsWsUser():
             if modify_action not in ["ADD", "REMOVE"]:
                 raise ValueError(f"Invalid modify_action: {modify_action}. Must be 'ADD' or 'REMOVE'")
 
+            # Without this a None/empty value travels the whole chain and comes
+            # back from nodeconf as the baffling "Node None not found".
+            if not node_uuid or not isinstance(node_uuid, str):
+                raise ValueError(f"nodelist_modify needs a node uuid, got {node_uuid!r}")
+
             action_uuid = str(new_uuid())
             engine_command = {
                 "action": functionNameAsString(),
@@ -501,6 +508,79 @@ class CuemsWsUser():
         except EngineError as e:
             Logger.error(f"Engine error in nodelist_modify: {e}")
             await self.notify_error_to_user(str(e), action=action)
+        except Exception as e:
+            Logger.error(f"error: {type(e)} {e}")
+            await self.notify_error_to_user(str(e), action=action)
+
+    async def nodelist_get(self, action):
+        """Re-read network_map.xml and send this client the current node list.
+
+        Same payload the client already gets on connect
+        (``initial_mappings``: ``nodes`` = adopted, ``new_nodes`` = discovered
+        but not adopted), so no new client-side handling is needed — it is just
+        a way to refresh on demand instead of reconnecting.
+
+        Args:
+            action: Action name from the WebSocket frame.
+        """
+        Logger.info(f"user {id(self.websocket)} requesting {functionNameAsString()}")
+        try:
+            reload_ok = await self.server.event_loop.run_in_executor(
+                self.server.executor,
+                self.server.reload_network_map_nodes
+            )
+            if not reload_ok:
+                raise ValueError("could not read network_map.xml")
+
+            await self.outgoing.put(self.server.initial_setting_message())
+
+        except Exception as e:
+            Logger.error(f"error: {type(e)} {e}")
+            await self.notify_error_to_user(str(e), action=action)
+
+    async def node_status(self, action):
+        """Ask the engine which nodes are answering right now.
+
+        Relays the engine's ``cluster_status``:
+        ``{"alive": [...], "adopted": [...], "controller": uuid, "age_s": n}``.
+
+        This is NOT the same thing as the ``online`` field in each node of
+        ``initial_mappings``: that one is cuems-nodeconf's discovery view
+        (refreshed within ~30 s), while ``alive`` here is the engine's
+        sub-second ping/pong — the only signal the GO gate trusts. A UI must
+        show them as two separate indicators; merging them tells the operator
+        a node is dead when it was merely not seen by the last discovery pass,
+        or alive when it vanished 20 s ago.
+
+        ``age_s`` is how stale the probe behind this answer is. A failed or
+        timed-out call means *unknown*, never *dead*: while a project load is
+        in flight this request queues behind it (the engine serializes editor
+        commands) and can time out while every node is perfectly healthy.
+
+        The reply also carries the last load's diagnosis — ``missing`` (project
+        nodes not in the cluster at all) and ``unreachable`` (adopted, used by
+        the project, no pong). Their cues will not play, and GO is deliberately
+        *not* blocked. Nothing is done to them here on purpose: this method
+        relays the engine's dict verbatim, so new keys reach the browser with
+        no editor change. Do not add a hop.
+
+        Args:
+            action: Action name from the WebSocket frame (echoed in the reply).
+        """
+        Logger.info(f"user {id(self.websocket)} requesting {functionNameAsString()}")
+        try:
+            action_uuid = str(new_uuid())
+            engine_command = {
+                "action": "cluster_status",
+                "action_uuid": action_uuid,
+            }
+
+            result = await self.comunicate_with_engine(
+                "cluster_status", action_uuid, engine_command, query_mode=True
+            )
+
+            await self.outgoing.put(json.dumps({"type": "node_status", "value": result}))
+
         except Exception as e:
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), action=action)
