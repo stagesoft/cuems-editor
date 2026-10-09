@@ -1,3 +1,25 @@
+cuems-editor (0.1.0rc1-7) bookworm; urgency=medium
+
+  * Merge rc1 into debian/bookworm.
+  * Node adoption over the editor WebSocket (869ebkkme, PR #7): nodelist_get
+    with uuid validation, nodelist_modify relayed to the engine, map changes
+    pushed to every client, the engine's liveness view relayed as
+    node_status (load diagnosis verbatim); nodeconf_available no longer
+    cached. Adopting needs an engine with the nodelist_modify hop and a
+    running cuems-nodeconf; against an older engine the request errors.
+    Same code as the 0.1.0rc1-5+nodeadopt2 test-rig builds.
+  * Media library (PR #10): uploading a file named like a media in the
+    trash no longer fails with "UNIQUE constraint failed: media.unix_name";
+    it gets the versioned name <base>-NNN<ext>, as any duplicate does.
+    Delete and restore keep the media's unix_name (cues reference media by
+    filename): an untracked file already in the trash is moved aside, an
+    untracked live file in media/ refuses the restore with a clear error,
+    and both undo their own moves on rollback.
+  * The 869fej07m save gate is unchanged (already shipped since 0.1.0rc1-5;
+    rc1 got its back-port, PR #8). No new cuems-utils floor (>= 0.1.0rc15).
+
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 09 Oct 2026 14:14:49 +0200
+
 cuems-editor (0.1.0rc1-6) bookworm; urgency=medium
 
   * packaging: stop shipping /usr/lib/cuems/CACHEDIR.TAG. The 0.1.0rc1-5
