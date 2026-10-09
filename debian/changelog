@@ -1,3 +1,14 @@
+cuems-editor (0.1.0rc1-6) bookworm; urgency=medium
+
+  * packaging: stop shipping /usr/lib/cuems/CACHEDIR.TAG. The 0.1.0rc1-5
+    build picked it up from virtualenv and cuems-utils 0.1.0rc16 ships the
+    same path, so installing utils after the editor failed with "trying to
+    overwrite" unless forced. It is venv infrastructure like pyvenv.cfg
+    (already stripped); nothing reads it at runtime.
+  * No code change from 0.1.0rc1-5.
+
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 09 Oct 2026 12:41:21 +0200
+
 cuems-editor (0.1.0rc1-5) bookworm; urgency=medium
 
   * Save gate (869fej07m): new / update refuse a project in which an audio

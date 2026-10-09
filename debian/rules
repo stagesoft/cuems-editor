@@ -1,4 +1,7 @@
 #!/usr/bin/make -f
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 
 export DH_VIRTUALENV_INSTALL_ROOT=/usr/lib
 export DH_VERBOSE = 1
@@ -36,6 +39,10 @@ override_dh_fixperms:
 
 	# Remove venv config (provided by cuems-utils)
 	rm -f debian/cuems-editor/usr/lib/cuems/pyvenv.cfg
+	# CACHEDIR.TAG marks the shared venv root (venv infrastructure, like
+	# pyvenv.cfg); cuems-utils 0.1.0rc16 shipped the same path, so dpkg
+	# refused to install one over the other. Nothing reads it at runtime.
+	rm -f debian/cuems-editor/usr/lib/cuems/CACHEDIR.TAG
 
 	# In site-packages: remove everything EXCEPT cuemseditor and its dist-info
 	SITE=debian/cuems-editor/usr/lib/cuems/lib/python3.11/site-packages; \
