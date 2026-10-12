@@ -238,11 +238,12 @@ sends, and asserts `{"OK": True}`.
   (`CuemsWsServer.py:310-318`).
 
 **Decision.**
-1. `CuemsDBProject.open` also returns the md5 of the bytes it loaded. It reads the bytes once,
+1. `CuemsDBProject.open` also returns `script_md5`, the md5 of the bytes it loaded. It reads the bytes once,
    hashes them, then loads that path. A change in the tiny window between the hash and the load
    shows up as a hash mismatch on the next save, which re-derives the gate, so the race fails
    safe.
-2. A new `CuemsDBProject.inspect(uuid) -> (LoadReport, md5)` does the same read without building
+2. A new `CuemsDBProject.inspect(uuid) -> (LoadReport, script_md5, media_repairs, media_rows_digest)`
+   does the same read, plus the media comparison of R11, without building
    the wire value. It is used by FR-009 and FR-009a.
 3. `server.repair_gates: dict[project_uuid, GateState]` (see [data-model.md](data-model.md)). It is
    read and written only on the loop thread.
@@ -258,7 +259,7 @@ sends, and asserts `{"OK": True}`.
 5. The refusal names a `report_id` that the session obtains through `project_load`. When the file
    is unchanged, `project_load` re-uses the outstanding `report_id` instead of minting a new one,
    so a second session loading the project does not revoke the first session's acknowledgment.
-6. After a successful write, the state becomes clean, with the new file's md5 and no
+6. After a successful write, the state becomes clean, with the new file's `script_md5` and no
    acknowledgments.
 7. `project_unload` removes the session from `acknowledged_by`. The state is dropped when no
    session's `loaded_project` is the project. `project_delete` drops it.
@@ -296,3 +297,62 @@ sends, and asserts `{"OK": True}`.
   `frontend-handover.md:44`.
 - The run of the tip script is saved in `specs/002-config-round-trip/evidence/`.
 - No existing evidence byte changes.
+
+## R11. Absorbing 869fat84r `0b291d1` (spec Q5–Q9, M9–M11)
+
+**Measured.**
+- `origin/feat/869fat84r-media-dimensions` @ `0b291d1`: 9 commits off `d9e0a39`, 14 files,
+  +3132/−57. It is not an ancestor of this branch.
+- On it, `CuemsDBProject.py` imports `CuemsParser`, `XmlReaderWriter` and `xml.etree.ElementTree`.
+  Its walk keys on the wire key `AudioCue` / `VideoCue` (`:232-253`).
+- Its media report reads the script with `_light_media_blocks` (`:380-393`), which finds no
+  `Media` block in a 013 document (spec M10).
+- Its save resolvers re-probe files (`_verify_row_for_save`, `REFRESH_DEADLINE_S = 20`).
+
+**Decision.** Port on the object line, never merge textually.
+1. `CuemsDBModel`: the columns, `MEDIA_ADDED_COLUMNS`, `missing_media_columns` and
+   `ensure_media_columns`, taken verbatim (no XML involved).
+2. `CuemsDBMedia`: `probe_dimensions`, `media_file_size`, and the `new()` changes that store the
+   values, verbatim. `MediaProbe` comes in only if `new()` uses it.
+3. `CuemsProjectManager`: the start-up call, verbatim.
+4. `CuemsUpload`: the relink guard, verbatim.
+5. `repair_durations`: `ensure_media_columns` before use, and the dry-run's migrated temporary
+   copy. Nothing else.
+6. `CuemsDBProject`:
+   - the value functions, verbatim;
+   - `_allowed_keys`, `_set_dimensions`, `_dimensions_snapshot` and `_fix_one_media`, rewritten
+     for objects (FR-039, FR-040);
+   - the existing `_walk_media_durations` gains the stored-value step;
+   - a new `media_staleness(script, rows)`, the object form of `stale_changes`, called by `open`
+     and `inspect` (FR-043).
+7. Not taken: `pyproject.toml`'s pin (S1), and everything spec M9 lists as deferred.
+
+**Test provenance.** From `tests/test_media_dimensions.py` @ `0b291d1`, take the cases that cover
+items 1–6, re-expressed against objects and 013 fixtures (`script_minimal_013.xml`). FR-042's six
+are new tests and are written first. `tests/test_media_refresh.py` is not taken.
+
+**Alternatives rejected.**
+- A textual merge of `CuemsDBProject.py`: it regresses the AudioCue rule silently (FR-039), and it
+  stores invalid values through item assignment (M11).
+- Porting `_light_media_blocks`: M10.
+
+## R12. The 014 `Media` setters (the prompt's R1, re-measured)
+
+Measured on `Media` (`cuemsutils.cues.MediaCue.Media`, MRO `Media → CuemsDict → dict`) against
+`b2ea09a`:
+
+| Assignment | Result |
+|---|---|
+| `file_md5 = 'abcdef0123456789abcdef0123456789'` | OK |
+| `file_md5 = 'ABCDEF0123456789ABCDEF0123456789'` (uppercase) | `ValueError`: "must be 32 lowercase hexadecimal characters" |
+| `file_size = '107374182400'` (digit string) | OK, stored as `int` |
+| `pixel_width = 0` | `ValueError` |
+| `pixel_width = 1.5` | `ValueError` |
+| `pixel_width = True` | `ValueError` |
+| `pixel_width = 640` | OK |
+| `pixel_width = None` | OK, and the key is removed |
+| `media['file_md5'] = 'ZZ'` | **stored, no error** (item assignment bypasses the setter) |
+
+The last row is not in the prompt. It is why FR-040 forbids item assignment rather than relying on
+the setters to raise.
+

@@ -12,8 +12,9 @@ maintainer's call.
 
 **Created**: 2026-10-08
 
-**Status**: Clarified 2026-10-08 (four questions; see [Clarifications](#clarifications)). Ready for
-`/speckit-plan`.
+**Status**: Clarified 2026-10-08 (four questions) and amended 2026-10-12 to absorb part of
+869fat84r (Q5–Q9; see [Clarifications](#clarifications)). The plan artifacts are updated to match.
+Ready for `/speckit-tasks`.
 
 **Input**: `specs/planning/xml-refactor/002-specify-prompt.md` (committed at `a3309ab`), which
 takes up `specs/planning/xml-refactor/FROM-cuems-frontend-001.md` items 1 to 6. Line numbers below
@@ -50,6 +51,45 @@ this feature's.
   `nodelist_modify` keeps its engine route (FR-024).
 - Q: Must every `config_save` carry `base_revision`? (Q3) → A: **A, required.** A request without
   the key is refused. `null` means "I expect no file" (FR-015).
+
+### Session 2026-10-12
+
+- Q: Which parts of the 869fat84r media-values branch (`origin/feat/869fat84r-media-dimensions` @
+  `0b291d1`) does 002 take in? (Q5) → A: **C, the save path only.**
+  - In: the four `Media` columns and their `ALTER TABLE`, the upload probe (size, pixel size,
+    md5), and the `_fix_one_media` fill ported to objects (FR-036 to FR-042).
+  - Deferred to a follow-on feature, with its collision surface recorded (spec M9): no probe at
+    save time, no `media_check_report`, and no `CuemsMediaRefresh`.
+- Q: May a media report ever refuse a `project_save` on its own? (Q6; the prompt's Q3) → A: **A,
+  never.** But, in the maintainer's words, "repaired stale media should go to the script-repair
+  report and be acknowledged by the operator". Follow-up → **B, already in 002.**
+  - At load, the editor compares each cue's stored `Media` values with that file's library row, on
+    the object already loaded. There is no probe and no second reader.
+  - Present-but-different values become media entries in `document_load_report`, under the same
+    `report_id` and acknowledgment as the script repairs. They gate the save the way a script
+    repair does.
+  - A value that is merely missing (a pre-rc15 project) is not stale. The save adds it without a
+    report.
+  - The deferred media check, when built, adds its findings to the same section. It never sends a
+    frame of its own that gates a save (FR-043 to FR-046).
+- Q: One report on the wire, or two? (the prompt's Q2) → **Settled by Q6, not asked separately:
+  one frame.** `document_load_report` carries both parts, with one `report_id`, one acknowledgment
+  and one lifecycle. The `report_id` re-use rule gains a second condition, a digest of the library
+  rows the media comparison read (FR-045).
+- Q: How does `document_load_report` say that a clean script has stale media values? (Q7) → A:
+  **B.** `outcome` and `repairs[]` stay the library's verdict, verbatim.
+  - The report gains `media_repairs[]` (items `{cue_id, file_name, field, stored, current}`).
+  - It also gains `acknowledgment_required`, true when `outcome != "clean"` or `media_repairs` is
+    non-empty.
+  - `file_differs_from_loaded` is true when either part differs.
+  - These are new optional keys, so there is no payload-version bump (FR-044).
+- Q: One state store, or two? (Q8; the prompt's Q4) → **Moot under Q5 = C, not asked.** No
+  in-flight registry (`_IN_PROGRESS`, `_OPEN_IN_PROGRESS`) comes into 002. If the follow-on
+  brings them, they stay request de-duplication outside `GateState`, because `GateState` is the
+  state that must survive a reconnect (M9).
+- Q: `GateState.file_md5` and `Media.file_md5` share a name. Rename? (Q9; the prompt's Q5) →
+  **Renamed, not asked.** The gate's field is `script_md5`. `file_md5` is a schema element name
+  (`cms:Md5Type`, `cuems-utils` 014) and is fixed upstream.
 
 ---
 
@@ -165,6 +205,69 @@ who owns a field through the UI. This feature leaves it alone.
 `NodeIndex.set_alias(node_uuid, alias) -> bool`, an in-place setter, because nodeconf delegates
 every map mutation to the library. Nodeconf's `node_set` handler is built on top of it. The gate
 closes only when both have landed.
+
+**M9. 869fat84r is absorbed in part, and the rest has a recorded collision surface.**
+`origin/feat/869fat84r-media-dimensions` @ `0b291d1` has 9 commits off `d9e0a39`, 14 files,
++3132/−57. It is not an ancestor of this branch. It was written on the rc15 line: wire-dict walks,
+`CuemsParser`, `XmlReaderWriter`.
+
+**Comes in (Q5 = C)**, ported onto the object line, never merged textually:
+- the four `Media` columns (`pixel_width`, `pixel_height`, `file_size`, `file_md5`), with
+  `MEDIA_ADDED_COLUMNS`, `missing_media_columns` and `ensure_media_columns`, called at start-up
+  (`CuemsProjectManager`) and by the repair tool;
+- the upload probe: `probe_dimensions` and `media_file_size`, the upload-verified md5, and
+  `Media.create(…)` storing them;
+- the value logic: `PIXEL_KEYS`, `STORED_KEYS`, `_positive_int`, `_md5`, `_valid`,
+  `dimensions_of_row`, `db_dimensions_resolver`;
+- the fill: `_allowed_keys`, `_set_dimensions`, `_dimensions_snapshot`, `_fix_one_media` and the
+  walk, re-expressed on cue identity and attribute setters (FR-038 to FR-040);
+- the decision logic of `stale_changes`, re-expressed on objects for the load-time comparison
+  (FR-043);
+- `CuemsUpload`'s relink guard (a failed relink is logged, not fatal).
+
+**Does not come in:**
+- `pyproject.toml`'s `cuemsutils>=0.1.0rc15`, which S1 forbids. The SPDX header lines may come in.
+- `CuemsMediaRefresh.py`: `refresh_media_before_load`, `check_media_on_open`, `_IN_PROGRESS`,
+  `_OPEN_IN_PROGRESS`, the indexer.
+- The save-time re-probe (`_save_resolvers` → `_verify_row_for_save`, `REFRESH_DEADLINE_S`).
+  002's save resolvers only read the database.
+- `media_report`, `plan_media_refresh`, `MediaFileCheck`, `_light_media_blocks`, `stale_by_file`,
+  `cap_report_files`, the `_FAILED/_VERIFIED/_INDEX_FAILED` marks, `mark_index_failed`.
+- `media_check_report` and `send_to_project_sessions`.
+- `repair_durations`' stored-value re-measurement (`_check_stored`, `--no-md5`, `DIMS_CHANGED`,
+  `MD5_CHANGED`). The repair tool takes only the column migration (FR-036).
+- `tests/test_media_refresh.py`.
+- The parts of `tests/test_media_dimensions.py` that exercise anything listed above.
+
+**Collision surface for the follow-on feature.** It is bound by Q6:
+- Its findings enter `document_load_report.media_repairs[]` (FR-046). It sends no frame of its own
+  that gates a save.
+- `GateState` is the only per-project report state. Any in-flight registry it brings is request
+  de-duplication and lives outside `GateState` (Q8).
+- Its re-probe changes library rows. That invalidates an outstanding report through FR-045's rows
+  digest, not through a second identity.
+- Its script reader must be the library's object load, not `_light_media_blocks` (M10).
+- It lands in `CuemsDBProject.py` beside FR-038's object walk, and calls it rather than copying
+  it.
+
+**M10. `_light_media_blocks` reports an empty project on every 013 document.** It reads the script
+with `xml.etree.ElementTree` and iterates elements named `AudioCue` and `VideoCue`
+(`0b291d1:CuemsDBProject.py:380-393`). A 013 document has `<Cue class="audio">` and
+`<Cue class="video">` (`tests/fixtures/script_minimal_013.xml`), so it finds no `Media` block, and
+`media_report` says "nothing stale" for every project. No error is raised. This is the R2 defect in a
+second reader, and porting the reader would also add a schema-less reader of script documents,
+which 001 rejected. That is why 002's load-time comparison (FR-043) walks the loaded `CuemsScript`.
+
+**M11. On the object line, `Media` is a `dict` subclass, and item assignment bypasses the setters.**
+This was measured against the library at `b2ea09a`:
+- the attribute setters raise as the prompt's R1 states (an uppercase or non-hex `file_md5`;
+  `pixel_width` of `0`, `1.5` or `True`);
+- assigning `None` removes the key;
+- **`media['file_md5'] = 'ZZ'` stores `'ZZ'` without complaint.**
+
+So a textual port that keeps `media[key] = value` and `del media[key]` does not raise. It stores
+invalid values silently, and only the save's T1 validation, if anything, catches them. FR-040
+requires attribute assignment and forbids item assignment and `del` on `Media`.
 
 ---
 
@@ -353,6 +456,47 @@ there. Run the tip capture script and confirm it produces a `project` frame.
 
 ---
 
+### User Story 6: A project stores its media files' real values, and the operator sees any correction before it is saved (Priority: P2)
+
+An operator uploads a video. The library records its duration, pixel size, file size and md5. When
+a project that uses the file is saved, its cues carry those values: a video cue carries all of them,
+and an audio cue carries everything except the pixel size. A value the client sent that is not
+valid is dropped, so it never fails the save. If a project on disk holds values that differ from
+the library's (a file was re-uploaded, or the repair tool corrected a duration), opening the project
+says so in the load report, and the operator acknowledges it before the save writes the corrected
+values. Values that are merely missing, as in an older project, are added by the next save without
+a report.
+
+**Why this priority**: the engine relies on these values at playback (duration for Auto-follow
+timing, pixel size instead of a probe at arm time). A silent rewrite of a cue's values is the same
+class of change the repair gate exists to surface (Principle III). It is P2 because it adds no new
+operator action. It reuses the acknowledgment from US1.
+
+**Independent Test**: the six tests of FR-042, each failing first. Then load a project whose script
+holds a duration different from its library row, and assert that `media_repairs` names it,
+`acknowledgment_required` is true, and a save is refused until it is acknowledged.
+
+**Acceptance Scenarios**:
+
+1. **Given** an upload of a movie, **When** it completes, **Then** its row stores the pixel size,
+   size and lowercase md5. A failed probe stores nothing for that value and does not fail the
+   upload.
+2. **Given** a database without the four columns, **When** the editor starts, **Then** they are
+   added, existing rows keep their data, and a failure stops the start with a logged reason.
+3. **Given** a save, **When** a video cue's `Media` arrives, **Then** it leaves with the row's
+   values. An audio cue's `Media` carries no pixel size, and a bare `MediaCue` (unknown class) keeps
+   its pixel size.
+4. **Given** client values the setters would refuse (an uppercase md5, a non-hex md5, `0`, `1.5`,
+   `True`), **When** saved, **Then** the md5 is lowercased or dropped, the rest are dropped, and the
+   save succeeds.
+5. **Given** a script whose stored duration differs from its row, **When** it is opened, **Then**
+   the report lists it in `media_repairs` and requires acknowledgment. The save is refused until
+   then, and the first save after acknowledgment preserves the original in the trash.
+6. **Given** a pre-rc15 script with no stored sizes, **When** it is opened, **Then** the report is
+   clean for media, and the next save adds the values.
+
+---
+
 ### Edge Cases
 
 - **A reconnect whose `session_id` the server no longer knows** (`CuemsWsServer.py:310-318` mints a
@@ -388,8 +532,16 @@ there. Run the tip capture script and confirm it produces a `project` frame.
   `schemaLocation` is rewritten (FR-023). The next `config_load` therefore returns a different
   revision from the pre-save file's, even for an unchanged document. That is expected, and a client
   must take the revision from the save reply.
-
----
+- **A library row changes while a media report is outstanding** (a re-upload of the same name, or
+  the repair tool's pass A): the script's bytes are unchanged, but the rows digest is not. The
+  report is re-derived with a new `report_id`, and acknowledgments are dropped (FR-045).
+- **A cue whose media file has no library row** (an orphan): its values are left as they are, and
+  it is not reported as stale.
+- **A row whose value is itself invalid** (a pre-migration `file_size` of `0`): `dimensions_of_row`
+  treats it as unknown, so the save removes the cue's value instead of writing `0`.
+- **The editor and an older editor share a migrated database**: the added columns are additive, and
+  peewee selects named columns, so an older editor still reads it (`0b291d1` `ensure_media_columns`
+  docstring).
 
 ## Requirements *(mandatory)*
 
@@ -437,15 +589,17 @@ there. Run the tip capture script and confirm it produces a `project` frame.
 - **FR-009**: When `project_save` arrives for a project with no gate state in this process (an editor
   restart, or a save from a session that never loaded it), the editor MUST determine the gate from
   the file on disk before writing. Concretely, it loads the file with the library's report-returning
-  load, in the executor. A non-clean outcome is refused as `unacknowledged`, and the refusal names a
-  report the session can obtain by loading the project. A clean outcome saves as today. The original
+  load, in the executor, and runs the media comparison (FR-043). A report with
+  `acknowledgment_required` is refused as `unacknowledged`, and the refusal names a report the
+  session can obtain by loading the project. Otherwise the save goes ahead as today. The original
   MUST NOT be overwritten unpreserved on any path (Principle III).
-- **FR-009a**: The project's gate state MUST record the md5 of the script file's bytes as loaded
-  for the report. On `project_save` of a project with non-clean gate state, the editor MUST re-hash
+- **FR-009a**: The project's gate state MUST record `script_md5`, the md5 of the script file's
+  bytes as loaded for the report (Q9). On `project_save` of a project with non-clean gate state, the editor MUST re-hash
   the file in the executor before deciding.
   - If the hash differs, the state is re-derived from the file as in FR-009. That makes a new
     `report_id` and drops every acknowledgment. The save is refused as `unacknowledged` unless the
-    new outcome is clean.
+    new report has no `acknowledgment_required`. A changed `media_rows_digest` has the same effect
+    (FR-045).
   - If the hash is the same, the recorded acknowledgments decide.
 
   Projects whose gate state is clean need no hash and no extra load (Clarifications).
@@ -593,6 +747,81 @@ there. Run the tip capture script and confirm it produces a `project` frame.
   - an alias is set through `node_set`;
   - a `settings` save requires restarting the engines, and the editor only says so;
   - the repair gate is keyed by project and survives a reconnect and an editor restart.
+  - the media columns are added at start-up, a save writes each cue's media values from the
+    library rows, and a stale value is reported at load and acknowledged before it is saved.
+
+**F. Media values, absorbed from 869fat84r `0b291d1` (US6; Q5–Q9, M9–M11)**
+
+- **FR-036**: `Media` MUST gain the nullable columns `pixel_width`, `pixel_height`, `file_size` and
+  `file_md5`. They are added to an existing database by `ensure_media_columns`, which is additive
+  and idempotent, at every editor start (`CuemsProjectManager`). A failure stops the start. The
+  repair tool MUST run the same migration before it reads the database. Its dry run MUST NOT write
+  the database: on a database without the columns, it reads a migrated temporary copy.
+- **FR-037**: An upload MUST store, on its new row, a movie's pixel size (`probe_dimensions`, the
+  first video stream), the file size (`media_file_size`), and the md5 the upload already verified,
+  normalised with `_md5`. A value that cannot be read is stored as `NULL` and never fails the upload.
+  The file is not hashed a second time.
+- **FR-038**: The save path's media fill MUST be the object walk 002 already has (`isinstance(cue,
+  MEDIA_CUES)`), extended to the stored values. The pure value functions `_positive_int`, `_md5`,
+  `_valid`, `dimensions_of_row` and `db_dimensions_resolver` are ported unchanged, and `_md5` keeps
+  returning `None` rather than raising. `fix_media_durations_in_contents` takes the walk's
+  `dimensions_resolver`. The save's resolvers MUST only read the database, with no probe and no
+  file read (Q5).
+- **FR-039**: Which stored keys a cue may carry MUST be decided by cue identity, never by a wire key:
+  ```python
+  def _allowed_keys(cue):
+      return STORED_KEYS[len(PIXEL_KEYS):] if isinstance(cue, AudioCue) else STORED_KEYS
+  ```
+  An `AudioCue` carries size and md5. Anything else, including a bare `MediaCue` (an unknown
+  `class`), carries all four. `_fix_one_media` takes the cue object, not a type string.
+- **FR-040**: On `Media`, every value MUST be normalised with `_valid` before it reaches a setter,
+  and it MUST be written by **attribute assignment**. A key MUST be cleared by assigning `None`. Item
+  assignment (`media[key] = …`), `del media[key]`, `media.pop(key)` and assigning `0` are forbidden
+  for the stored keys (M11), and a test greps the source for them. No raw client value is ever
+  assigned.
+- **FR-041**: Media values the save writes MUST come from the library row, for the keys the cue may
+  carry. A row value that is unknown or invalid removes the cue's value. An orphan cue (no row)
+  keeps its values unchanged.
+- **FR-042**: These six tests MUST exist and fail before FR-038 to FR-041 land. Their failing run is
+  captured in `evidence/`. They close `cuems-utils` T039 (FR-047):
+  1. an `AudioCue` whose `Media` arrives with `pixel_width` / `pixel_height` loses both, and a
+     `VideoCue` keeps them (this fails against a port of `cue_type == 'AudioCue'`);
+  2. a cue of unknown class (a bare `MediaCue`) keeps its pixel size;
+  3. an uppercase client `file_md5` is stored lowercase, and the save succeeds;
+  4. a non-hex or wrong-length `file_md5` is dropped, and the save succeeds;
+  5. `file_size` of `0`, `1.5` and `True` from a client is dropped, not assigned;
+  6. clearing a stored value leaves the key absent: not `0`, and not projected as `null` by
+     `to_wire`.
+- **FR-043**: At load (`CuemsDBProject.open` and `inspect`), the editor MUST compare each media
+  cue's **present** stored values with its library row, on the loaded `CuemsScript` object. It uses
+  the same decisions as the fill (FR-039 to FR-041): duration, pixel size (a cue that may not carry
+  one but does is stale), file size, md5. The comparison runs no probe and parses no file. A value
+  that is merely missing is not stale. An orphan is not stale.
+- **FR-044**: `document_load_report` MUST gain two keys, and the payload version is not bumped
+  (new optional keys):
+  - `media_repairs[]`: items `{cue_id, file_name, field, stored, current}`. `field` is one of
+    `duration`, `pixel_size` (`"WxH"`), `file_size` and `file_md5`. `current` is `null` when the
+    save will remove the value.
+  - `acknowledgment_required`: true when `outcome != "clean"` or `media_repairs` is non-empty.
+
+  `outcome` and `repairs[]` stay the library's report verbatim. `file_differs_from_loaded` is true
+  when the library says so or `media_repairs` is non-empty. The save gate (FR-006 to FR-010) and the
+  preserve-to-trash step (001 FR-021a) key on `acknowledgment_required` and that combined flag.
+- **FR-045**: `GateState` MUST record `media_rows_digest`: the md5 of the canonical JSON of the
+  `(file_name, duration, pixel_width, pixel_height, file_size, file_md5)` rows the comparison read.
+  A `report_id` is re-used only while both `script_md5` and `media_rows_digest` match. On
+  `project_save` with non-clean state, a mismatch of either re-derives the state as FR-009a states.
+- **FR-046**: The deferred media check (M9) is bound by Q6: its findings MUST enter
+  `media_repairs[]`, and it MUST NOT send a frame that gates `project_save`. This repository's
+  `ws-command-responses.txt` and CLAUDE.md say so, so the follow-on starts from it.
+- **FR-047**: When FR-042's six tests pass, a short note MUST be written to this feature's
+  `evidence/t039-absorbed.md`, naming the tests by node id, the 002 commit, and this spec's FR-036
+  to FR-046. The maintainer then tells `cuems-utils` that
+  `specs/planning/t039-editor-media-obligations.md` is absorbed, and T039 can close. This feature
+  does not edit or delete anything in `cuems-utils`.
+- **FR-048**: The commit that ports each piece MUST name `0b291d1` and the 869fat84r commit it
+  comes from (`83d8460`, `cd37792`, `b29d40e` for the relink guard). The PR description lists what
+  was deferred (M9).
 
 ### Upstream gates
 
@@ -619,9 +848,9 @@ the gate list is complete there as well.
 - **Revision**: the md5 of a config document's bytes when they are read. It is opaque to clients.
   `null` means "no file". It is used only for the stale-write check, and it is not a version
   (neither `doc_version` nor the payload version).
-- **Repair gate state**: per project, the outstanding load report (`report_id`, `outcome`, whether
-  the file differs, whether it has been preserved, and the md5 of the file the report describes)
-  and the set of sessions that acknowledged it. It
+- **Repair gate state**: per project, the outstanding load report (`report_id`, `outcome`, the
+  `media_repairs`, whether the file differs, whether it has been preserved, `script_md5` and
+  `media_rows_digest`) and the set of sessions that acknowledged it. It
   lives as long as the file it describes is stale. When the process restarts, the gate is
   re-derived from the file (FR-009).
 - **Restart notice**: the list of services whose cached configuration a save has made stale.
@@ -630,6 +859,9 @@ the gate list is complete there as well.
   nodeconf.
 - **Upstream gate**: a strict-xfail test, named by `<repo> UR-<n>`, that blocks the tag until it
   flips.
+- **Stored media values**: the duration, pixel size (movies only), file size and md5 of a media file,
+  held on its library row (source of truth) and copied into each cue's `Media` by the save. An
+  `AudioCue` never carries a pixel size. Absent means unknown, and `0` is never a value.
 
 ## Success Criteria *(mandatory)*
 
@@ -657,6 +889,11 @@ the gate list is complete there as well.
 - **SC-010**: The `cuems-frontend` workarounds that this feature retires (the reload on reconnect and
   the `'True'` string branch) are each named in the handover, together with the requirement that
   retires them.
+- **SC-011**: FR-042's six tests pass, each shown failing first. Item assignment on `Media`'s stored
+  keys occurs 0 times in `src/`.
+- **SC-012**: In 100% of the tested cases, a project whose script holds a media value that differs
+  from its library row is never saved without an acknowledgment and a preserved original. A
+  pre-rc15 project with merely missing values needs neither.
 
 ## Clarification agenda
 
@@ -683,6 +920,9 @@ All three were resolved on 2026-10-08, each taking its default (see [Clarificati
 - **Writing `network_map.xml` under any condition**, including as a fallback when nodeconf is down
   (S5, FR-025).
 - **Feature 001's last open task.** 001 stays as it is.
+- **The rest of 869fat84r** (M9): `CuemsMediaRefresh`, the save-time and pre-load re-probe, the
+  video indexer, `media_check_report`, and the repair tool's stored-value re-measurement. These go
+  to a follow-on feature bound by FR-046 and M9's collision surface.
 
 ## Assumptions
 

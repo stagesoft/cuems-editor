@@ -12,15 +12,19 @@ The editor owns only the bookkeeping around them.
 ## GateState (server, per project): the repair gate
 
 Held in `server.repair_gates[project_uuid]`. It replaces `CuemsWsUser.repair_state`, which is
-deleted. It is read and written only on the event-loop thread.
+deleted. It is read and written only on the event-loop thread. It is the **only** per-project
+report state (spec Q8). Any in-flight de-duplication a later media check brings lives elsewhere.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `project_uuid` | `str` | the key, repeated for logging |
-| `report_id` | `str` (uuid4) | the outstanding report's id. It is minted when the state is derived, and **re-used** by `project_load` while `file_md5` still matches (R8.5) |
-| `outcome` | `"clean"`, `"converted"` or `"repaired"` | `LoadReport.outcome.value` |
-| `file_differs_from_loaded` | `bool` | from the report: whether the file on disk is stale |
-| `file_md5` | `str` | md5 of the script file's bytes that this report describes |
+| `report_id` | `str` (uuid4) | the outstanding report's id. It is minted when the state is derived, and **re-used** by `project_load` only while both `script_md5` and `media_rows_digest` still match (FR-045) |
+| `outcome` | `"clean"`, `"converted"` or `"repaired"` | `LoadReport.outcome.value`, the library's verdict verbatim |
+| `media_repairs` | `list[{cue_id, file_name, field, stored, current}]` | the stale stored media values found at load (FR-043) |
+| `acknowledgment_required` | `bool` | `outcome != "clean"` or `media_repairs` non-empty |
+| `file_differs_from_loaded` | `bool` | the library's flag, or `media_repairs` non-empty |
+| `script_md5` | `str` | md5 of the script file's bytes that this report describes (renamed from `file_md5`, spec Q9) |
+| `media_rows_digest` | `str` | md5 of the canonical JSON of the sorted `(file_name, duration, pixel_width, pixel_height, file_size, file_md5)` rows the comparison read (FR-045) |
 | `preserved` | `bool` | whether the stale original is already in the trash. This makes one move per stale file |
 | `acknowledged_by` | `set[str]` | the `session_id`s that acknowledged **this** `report_id` |
 | `report` | `LoadReport` | kept so that a re-sent `document_load_report` is identical |
@@ -29,18 +33,20 @@ deleted. It is read and written only on the event-loop thread.
 
 ```text
 (absent) --project_load / project_save with no state--> derive(file)
-derive(file):  read bytes -> md5 -> load_with_report
-               outcome clean  -> CLEAN(file_md5)
-               otherwise      -> PENDING(new report_id, acknowledged_by = {})
+derive(file):  read bytes -> script_md5 -> load_with_report -> compare media with rows
+               (FR-043) -> media_rows_digest
+               not acknowledgment_required -> CLEAN(script_md5, media_rows_digest)
+               otherwise                   -> PENDING(new report_id, acknowledged_by = {})
 
 PENDING --repair_acknowledge(session, report_id matches)--> PENDING(+session)
 PENDING --project_save(session)-->
-    re-hash != file_md5      -> derive(file); refuse unless now CLEAN
+    re-hash != script_md5 or rows digest != media_rows_digest
+                             -> derive(file); refuse unless now CLEAN
     session not acknowledged -> refuse "unacknowledged"
     acknowledged             -> claim preserved if file_differs and not preserved;
-                                update(); -> CLEAN(new md5)
+                                update() (the fill writes the rows' values) -> CLEAN(new md5s)
     preserve failed          -> refuse "preserve_failed", preserved = False
-CLEAN   --project_save--> update() (no hash, no load) -> CLEAN(new md5)
+CLEAN   --project_save--> update() (no hash, no load) -> CLEAN(new md5s)
 any     --project_unload(session)--> acknowledged_by -= {session};
                                      drop if no session has loaded_project == uuid
 any     --project_delete-->          drop
@@ -52,6 +58,27 @@ Invariants:
 - Every write of a stale file is preceded by a successful preserve (001 FR-021a).
 - An editor restart empties the table, and the first save re-derives the state from the file
   (FR-009).
+- A `CLEAN` save does not re-check the rows. If a row changes after a clean load, the save writes
+  the row's new values without a report. The acknowledgment covers values that were **present in
+  the file and differed**; values the operator never saw on disk are the library's to fill (Q6:
+  missing values are added without a report). This is accepted and recorded.
+
+## Stored media values (absorbed from 869fat84r `0b291d1`)
+
+Columns on `Media` (all nullable, added by `ensure_media_columns`):
+
+| Column | Type | Source | On a cue's `Media` |
+|---|---|---|---|
+| `pixel_width`, `pixel_height` | `INTEGER` | `probe_dimensions` at upload, movies only | both or neither; never on an `AudioCue` (FR-039) |
+| `file_size` | `INTEGER` | `media_file_size` at upload | every media cue |
+| `file_md5` | `VARCHAR(255)` | the md5 the upload verified, lowercased by `_md5` | every media cue; `cms:Md5Type`, 32 lowercase hex characters |
+
+Rules (FR-040, spec M11):
+- **Absent means unknown, and `0` is never a value.**
+- Normalise with `_valid`, then assign through the attribute setter. Clear a key by assigning
+  `None`.
+- Never use item assignment, `del`, `pop` or `0` on these keys: `Media` is a `dict` subclass, and
+  item assignment bypasses the setters.
 
 ## Revision: a config document's change detector
 

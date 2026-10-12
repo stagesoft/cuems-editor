@@ -61,6 +61,11 @@ Baseline before this feature: 160 passed, 3 skipped.
 | Version 1 restated | US3 | `test_payload_version.py` green; `test_protocol_doc.py` finds no live string boolean |
 | Renaming a node | US4 #1 (fake `Communicator`), #2 (no socket), #3, #4 | request shape; `node_list` to all sessions; `unavailable` with no IPC; error relayed verbatim; refusal before IPC |
 | G4 against the real handler | research R7 | `xfailed` (`unknown action: node_set`) until nodeconf lands it |
+| FR-042's six media tests | US6: written first, captured red | AudioCue loses pixel size, VideoCue and bare MediaCue keep it; uppercase md5 is lowercased; bad md5 and sizes are dropped; a cleared value is absent |
+| Columns migrate | US6 #2: a database created without the four columns | added at start; existing rows intact; dry-run repair tool leaves the database untouched |
+| Stale media is acknowledged | US6 #5: script duration differs from its row | `media_repairs` lists it; `acknowledgment_required: true`; save refused, then preserved and written |
+| A changed row invalidates the report | FR-045: change a row after the load | new `report_id`; acknowledgment dropped |
+| Pre-rc15 project | US6 #6 | no media entries; save adds the values |
 
 ## 4. Manual check against a running editor (optional)
 

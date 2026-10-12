@@ -25,6 +25,17 @@ stale tab), or when the file's md5 changed.
 Payload version 1 is restated as the merge-candidate wire, with JSON booleans and the new
 `config_save` reply, without a bump.
 
+It also absorbs the save path of 869fat84r (`0b291d1`), ported onto objects (spec Q5–Q9, M9–M11,
+research R11, R12):
+- four `Media` columns, with a start-up migration;
+- the upload probe;
+- a fill that writes each cue's stored media values from the library rows, by cue identity and
+  through the strict setters;
+- a load-time comparison that puts present-but-stale media values into `document_load_report`'s
+  new `media_repairs`, behind the same acknowledgment gate.
+
+The rest of 869fat84r is deferred, with its collision surface recorded.
+
 Four upstream gaps (G1–G4) are strict xfails that must flip before the tag. The approach comes from
 [research.md](research.md) R1–R10.
 
@@ -45,7 +56,8 @@ Four upstream gaps (G1–G4) are strict xfails that must flip before the tag. Th
 - `websockets`, `pynng` (through `Communicator`), `peewee`.
 - `hashlib` from the standard library.
 
-**Storage**: files only. The config XML is under `CUEMS_CONF_PATH` and `<library>/projects/<uname>/`,
+**Storage**: files, plus `project-manager.db` (SQLite through peewee), which gains four nullable
+`media` columns through an additive `ALTER TABLE` (FR-036). Files: The config XML is under `CUEMS_CONF_PATH` and `<library>/projects/<uname>/`,
 and the script XML under the library. In-memory server tables: `repair_gates` and `file_locks`. No
 DB schema change.
 
@@ -101,6 +113,8 @@ Wire deltas, each enumerated in [contracts/ws-messages.md](contracts/ws-messages
 Every new frame has a declared audience (contracts).
 - `repair_gates` and `file_locks` are created and mutated on the loop thread only. Hashing,
   loading and saving run in the executor.
+- The media comparison (FR-043) and the upload probe run in the executor. The comparison adds no
+  file read beyond the load `open` already performs.
 - **Concurrent-edit policy changes for config documents**, from last-writer-wins to refusing a
   stale write. This is recorded as a contract change (spec Assumptions; FR-015, FR-017). Scripts
   keep last-writer-wins.
@@ -114,6 +128,8 @@ Every new frame has a declared audience (contracts).
 | `project_save` of a repaired script | trash-before-write (001 FR-021a), now also after a reconnect, a restart, or a stale tab (FR-009, FR-009a) |
 | `config_save` | **Finding**: since 001 T059 it overwrote the file with no backup, and this feature makes it the operator's editing path. **Fixed** by FR-015a: under the lock, the bytes just hashed are written to `<library>/trash/config/…` before the save. If that fails, nothing is saved |
 | `node_set` | the editor writes nothing; nodeconf owns the file |
+| `project_save` writing corrected media values (FR-041) | a present-but-different value is reported and acknowledged first, and the original is preserved in the trash (FR-043, FR-044). A merely missing value is added without a report (Q6) |
+| `ensure_media_columns` (`ALTER TABLE ADD COLUMN` on `project-manager.db`) | **No backup.** It is additive and idempotent, and an older editor still reads the result. Recorded in Complexity Tracking, not waived |
 
 A write either completes or leaves the prior file: `.save` is a temp-file rename. Tests against a
 temporary library assert both recovery paths (IV.3).
@@ -135,6 +151,9 @@ temporary library assert both recovery paths (IV.3).
   `_project_settings_document` is not read (G2 stays a gate).
 - **Not re-implemented**: the path convention (the editor uses `conf_path` / `project_path`), the
   projection (`to_wire`), validation (`.save`'s T1).
+- Not taken from 869fat84r: `cuemsutils.xml.*`, `CuemsParser`, `XmlReaderWriter`, and the
+  `xml.etree` reader `_light_media_blocks` (M10). The ported walk uses `CuemsScript` objects and
+  the `Media` setters.
 - The md5 is the editor's own concern. The library declined a hash helper (`cuems-utils` §0a).
 
 **Operational Constraints**
@@ -174,13 +193,22 @@ src/cuemseditor/
 │                       #   repair_state deleted
 ├── CuemsWsServer.py    # repair_gates, file_locks, notify_others_config_changed;
 │                       #   action registration
-└── CuemsDBProject.py   # open() also returns the loaded file's md5; inspect(uuid)
+├── CuemsDBProject.py   # open() also returns script_md5 + media comparison; inspect(uuid);
+│                       #   value functions, object fill (_allowed_keys(cue), setters only),
+│                       #   media_staleness (FR-043)
+├── CuemsDBModel.py     # 4 Media columns, ensure_media_columns (from 0b291d1)
+├── CuemsDBMedia.py     # probe_dimensions, media_file_size, new() stores them (from 0b291d1)
+├── CuemsProjectManager.py  # ensure_media_columns at start-up
+├── CuemsUpload.py      # relink guard (from 0b291d1)
+└── repair_durations.py # ensure_media_columns; dry run on a migrated temporary copy
 
 tests/
 ├── test_repair_gate_durable.py     # US1 (FR-005 written first), FR-009, FR-009a, FR-010
 ├── test_config_round_trip.py       # US2: load, save, conflict, concurrency, backup, refusals, restart
 ├── test_node_set.py                # US4 with a fake Communicator; G4 against nodeconf's handler (xfail)
 ├── test_protocol_doc.py            # US3: no live string boolean; the restated row exists
+├── test_media_values.py            # FR-042's six (red first), FR-036/037/041, item-assignment grep
+├── test_media_staleness.py         # US6: media_repairs, acknowledgment_required, rows digest (FR-043 to FR-045)
 ├── test_upstream_gates.py          # G1–G3 strict xfails (G1 replaces the _pending_ur6 pin)
 ├── test_schema_descriptor.py       # edited: config_save cases gain base_revision; network_map now refused
 ├── test_document_load_report.py    # edited where it reached self.repair_state
@@ -208,7 +236,10 @@ story's failing-first run can be captured on its own.
    (Principle I: the document describes what is sent at every commit).
 6. **The upstream reports** (UR-7 to `cuems-utils`, UR-8 to `cuems-nodeconf`) are written when their
    xfails are added, so each xfail's reason names a file that exists.
-7. **Documentation-only items** (US5) can go in parallel with anything after step 1.
+7. **869fat84r port**: FR-042's six tests first (captured red), then FR-036/037 (columns, upload),
+   then the fill (FR-038 to FR-041), then the comparison (FR-043 to FR-045). The comparison lands
+   after the gate rewrite (step 3), because it feeds `GateState`.
+8. **Documentation-only items** (US5) can go in parallel with anything after step 1.
 
 ## Complexity Tracking
 
@@ -216,4 +247,6 @@ story's failing-first run can be captured on its own.
 |---|---|---|
 | Strict xfails G1–G4 stand during the feature (S6) | Each is another repository's fix, and a workaround here is forbidden (Principle V) | each owner's fix. The tag is not cut while any stands (S7, FR-033) |
 | Config backups in `<library>/trash/config/` accumulate, one per save, and have no UI purge | FR-015a's recovery path. Correctness first | a future trash-management feature. Recorded in the CLAUDE.md field note |
+| `ensure_media_columns` alters `project-manager.db` without a backup (Principle III) | additive `ADD COLUMN`, idempotent, older editors still read the result; the same code runs on the rc15 line | a backup step for any later, non-additive migration. The editor has no migration framework |
+| 869fat84r's re-probe, report and indexer are deferred (M9) | Q5 = C: keep the merge candidate's save path free of 20 s probes and of a reader that reports nothing on 013 | the follow-on feature, bound by FR-046 |
 | Ratification records still open (`delete_from_trash` `rmtree` inside a transaction; `cli.py:29` `ProjectMappings`) | untouched by this feature | as recorded in 001's Complexity Tracking (`cuems-utils` 014/015 successors) |

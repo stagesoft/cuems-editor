@@ -102,17 +102,44 @@ returns them, by design.
 | Never | written to `network_map.xml` by the editor, on any path |
 | IPC | [nodeconf-node_set.md](nodeconf-node_set.md) |
 
+## `document_load_report`: two new optional keys (spec Q6, Q7, FR-043, FR-044)
+
+```text
+{"type": "document_load_report", "value": {
+   "report_id", "project_uuid", "document",
+   "outcome": "clean|converted|repaired",            # the library's verdict, verbatim
+   "file_differs_from_loaded": bool,                 # library flag OR media_repairs non-empty
+   "conversions": [...], "repairs": [...],           # the library's, verbatim
+   "media_repairs": [{"cue_id", "file_name",
+                      "field": "duration|pixel_size|file_size|file_md5",
+                      "stored": "<as in the file>",
+                      "current": "<library row>" | null}],   # null: the save removes it
+   "acknowledgment_required": bool                   # outcome != clean OR media_repairs non-empty
+}}
+```
+
+- New optional keys, so no payload-version bump.
+- `media_repairs` is always present: `[]` when nothing is stale.
+- A client gates its save UI on `acknowledgment_required`, not on `outcome`.
+- `media_repairs` lists values **present** in the file that differ from the library. A value the
+  file lacks (a pre-rc15 project) is added by the next save and is never listed.
+- The deferred media check, when it exists, adds its findings here. It sends no gating frame of its
+  own (FR-046).
+- `project_duplicate`'s optional `report` has the same shape.
+
 ## Repair gate frames: unchanged shapes, new durability
 
-`document_load_report`, `repair_acknowledge` and `repair_save_refused` keep their shapes. What
-changes (spec US1, FR-006 to FR-011):
+`repair_acknowledge` and `repair_save_refused` keep their shapes. What changes (spec US1,
+FR-006 to FR-011, FR-045):
 
 - The gate is per project. Each session acknowledges for itself, and that acknowledgment survives
   a reconnect that re-uses the `session_id`.
 - A session that never loaded the project, or a save after an editor restart, is refused while the
   file on disk is not clean. The refusal's `report_id` is the one `project_load` returns.
-- A file changed on disk since the report invalidates it. A new `report_id` is issued, and every
-  acknowledgment is dropped.
+- A file changed on disk since the report, or a library media row changed since it, invalidates the
+  report. A new `report_id` is issued, and every acknowledgment is dropped.
+- The gate covers media entries too: a project with only `media_repairs` is refused until it is
+  acknowledged, and its original is moved to the trash before the first save.
 - `repair_acknowledge` from a reconnected session answers with the echo, not the error frame.
 - The `ws-command-responses.txt:169-175` text is replaced. It also states that `cuems-frontend`'s
   reload-on-reconnect (`load-report.service.ts`) is no longer needed.
