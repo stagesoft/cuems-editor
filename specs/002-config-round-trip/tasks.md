@@ -350,7 +350,7 @@ file size, `cd37792` for size and md5, `b29d40e` for the relink guard (FR-048).
 
 ### Tests for User Story 6 (red first)
 
-- [ ] T055 [US6] (red first, FR-042) Create `tests/test_media_values.py` with the six T039 tests. Each builds a `CuemsScript` from `tests/fixtures/script_minimal_013.xml`, sets `Media` values on its cues **through attribute assignment**, and runs `CuemsDBProject.update` against a temporary library whose `Media` rows carry known values. Build the library with the `lib` fixture pattern. A failure at the row insert is **not** red: record the red run only after T058 (columns) and T062 (value functions) land and before T063 (the fill), so each test fails on its own assertion.
+- [X] T055 [US6] (red first, FR-042) Create `tests/test_media_values.py` with the six T039 tests. Each builds a `CuemsScript` from `tests/fixtures/script_minimal_013.xml`, sets `Media` values on its cues **through attribute assignment**, and runs `CuemsDBProject.update` against a temporary library whose `Media` rows carry known values. Build the library with the `lib` fixture pattern. A failure at the row insert is **not** red: record the red run only after T058 (columns) and T062 (value functions) land and before T063 (the fill), so each test fails on its own assertion.
   1. `test_an_audio_cue_loses_pixel_size_and_a_video_cue_keeps_it`;
   2. `test_an_unknown_class_media_cue_keeps_its_pixel_size` (a cue with `class="lighting"` decodes to a bare `MediaCue`);
   3. `test_an_uppercase_client_md5_is_stored_lowercase_and_the_save_succeeds`, built at the dict payload level (`data` passed to `update`), because a setter would refuse the uppercase value;
@@ -359,8 +359,8 @@ file size, `cd37792` for size and md5, `b29d40e` for the relink guard (FR-048).
   6. `test_a_cleared_value_is_absent_not_zero_not_null`. After the save, reload with `CuemsScript.load`: the key is not in the cue's `Media`, and `to_wire()` has no such key.
 
   Save that failing run (taken between T062 and T063) in `specs/002-config-round-trip/evidence/media-values-failing-first.txt`.
-- [ ] T056 [P] [US6] In `tests/test_media_values.py`, add `test_no_item_assignment_on_stored_media_keys` (FR-040, M11). Grep `src/cuemseditor/` with a regex for `\[['"](pixel_width|pixel_height|file_size|file_md5)['"]\]\s*=`, `del \w+\[['"](pixel_width|pixel_height|file_size|file_md5)` and `\.pop\(['"](pixel_width|pixel_height|file_size|file_md5)`. Expect zero hits.
-- [ ] T057 [P] [US6] Create `tests/test_media_migration.py`:
+- [X] T056 [P] [US6] In `tests/test_media_values.py`, add `test_no_item_assignment_on_stored_media_keys` (FR-040, M11). Grep `src/cuemseditor/` with a regex for `\[['"](pixel_width|pixel_height|file_size|file_md5)['"]\]\s*=`, `del \w+\[['"](pixel_width|pixel_height|file_size|file_md5)` and `\.pop\(['"](pixel_width|pixel_height|file_size|file_md5)`. Expect zero hits.
+- [X] T057 [P] [US6] Create `tests/test_media_migration.py`:
   - `test_start_up_adds_the_four_columns_and_keeps_rows`: a SQLite DB made with the **old** `media` schema (no new columns), opened through `CuemsProjectManager`;
   - `test_a_migration_failure_stops_the_start`: `ensure_media_columns` patched to raise;
   - `test_repair_tool_dry_run_never_writes_the_database`: the DB's sha256 is unchanged after `cuems-editor-repair-durations` runs without `--apply` on an old-schema DB;
@@ -369,20 +369,20 @@ file size, `cd37792` for size and md5, `b29d40e` for the relink guard (FR-048).
 
 ### Implementation for User Story 6
 
-- [ ] T058 [US6] Port into `src/cuemseditor/CuemsDBModel.py` from `0b291d1`:
+- [X] T058 [US6] Port into `src/cuemseditor/CuemsDBModel.py` from `0b291d1`:
   - the four `Media` fields `pixel_width = IntegerField(null=True)`, `pixel_height = IntegerField(null=True)`, `file_size = IntegerField(null=True)` and `file_md5 = CharField(null=True)`, with their docstring lines;
   - the extended `Media` select list;
   - `MEDIA_ADDED_COLUMNS = {'pixel_width': 'INTEGER', 'pixel_height': 'INTEGER', 'file_size': 'INTEGER', 'file_md5': 'VARCHAR(255)'}`;
   - `missing_media_columns` and `ensure_media_columns`, verbatim (FR-036).
-- [ ] T059 [US6] Port into `src/cuemseditor/CuemsProjectManager.py` the start-up call `ensure_media_columns(database)`, which logs and re-raises on failure, verbatim from `0b291d1`. Port into `src/cuemseditor/repair_durations.py` **only** the `ensure_media_columns` / `missing_media_columns` use, and the dry run's migrated temporary copy. Do not port `_check_stored`, `--no-md5`, `DIMS_CHANGED` or `MD5_CHANGED` (deferred, spec M9).
-- [ ] T060 [P] [US6] Port into `src/cuemseditor/CuemsDBMedia.py` from `0b291d1`:
+- [X] T059 [US6] Port into `src/cuemseditor/CuemsProjectManager.py` the start-up call `ensure_media_columns(database)`, which logs and re-raises on failure, verbatim from `0b291d1`. Port into `src/cuemseditor/repair_durations.py` **only** the `ensure_media_columns` / `missing_media_columns` use, and the dry run's migrated temporary copy. Do not port `_check_stored`, `--no-md5`, `DIMS_CHANGED` or `MD5_CHANGED` (deferred, spec M9).
+- [X] T060 [P] [US6] Port into `src/cuemseditor/CuemsDBMedia.py` from `0b291d1`:
   - `DIMENSIONS_PROBE_TIMEOUT`, `probe_dimensions` and `media_file_size`;
   - the `new()` changes that store `pixel_width` / `pixel_height` (MOVIE only), `file_size` and `file_md5`.
 
   Normalise `file_md5` with `CuemsDBProject._md5` rather than `md5.lower()` with a length check. Bring `MediaProbe` and `PROBE_*` only if `new()` uses them (research R11.2) (FR-037).
-- [ ] T061 [P] [US6] Port into `src/cuemseditor/CuemsUpload.py` the relink guard from `b29d40e`: a failed `update_projects_existed_media` is logged with `could not relink …` and does not abort the upload. Also pass `received_md5` to `db.media.new` (`0b291d1:CuemsUpload.py:198`).
-- [ ] T062 [US6] Port into `src/cuemseditor/CuemsDBProject.py`, verbatim from `0b291d1:CuemsDBProject.py:52-125`: `PIXEL_KEYS`, `STORED_KEYS`, `_positive_int`, `_md5`, `_valid`, `dimensions_of_row` and `db_dimensions_resolver`. `_md5` returns `None` and never raises (FR-038). Do not port `DIMENSION_KEYS`.
-- [ ] T063 [US6] Write the object form of the fill in `src/cuemseditor/CuemsDBProject.py` (FR-039 to FR-041, data-model.md "Stored media values"):
+- [X] T061 [P] [US6] Port into `src/cuemseditor/CuemsUpload.py` the relink guard from `b29d40e`: a failed `update_projects_existed_media` is logged with `could not relink …` and does not abort the upload. Also pass `received_md5` to `db.media.new` (`0b291d1:CuemsUpload.py:198`).
+- [X] T062 [US6] Port into `src/cuemseditor/CuemsDBProject.py`, verbatim from `0b291d1:CuemsDBProject.py:52-125`: `PIXEL_KEYS`, `STORED_KEYS`, `_positive_int`, `_md5`, `_valid`, `dimensions_of_row` and `db_dimensions_resolver`. `_md5` returns `None` and never raises (FR-038). Do not port `DIMENSION_KEYS`.
+- [X] T063 [US6] Write the object form of the fill in `src/cuemseditor/CuemsDBProject.py` (FR-039 to FR-041, data-model.md "Stored media values"):
   - `_allowed_keys(cue)`, exactly as FR-039 shows: `STORED_KEYS[len(PIXEL_KEYS):] if isinstance(cue, AudioCue) else STORED_KEYS`.
   - `_set_stored(media, values, cue)`: for each key in `STORED_KEYS`, `setattr(media, key, _valid(key, (values or {}).get(key)) if key in _allowed_keys(cue) else None)`. Clearing is assignment of `None`.
   - `_fix_one_media(cue, media, resolver, dimensions_resolver, stats)`:
@@ -395,7 +395,7 @@ file size, `cd37792` for size and md5, `b29d40e` for the relink guard (FR-048).
   - `fix_media_durations_in_contents(contents, resolver, dimensions_resolver=None)`.
   - `_fix_media_durations` passes `db_dimensions_resolver`, with no probe (Q5).
   - The existing whole-walk `except Exception` in `_fix_media_durations` (`:463-469`) must not hide a per-block failure: per-block failures are counted in `stats.errors`, and a non-empty `stats.errors` is logged at WARNING with the file names.
-- [ ] T064 [US6] Run `tests/test_media_values.py` and `tests/test_media_migration.py`. FR-042's six pass, the item-assignment grep is clean, and the migration tests pass.
+- [X] T064 [US6] Run `tests/test_media_values.py` and `tests/test_media_migration.py`. FR-042's six pass, the item-assignment grep is clean, and the migration tests pass.
 - [ ] T065 [P] [US6] (red first) Create `tests/test_media_staleness.py`, reusing the `lib` / `server` / `_session` helpers from `tests/test_repair_gate_durable.py`:
   - `test_a_stale_duration_is_a_media_repair_and_requires_acknowledgment`: the script's `Media.duration` differs from the row. Expect `document_load_report.value.media_repairs == [{cue_id, file_name, field: "duration", stored, current}]`, `acknowledgment_required` true, `outcome` `"clean"` (verbatim), and `file_differs_from_loaded` true. The save is refused until acknowledged, then the original is preserved and written;
   - `test_pixel_size_on_an_audio_cue_is_a_media_repair_with_current_null`;
