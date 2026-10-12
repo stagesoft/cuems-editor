@@ -9,6 +9,7 @@ import os
 from datetime import datetime, timedelta
 from cuemsutils.helpers import new_uuid, new_datetime, Unset
 from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
+from cuemsutils.errors import IngestError, ValidationError
 import websockets as ws
 import sys
 
@@ -169,35 +170,175 @@ def schema_descriptor_value(schema, types):
     }
 
 
-# config_save targets that are refused, with the reason the client is told.
-CONFIG_SAVE_REFUSED = {
-    'script': 'a script is saved with project_save, not config_save',
-    'hardware_outputs': 'hardware_outputs is reserved and has no model bindings',
-}
-
-# The four domains config_save can persist, the file each writes, and
-# whether that file is system-wide (ConfigManager.conf_path) or per-project
-# (ConfigManager.project_path, which needs the unix_name config_save's
-# "project_uuid" resolves). cuems-utils UR-6: project_path/conf_path raise
-# FileNotFoundError when the target has never been saved before, which is
-# the ordinary state for a project's settings.xml/mappings.xml before an
-# operator customises them — so a project's *first* config_save still fails
-# until that is fixed upstream.
-CONFIG_SAVE_TARGETS = {
+# The four configuration documents, the file each is, and whether that file
+# is system-wide (ConfigManager.conf_path) or per-project
+# (ConfigManager.project_path, which needs the unix_name a "project_uuid"
+# resolves to). Both raise FileNotFoundError for a file not created yet: on
+# the read side that is the "exists: false" signal; on the write side it is
+# cuems-editor UR-6 (gate G1), so a project's first config_save still fails.
+CONFIG_FILES = {
     'settings': ('conf', 'settings.xml'),
     'network_map': ('conf', 'network_map.xml'),
     'project_mappings': ('project', 'mappings.xml'),
     'project_settings': ('project', 'settings.xml'),
 }
 
+# config_save targets that are refused, with the reason the client is told.
+CONFIG_SAVE_REFUSED = {
+    'script': 'a script is saved with project_save, not config_save',
+    'hardware_outputs': 'hardware_outputs is reserved and has no model bindings',
+    'network_map': 'network_map.xml is written by cuems-nodeconf; set an alias with node_set',
+}
 
-def _save_config_document(name, document, project_uname=None):
-    """Build and write one ``config_save`` document. Runs in the executor."""
+# The domains config_save writes. network_map is not one (FR-019): nodeconf
+# owns that file and reverts any other writer.
+CONFIG_SAVE_TARGETS = {name: CONFIG_FILES[name] for name in ('settings', 'project_mappings', 'project_settings')}
+
+# The services whose cached configuration a save makes stale (FR-016). The
+# editor only says so (FR-021). where_active: the editor cannot see whether
+# cuems-node-engine runs on this host, so the operator decides.
+CONFIG_RESTART = {
+    'settings': [
+        {'service': 'cuems-controller-engine', 'where_active': False},
+        {'service': 'cuems-node-engine', 'where_active': True},
+    ],
+}
+
+# config_load targets that are refused, with the reason the client is told.
+CONFIG_LOAD_REFUSED = {
+    'script': 'a script is loaded with project_load, not config_load',
+    'hardware_outputs': 'hardware_outputs is reserved and has no model bindings',
+    'project_settings': ('project_settings has no public read projection in cuemsutils '
+                         '(cuems-editor UR-7); it cannot be loaded yet'),
+}
+
+# What a fresh ConfigManager(load_all=False) must load before
+# to_wire(<schema>) can project the domain (research R2), each step called
+# with the manager and the project's unix_name.
+CONFIG_LOAD_STEPS = {
+    'settings': (),
+    'network_map': (lambda manager, uname: manager.load_network_map(),),
+    'project_mappings': (lambda manager, uname: manager.load_net_and_node_mappings(),
+                         lambda manager, uname: manager.load_project_mappings(uname)),
+}
+
+# Errors by which the library refuses a document: config_save_refused /
+# config_load_failed, not the error frame (research R5). SchemaError is a
+# ValidationError.
+LIBRARY_REFUSALS = (IngestError, ValidationError)
+
+
+class ConfigChanged(Exception):
+    """The file changed between the revision check and the backup, under the lock."""
+
+
+def _config_path(manager, name, project_uname):
+    """The document's path. ``FileNotFoundError`` when it does not exist (UR-6)."""
+    kind, file_name = CONFIG_FILES[name.value]
+    return manager.conf_path(file_name) if kind == 'conf' else manager.project_path(project_uname, file_name)
+
+
+def _root_instance(manager, name):
+    """The descriptor ``instance`` of the domain's root type (FR-013, research R4).
+
+    A starting point for a form, not a saveable document: its required
+    leaves are null (cuems-frontend UR-1, gate G3).
+    """
+    types = manager.get_schema_descriptor(name)
+    root = next(t for t in types if t.key.is_path and '/' not in t.key.name)
+    return json.loads(json.dumps(root.instance, default=_json_safe))
+
+
+def _load_config_document(name, project_uname=None):
+    """``(exists, revision, document)`` of one config document. Runs in the executor.
+
+    The revision is the md5 of the bytes, taken before the load: a file that
+    changes in between makes the client's next save a conflict carrying the
+    current document, which is safe. A fresh manager per call: the server's
+    startup copy is never served (S3).
+    """
+    manager = ConfigManager(load_all=False)
+    try:
+        path = _config_path(manager, name, project_uname)
+    except FileNotFoundError:
+        return False, None, _root_instance(manager, name)
+    revision = bytes_md5(path)
+    if name.value not in CONFIG_LOAD_STEPS:
+        return True, revision, None   # project_settings: no read projection (UR-7)
+    for step in CONFIG_LOAD_STEPS[name.value]:
+        step(manager, project_uname)
+    document = json.loads(json.dumps(manager.to_wire(name.value), default=_json_safe))
+    return True, revision, document
+
+
+def _resolve_config_path(name, project_uname=None):
+    """The target path, or ``None`` when the file does not exist. Runs in the executor."""
+    try:
+        return _config_path(ConfigManager(load_all=False), name, project_uname)
+    except FileNotFoundError:
+        return None
+
+
+def _save_config_document(name, document, path, scope, revision):
+    """Back up, build and write one ``config_save`` document; return the new md5. Runs in the executor.
+
+    Called under the file's lock after the revision check. The bytes backed
+    up are the bytes that hashed to *revision*: a writer outside the editor
+    in between raises :class:`ConfigChanged`. The document is built first, so
+    a payload the library refuses leaves no backup; a refusal at ``.save()``
+    (T1) removes the backup it made, since the file is unchanged. If the
+    backup cannot be written, nothing is saved (FR-015a).
+    """
+    with open(path, 'rb') as fh:
+        original = fh.read()
+    if hashlib.md5(original).hexdigest() != revision:
+        raise ConfigChanged(path)
     manager = ConfigManager(load_all=False)
     built = manager.from_json(name, document)
-    kind, file_name = CONFIG_SAVE_TARGETS[name.value]
-    path = manager.conf_path(file_name) if kind == 'conf' else manager.project_path(project_uname, file_name)
-    built.save(path)
+    backup = _write_config_backup(manager.library_path, scope, path, original)
+    try:
+        built.save(path)
+    except Exception:
+        os.remove(backup)
+        raise
+    Logger.info(f'config_save of {name.value}: {path} replaced, previous bytes in {backup}')
+    return bytes_md5(path)
+
+
+def _write_config_backup(library_path, scope, path, original):
+    """``<library>/trash/config/<scope>_<file stem>_<YYYYmmddTHHMMSS>.xml``, never overwritten."""
+    directory = os.path.join(library_path, 'trash', 'config')
+    os.makedirs(directory, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(path))[0]
+    base = f"{scope}_{stem}_{datetime.now().strftime('%Y%m%dT%H%M%S')}"
+    candidate, n = os.path.join(directory, f'{base}.xml'), 0
+    while True:
+        try:
+            with open(candidate, 'xb') as fh:
+                fh.write(original)
+            return candidate
+        except FileExistsError:
+            n += 1
+            candidate = os.path.join(directory, f'{base}-{n}.xml')
+
+
+def refusal_value(schema, project_uuid, error):
+    """The ``value`` of ``config_save_refused`` / ``config_load_failed`` for a library refusal.
+
+    The location comes from the library's ``Violation``, never from parsing
+    its message (research R5): a refusal without one has null ``field``,
+    ``location`` and ``rule``.
+    """
+    violation = getattr(error, 'violation', None)
+    location = getattr(violation, 'location', None)
+    return {
+        'schema': schema,
+        'project_uuid': project_uuid,
+        'field': location[1] if location and len(location) > 1 else None,
+        'location': None if location is None else list(location),
+        'rule': getattr(violation, 'rule', None),
+        'message': str(error),
+    }
 
 
 def load_failed_value(project_uuid, error):
@@ -341,6 +482,7 @@ class CuemsWsUser():
                     "project_unload": lambda: self.project_unload(action),
                     "repair_acknowledge": lambda: self.repair_acknowledge(value, action),
                     "schema_descriptor": lambda: self.schema_descriptor(value, action),
+                    "config_load": lambda: self.config_load(value, action),
                     "config_save": lambda: self.config_save(value, action),
                 }
 
@@ -695,75 +837,166 @@ class CuemsWsUser():
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), action=action)
 
-    async def config_save(self, value, action):
-        """Persist a configuration document sent by the client.
+    async def config_domain(self, value, action, refused, targets):
+        """Resolve a config request's ``(SchemaName, project_uuid, unix_name)``, or answer it.
 
-        Refuses ``script`` (that is ``project_save``), ``hardware_outputs`` (no
-        model bindings), and anything that is not a ``SchemaName`` —
-        ``default_mappings.xml`` included, which is not a target.
-
-        All four domains are built with ``ConfigManager.from_json`` (cuemsutils
-        014, UR-5) and written with the object's own ``save(path)`` — the same
-        body ``save_settings``/``save_network_map``/``save_project_mappings``/
-        ``save_project_settings`` delegate to. ``project_mappings`` and
-        ``project_settings`` additionally need ``value["project_uuid"]``, since
-        the document alone does not say which project it belongs to; it is
-        resolved to a ``unix_name`` the same way ``project_ready`` does
-        (``CuemsDBProject.get_project_unix_name``). A successful ``network_map``
-        save also refreshes all sessions, same as ``nodelist_modify``.
-
-        Pending cuems-utils UR-6, a project's config_save still fails the first
-        time: ``ConfigManager.project_path``/``conf_path`` raise
-        ``FileNotFoundError`` for a file that has never been saved before,
-        which is the ordinary state of a project's ``settings.xml``/
-        ``mappings.xml`` before an operator customises them.
-
-        Args:
-            value: ``{"schema": <SchemaName value>, "document": {...}}``, plus
-                ``"project_uuid"`` for ``project_mappings``/``project_settings``.
-            action: Action name from the WebSocket frame.
+        Shared by ``config_load`` and ``config_save``. Sends the error frame
+        and returns ``None`` for a name that is not a schema, a refused or
+        non-target domain, and a project domain whose ``project_uuid`` is
+        missing or unknown (FR-014).
         """
         schema = value.get('schema') if isinstance(value, dict) else None
         try:
             name = SchemaName(schema)
         except ValueError:
-            await self.notify_error_to_user(f"config_save: {schema!r} is not a schema", action=action)
-            return
-        if name.value in CONFIG_SAVE_REFUSED:
-            await self.notify_error_to_user(f"config_save: {CONFIG_SAVE_REFUSED[name.value]}", action=action)
-            return
-        if name.value not in CONFIG_SAVE_TARGETS:
-            await self.notify_error_to_user(f"config_save: {name.value} is not a target", action=action)
-            return
-        document = value.get('document') if isinstance(value, dict) else None
-        project_uname = None
-        if CONFIG_SAVE_TARGETS[name.value][0] == 'project':
-            project_uuid = value.get('project_uuid') if isinstance(value, dict) else None
+            await self.notify_error_to_user(f"{action}: {schema!r} is not a schema", action=action)
+            return None
+        if name.value in refused:
+            await self.notify_error_to_user(f"{action}: {refused[name.value]}", action=action)
+            return None
+        if name.value not in targets:
+            await self.notify_error_to_user(f"{action}: {name.value} is not a target", action=action)
+            return None
+        project_uuid = project_uname = None
+        if CONFIG_FILES[name.value][0] == 'project':
+            project_uuid = value.get('project_uuid')
             if not project_uuid or not isinstance(project_uuid, str):
-                await self.notify_error_to_user(
-                    f"config_save of {name.value} needs a project_uuid", action=action)
-                return
+                await self.notify_error_to_user(f"{action} of {name.value} needs a project_uuid", action=action)
+                return None
             try:
                 project_uname = await self.server.event_loop.run_in_executor(
                     self.server.executor, self.server.db.project.get_project_unix_name, project_uuid)
             except Exception as e:
                 Logger.error(f"error: {type(e)} {e}")
                 await self.notify_error_to_user(str(e), action=action)
-                return
+                return None
+        return name, project_uuid, project_uname
+
+    async def config_load(self, value, action):
+        """Send this client a configuration document as the file holds it (FR-012, FR-013).
+
+        Replies ``config_load`` with ``{schema, project_uuid, exists,
+        revision, document}``: the document is ``ConfigManager.to_wire`` of a
+        manager loaded for this request, and ``revision`` the md5 of the
+        file's bytes, to send back as ``config_save``'s ``base_revision``.
+        With no file, ``exists`` is false, ``revision`` null, and the document
+        the descriptor's root ``instance``, a form's starting point that is
+        not saveable as it is. ``network_map`` is served read only.
+        ``project_settings`` is refused until cuemsutils projects it
+        (cuems-editor UR-7, gate G2). A document the library cannot load is
+        ``config_load_failed``; anything else the error frame.
+
+        Args:
+            value: ``{"schema": <name>}``, plus ``"project_uuid"`` for
+                ``project_mappings``.
+            action: Action name from the WebSocket frame.
+        """
+        domain = await self.config_domain(value, action, CONFIG_LOAD_REFUSED, CONFIG_FILES)
+        if domain is None:
+            return
+        name, project_uuid, project_uname = domain
         try:
-            await self.server.event_loop.run_in_executor(
-                self.server.executor,
-                functools.partial(_save_config_document, name, document, project_uname))
+            exists, revision, document = await self.server.event_loop.run_in_executor(
+                self.server.executor, functools.partial(_load_config_document, name, project_uname))
+        except LIBRARY_REFUSALS as e:
+            Logger.warning(f"config_load of {name.value} refused by the library: {e}")
+            await self.outgoing.put(json.dumps({
+                "type": "config_load_failed", "value": refusal_value(name.value, project_uuid, e)}))
+            return
         except Exception as e:
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), action=action)
             return
-        await self.outgoing.put(json.dumps({"type": "config_save", "value": "OK"}))
-        if name is SchemaName.NETWORK_MAP:
-            try:
-                await self.server.notify_all_node_list_update()
-            except Exception as e:
-                Logger.warning(f'Failed to reload and broadcast node list update after config_save: {e}')
+        await self.outgoing.put(json.dumps({"type": "config_load", "value": {
+            "schema": name.value, "project_uuid": project_uuid,
+            "exists": exists, "revision": revision, "document": document}}))
+
+    async def config_save(self, value, action):
+        """Persist a whole configuration document the client loaded (FR-015 to FR-020).
+
+        ``value["base_revision"]`` is required: the ``revision`` the client's
+        ``config_load`` returned, or null for "I expect no file" (Q3). Under
+        the file's lock the file is hashed again; a mismatch writes nothing
+        and answers ``config_conflict`` with the current revision and
+        document. Otherwise the bytes just hashed are copied into
+        ``<library>/trash/config/`` (if that fails, nothing is saved), the
+        document is built with ``ConfigManager.from_json`` and written with
+        its own ``save(path)``. The reply carries the new revision and the
+        services to restart; every other session gets ``config_changed``.
+
+        Refuses ``script`` (that is ``project_save``), ``hardware_outputs``
+        (no model bindings), ``network_map`` (cuems-nodeconf's file; an alias
+        is set with ``node_set``), and anything that is not a ``SchemaName``,
+        ``default_mappings.xml`` included. A document the library refuses is
+        ``config_save_refused`` with the violation's location.
+
+        Pending cuems-editor UR-6 (gate G1), a project's first config_save
+        still fails: ``ConfigManager.project_path`` raises
+        ``FileNotFoundError`` for a file not created yet.
+
+        Args:
+            value: ``{"schema", "document", "base_revision"}``, plus
+                ``"project_uuid"`` for ``project_mappings``/``project_settings``.
+            action: Action name from the WebSocket frame.
+        """
+        domain = await self.config_domain(value, action, CONFIG_SAVE_REFUSED, CONFIG_SAVE_TARGETS)
+        if domain is None:
+            return
+        name, project_uuid, project_uname = domain
+        if 'base_revision' not in value:
+            await self.notify_error_to_user(
+                f"config_save of {name.value} needs base_revision (the revision config_load returned, "
+                f"or null for no file)", action=action)
+            return
+        base_revision = value['base_revision']
+        document = value.get('document')
+        scope = 'controller' if CONFIG_FILES[name.value][0] == 'conf' else project_uname
+        try:
+            path = await self.server.event_loop.run_in_executor(
+                self.server.executor, functools.partial(_resolve_config_path, name, project_uname))
+            if path is None:
+                if base_revision is not None:
+                    await self.send_config_conflict(name, project_uuid, project_uname)
+                    return
+                # A first save. project_path / conf_path refuse a file not
+                # created yet (cuems-editor UR-6, gate G1): this raises unless
+                # the file appeared meanwhile, which the check below then
+                # answers as a conflict.
+                path = await self.server.event_loop.run_in_executor(
+                    self.server.executor, lambda: _config_path(ConfigManager(load_all=False), name, project_uname))
+            async with file_lock(self.server, path):
+                current = await self.server.event_loop.run_in_executor(self.server.executor, bytes_md5, path)
+                if current != base_revision:
+                    await self.send_config_conflict(name, project_uuid, project_uname)
+                    return
+                try:
+                    revision = await self.server.event_loop.run_in_executor(
+                        self.server.executor,
+                        functools.partial(_save_config_document, name, document, path, scope, current))
+                except ConfigChanged:
+                    await self.send_config_conflict(name, project_uuid, project_uname)
+                    return
+        except LIBRARY_REFUSALS as e:
+            Logger.warning(f"config_save of {name.value} refused by the library: {e}")
+            await self.outgoing.put(json.dumps({
+                "type": "config_save_refused", "value": refusal_value(name.value, project_uuid, e)}))
+            return
+        except Exception as e:
+            Logger.error(f"error: {type(e)} {e}")
+            await self.notify_error_to_user(str(e), action=action)
+            return
+        await self.outgoing.put(json.dumps({"type": "config_save", "value": {
+            "schema": name.value, "project_uuid": project_uuid, "revision": revision,
+            "restart": CONFIG_RESTART.get(name.value, [])}}))
+        await self.server.notify_others_config_changed(self, {
+            "schema": name.value, "project_uuid": project_uuid, "revision": revision})
+
+    async def send_config_conflict(self, name, project_uuid, project_uname):
+        """``config_conflict`` with the document's current revision and content (FR-015)."""
+        _exists, revision, document = await self.server.event_loop.run_in_executor(
+            self.server.executor, functools.partial(_load_config_document, name, project_uname))
+        await self.outgoing.put(json.dumps({"type": "config_conflict", "value": {
+            "schema": name.value, "project_uuid": project_uuid, "revision": revision, "document": document}}))
 
     async def node_status(self, action):
         """Ask the engine which nodes are answering right now.

@@ -51,7 +51,12 @@ Commands 													 ->	Responses
 {"action" : "nodelist_modify", "value" : "node_uuid", "modify_action" : "ADD|REMOVE"}		->  {"type": "nodelist_modify", "value": "OK"}
 {"action" : "nodelist_get"}										->  {"type": "node_list", "value": {"nodes": [...], "new_nodes": [...], "nodeconf_available": bool}}
 {"action" : "schema_descriptor", "value" : "script|settings|network_map|project_mappings|project_settings|hardware_outputs"}	->  {"type": "schema_descriptor", "value": {"schema": "name", "types": [{"key": "schema:TypeName", "fields": [{"name", "xsd_type", "required", "repeated", "order", "kind", "enum_values", "default", "repairability"}], "instance": {...}}]}}
-{"action" : "config_save", "value" : {"schema": "name", "document": {...}, "project_uuid": "uuid"}}	->  {"type": "config_save", "value": "OK"}		(project_uuid only for project_mappings/project_settings; see below)
+{"action" : "config_load", "value" : {"schema": "settings|network_map|project_mappings", "project_uuid": "uuid"}}	->  {"type": "config_load", "value": {"schema": "name", "project_uuid": "uuid|null", "exists": true, "revision": "md5|null", "document": {...}}}		(caller only)
+																or: {"type": "config_load_failed", "value": {"schema", "project_uuid", "field": "name|null", "location": [...]|null, "rule": "name|null", "message": "library text"}}		(caller only)
+{"action" : "config_save", "value" : {"schema": "name", "document": {...}, "base_revision": "md5|null", "project_uuid": "uuid"}}	->  {"type": "config_save", "value": {"schema": "name", "project_uuid": "uuid|null", "revision": "md5", "restart": [{"service": "name", "where_active": bool}]}}		(caller only; project_uuid only for project_mappings/project_settings; see below)
+																or: {"type": "config_conflict", "value": {"schema", "project_uuid", "revision": "md5|null", "document": {...}}}		(caller only)
+																or: {"type": "config_save_refused", "value": {"schema", "project_uuid", "field", "location", "rule", "message"}}		(caller only)
+																->  {"type": "config_changed", "value": {"schema": "name", "project_uuid": "uuid|null", "revision": "md5"}}		(every OTHER session, after a config_save)
 {"action" : "node_status"}										->  {"type": "node_status", "value": {"alive": [...], "adopted": [...], "controller": "uuid", "age_s": 0.1, "missing": [...], "unreachable": [...]}}
 
 
@@ -70,24 +75,77 @@ initial_template no longer sent (clients build from schema_descriptor's
 per-type instance); the node arrays and nodeconf_available move from
 initial_mappings to node_list, which initial_mappings no longer carries.
 
-schema_descriptor / config_save (caller only)
+schema_descriptor / config_load / config_save (caller only, except config_changed)
 
 schema_descriptor answers with ConfigManager.get_schema_descriptor for the
 named schema, rendered as JSON: enums as their values, a default that is a
 factory or absent as null (as "instance" renders it). An unknown name is the
-error frame. config_save refuses "script" (use project_save),
-"hardware_outputs" (no model bindings), anything that is not a schema name,
-and default_mappings.xml. All four remaining domains persist through
-ConfigManager.from_json (cuemsutils 014 closed 001 upstream report UR-5); a
-successful "network_map" save also runs the all-session node refresh, same as
-nodelist_modify. "project_mappings" / "project_settings" additionally need
-"project_uuid" in the inbound value — the document alone does not say which
-project it belongs to — resolved to a unix_name the same way project_ready
-resolves one (CuemsDBProject.get_project_unix_name); missing or unknown is
-the error frame. Pending cuems-utils UR-6, a project's config_save still
-fails the first time regardless: ConfigManager.project_path/conf_path raise
-FileNotFoundError for a file that was never saved before, the ordinary state
-of a project's settings.xml/mappings.xml before an operator customises it.
+error frame.
+
+The four config domains and their files: "settings" (settings.xml) and
+"network_map" (network_map.xml) are the controller's; "project_mappings"
+(mappings.xml) and "project_settings" (settings.xml) are a project's, and
+need "project_uuid" in the inbound value — the document alone does not say
+which project it belongs to — resolved to a unix_name the same way
+project_ready resolves one (CuemsDBProject.get_project_unix_name); missing or
+unknown is the error frame. "script", "hardware_outputs", anything that is not
+a schema name, and default_mappings.xml are the error frame on both actions.
+
+config_load (002) serves a document as the file holds it: "document" is
+ConfigManager.to_wire(<schema>) on a manager loaded for this request (never
+the startup copy), "revision" is the md5 of the file's bytes. Scalars come as
+the library projects them. With no file, "exists" is false, "revision" null
+and "document" the descriptor "instance" of the domain's root type: a form's
+starting point, NOT saveable as it is (its required leaves are null, gate G3).
+"network_map" is read only. "project_settings" is refused (the error frame,
+naming cuems-editor UR-7) until cuemsutils gives it a public projection (gate
+G2). A file the library cannot load (e.g. a settings.xml still in the pre-013
+device shape) is config_load_failed, with the library's message.
+
+config_save writes a WHOLE document. "base_revision" is required: the
+revision config_load returned, or null for "I expect no file". A request
+without the key is the error frame and writes nothing. Under a per-file lock
+the file is hashed again: a different md5 writes nothing and answers
+config_conflict with the current revision and document (for
+"project_settings", whose document cannot be loaded yet, "document" is null).
+Otherwise the bytes just hashed are copied to
+<library>/trash/config/<scope>_<file stem>_<YYYYmmddTHHMMSS>.xml (scope
+"controller" or the project's unix_name; if that copy fails, the error frame
+and nothing is saved; no UI purges these copies), the document is built with
+ConfigManager.from_json (cuemsutils 014, 001 upstream report UR-5) and
+written with its own save(path). The reply carries the new file's md5 and
+"restart": for "settings", [{"service": "cuems-controller-engine",
+"where_active": false}, {"service": "cuems-node-engine", "where_active":
+true}] (the second only where it runs; the editor cannot see that, and
+restarts nothing); for the other domains []. Every other session then gets
+config_changed: its copy is stale, re-run config_load before editing.
+
+A document the library refuses is config_save_refused, the file unchanged:
+an IngestError (not a document of that kind, e.g. an unknown top-level key)
+or a SchemaError / ValidationError from from_json or from save's T1 check.
+"location" is the library violation's location as a list (e.g. [null,
+"default"]), "field" its second element, "rule" the violated rule (e.g.
+"XsdEnumerationFacets"); all three are null when the library gives no
+violation. "message" is the library's text: display it, never parse it.
+
+"network_map" is refused by config_save: network_map.xml is written by
+cuems-nodeconf, which reverts any other writer; an alias is set with node_set.
+No path in the editor writes network_map.xml.
+
+Pending cuems-editor UR-6 (gate G1), a project's FIRST config_save still
+fails (the error frame): ConfigManager.project_path/conf_path raise
+FileNotFoundError for a file never saved before, the ordinary state of a
+project's settings.xml/mappings.xml before an operator customises it.
+
+Measured save quirks, recorded and not fixed (002 FR-023):
+  - a save writes unindented XML (settings went from 2429 bytes / 44 lines
+    to 1901 bytes / 1 line);
+  - a save upgrades doc_version (2 -> 3 for settings) and rewrites
+    schemaLocation;
+  - from_json('settings') accepts by design the body that to_wire('settings')
+    returns one level deeper.
+So the file's md5 changes on a save even of an unchanged document: a client
+MUST take the new revision from the config_save reply, never compute it.
 
 initial_template (retired at payload version 1)
 

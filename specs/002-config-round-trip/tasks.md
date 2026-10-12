@@ -182,49 +182,49 @@ FR-015a; Q3).
 
 ### Tests for User Story 2 (red first)
 
-- [ ] T024 [US2] Create `tests/test_config_round_trip.py` with fixtures modelled on `tests/test_schema_descriptor.py:38-60`: a copied `tests/fixtures/conf` as `CUEMS_CONF_PATH`, with `settings.xml`'s `<library_path>` rewritten to a `tmp_path` library holding `projects/test_project/`. The server mock sets `users`, `sessions`, `repair_gates`, `file_locks` and `notify_others_config_changed = AsyncMock()`. Add `test_config_load_settings_serves_the_file`, asserting:
+- [X] T024 [US2] Create `tests/test_config_round_trip.py` with fixtures modelled on `tests/test_schema_descriptor.py:38-60`: a copied `tests/fixtures/conf` as `CUEMS_CONF_PATH`, with `settings.xml`'s `<library_path>` rewritten to a `tmp_path` library holding `projects/test_project/`. The server mock sets `users`, `sessions`, `repair_gates`, `file_locks` and `notify_others_config_changed = AsyncMock()`. Add `test_config_load_settings_serves_the_file`, asserting:
   - `exists: true`;
   - `revision` equals the md5 of `settings.xml`'s bytes;
   - `document == ConfigManager(load_all=False).to_wire('settings')`.
 
   It fails today: `unsupported action: config_load`.
-- [ ] T025 [P] [US2] In `tests/test_config_round_trip.py`, add `test_config_load_network_map_is_read_only_and_loaded` (research R2: it needs `load_network_map()` first, and the document has key `node_list`). Add `test_config_load_project_mappings_with_its_uuid`: `get_project_unix_name` is mocked to `test_project`, and a `mappings.xml` is copied from `default_mappings.xml`. It needs `load_net_and_node_mappings()` first (R2).
-- [ ] T026 [P] [US2] In `tests/test_config_round_trip.py`, add `test_config_load_without_a_file_is_exists_false_with_the_root_instance` (FR-013) for `project_mappings`:
+- [X] T025 [P] [US2] In `tests/test_config_round_trip.py`, add `test_config_load_network_map_is_read_only_and_loaded` (research R2: it needs `load_network_map()` first, and the document has key `node_list`). Add `test_config_load_project_mappings_with_its_uuid`: `get_project_unix_name` is mocked to `test_project`, and a `mappings.xml` is copied from `default_mappings.xml`. It needs `load_net_and_node_mappings()` first (R2).
+- [X] T026 [P] [US2] In `tests/test_config_round_trip.py`, add `test_config_load_without_a_file_is_exists_false_with_the_root_instance` (FR-013) for `project_mappings`:
   - `revision` is `None`;
   - `document` equals the descriptor `instance` of the root type `CuemsProjectMappings` (`key.is_path`, no `/` in `key.name`);
   - it is not the error frame.
-- [ ] T027 [P] [US2] In `tests/test_config_round_trip.py`, add the error-frame cases for `config_load`: a project domain without `project_uuid`, an unknown `project_uuid` (`get_project_unix_name` raises `NonExistentItemError`), and an unknown schema.
-- [ ] T028 [P] [US2] In `tests/test_config_round_trip.py`, add `test_round_trip_settings_and_project_mappings`:
+- [X] T027 [P] [US2] In `tests/test_config_round_trip.py`, add the error-frame cases for `config_load`: a project domain without `project_uuid`, an unknown `project_uuid` (`get_project_unix_name` raises `NonExistentItemError`), and an unknown schema.
+- [X] T028 [P] [US2] In `tests/test_config_round_trip.py`, add `test_round_trip_settings_and_project_mappings`:
   - load, change one scalar, save with `base_revision`;
   - the reply is `{"type":"config_save","value":{"schema","project_uuid","revision","restart"}}`, and `revision` is the new file's md5;
   - a reload shows the edit, every other field compares equal, and the revision changed (SC-004).
-- [ ] T029 [P] [US2] In `tests/test_config_round_trip.py`, add `test_a_stale_base_revision_is_config_conflict_and_writes_nothing` (FR-015): the reply carries the current revision and document, and the file's sha256 is unchanged.
-- [ ] T030 [P] [US2] In `tests/test_config_round_trip.py`, add `test_two_simultaneous_saves_write_once_and_conflict_once` (spec US2 #6). `asyncio.gather` two `config_save` coroutines with the same `base_revision` on the same loop and executor. Expect exactly one `config_save` reply and one `config_conflict`.
-- [ ] T031 [P] [US2] In `tests/test_config_round_trip.py`, add these refusal tests:
+- [X] T029 [P] [US2] In `tests/test_config_round_trip.py`, add `test_a_stale_base_revision_is_config_conflict_and_writes_nothing` (FR-015): the reply carries the current revision and document, and the file's sha256 is unchanged.
+- [X] T030 [P] [US2] In `tests/test_config_round_trip.py`, add `test_two_simultaneous_saves_write_once_and_conflict_once` (spec US2 #6). `asyncio.gather` two `config_save` coroutines with the same `base_revision` on the same loop and executor. Expect exactly one `config_save` reply and one `config_conflict`.
+- [X] T031 [P] [US2] In `tests/test_config_round_trip.py`, add these refusal tests:
   - `test_missing_base_revision_is_refused` (Q3);
   - `test_null_base_revision_with_an_existing_file_conflicts`;
   - `test_network_map_save_is_refused_and_names_node_set` (FR-019): the file is unchanged, and no `notify_all_node_list_update` is awaited;
   - `test_no_source_path_writes_network_map` (SC-006, FR-025): `'network_map'` is not a key of `CONFIG_SAVE_TARGETS`, and a grep of `src/cuemseditor/` finds no `save_network_map`.
-- [ ] T032 [P] [US2] In `tests/test_config_round_trip.py`, add `test_a_library_refusal_is_config_save_refused_with_its_location` (FR-020, research R5). Use a `project_mappings` document with an invalid value, measuring first which field `.save()` refuses with a `Violation` (e.g. a `class` enumeration). Expect:
+- [X] T032 [P] [US2] In `tests/test_config_round_trip.py`, add `test_a_library_refusal_is_config_save_refused_with_its_location` (FR-020, research R5). Use a `project_mappings` document with an invalid value, measuring first which field `.save()` refuses with a `Violation` (e.g. a `class` enumeration). Expect:
   - `field`, `location` as a list, `rule` and `message`, with `message` verbatim;
   - the file unchanged.
 
   Also add `test_an_unknown_top_level_key_is_config_save_refused_without_location` (`IngestError`, where `location` is `None`).
-- [ ] T033 [P] [US2] In `tests/test_config_round_trip.py`, add `test_settings_save_names_the_engines_to_restart` (FR-016): `restart == [{"service": "cuems-controller-engine", "where_active": False}, {"service": "cuems-node-engine", "where_active": True}]`. For `project_mappings`, `restart == []`.
-- [ ] T034 [P] [US2] In `tests/test_config_round_trip.py`, add `test_other_sessions_get_config_changed` (FR-017): `notify_others_config_changed` is awaited once with `{schema, project_uuid, revision}`, and the saver does not receive it.
-- [ ] T035 [P] [US2] In `tests/test_config_round_trip.py`, add `test_the_replaced_file_is_backed_up_first` (FR-015a). After a save, `<library>/trash/config/` holds exactly one `controller_settings_<YYYYmmddTHHMMSS>.xml`, byte-identical to the pre-save `settings.xml`. Add `test_a_failed_backup_saves_nothing`: make `trash/config` a file so the write fails; expect the error frame and `settings.xml` unchanged.
-- [ ] T036 [P] [US2] In `tests/test_config_round_trip.py`, add `test_a_pre_013_settings_is_config_load_failed`: write a `settings.xml` with a `<videoplayer>` under `<node>`, measuring the exact pre-013 shape from `../cuems-utils` tests first. Expect `config_load_failed` with the library's message.
-- [ ] T037 [US2] Edit `tests/test_schema_descriptor.py`:
+- [X] T033 [P] [US2] In `tests/test_config_round_trip.py`, add `test_settings_save_names_the_engines_to_restart` (FR-016): `restart == [{"service": "cuems-controller-engine", "where_active": False}, {"service": "cuems-node-engine", "where_active": True}]`. For `project_mappings`, `restart == []`.
+- [X] T034 [P] [US2] In `tests/test_config_round_trip.py`, add `test_other_sessions_get_config_changed` (FR-017): `notify_others_config_changed` is awaited once with `{schema, project_uuid, revision}`, and the saver does not receive it.
+- [X] T035 [P] [US2] In `tests/test_config_round_trip.py`, add `test_the_replaced_file_is_backed_up_first` (FR-015a). After a save, `<library>/trash/config/` holds exactly one `controller_settings_<YYYYmmddTHHMMSS>.xml`, byte-identical to the pre-save `settings.xml`. Add `test_a_failed_backup_saves_nothing`: make `trash/config` a file so the write fails; expect the error frame and `settings.xml` unchanged.
+- [X] T036 [P] [US2] In `tests/test_config_round_trip.py`, add `test_a_pre_013_settings_is_config_load_failed`: write a `settings.xml` with a `<videoplayer>` under `<node>`, measuring the exact pre-013 shape from `../cuems-utils` tests first. Expect `config_load_failed` with the library's message.
+- [X] T037 [US2] Edit `tests/test_schema_descriptor.py`:
   - every `config_save` call gains `base_revision` (the file's md5, or `None`);
   - the `network_map` save test becomes a refusal assertion (FR-019);
   - the `{'type': 'config_save', 'value': 'OK'}` assertions become the object reply.
 
   Record in the commit message that these edits follow from M3 and Q3.
-- [ ] T038 [US2] Rewrite `test_config_save_of_project_settings_fails_before_the_file_exists_pending_ur6` in `tests/test_schema_descriptor.py` as `test_first_config_save_of_project_settings_round_trips`: `config_save` with `base_revision: None` and no file, then `config_load`, and the value is present. Mark it `@pytest.mark.xfail(strict=True, reason="cuems-editor UR-6: ConfigManager.project_path refuses a file not yet created (gate G1)")`. This is gate G1 (FR-032).
+- [X] T038 [US2] Rewrite `test_config_save_of_project_settings_fails_before_the_file_exists_pending_ur6` in `tests/test_schema_descriptor.py` as `test_first_config_save_of_project_settings_round_trips`: `config_save` with `base_revision: None` and no file, then `config_load`, and the value is present. Mark it `@pytest.mark.xfail(strict=True, reason="cuems-editor UR-6: ConfigManager.project_path refuses a file not yet created (gate G1)")`. This is gate G1 (FR-032).
 
 ### Implementation for User Story 2
 
-- [ ] T039 [US2] In `src/cuemseditor/CuemsWsUser.py`, add `CONFIG_LOAD_STEPS` beside `CONFIG_SAVE_TARGETS` (`:121-126`), mapping each domain to its loader calls per research R2:
+- [X] T039 [US2] In `src/cuemseditor/CuemsWsUser.py`, add `CONFIG_LOAD_STEPS` beside `CONFIG_SAVE_TARGETS` (`:121-126`), mapping each domain to its loader calls per research R2:
   - `settings`: none;
   - `network_map`: `load_network_map`;
   - `project_mappings`: `load_net_and_node_mappings`, `load_project_mappings(uname)`;
@@ -233,15 +233,15 @@ FR-015a; Q3).
   Add `_load_config_document(name, project_uname)`, which runs in the executor and returns `(exists, revision, document)`:
   - resolve the path with `conf_path` / `project_path`, where `FileNotFoundError` means `exists: False` with the root `instance` from `get_schema_descriptor`;
   - otherwise `bytes_md5`, then the loader steps on a fresh `ConfigManager(load_all=False)`, then `to_wire`.
-- [ ] T040 [US2] Add `async def config_load(self, value, action)` to `src/cuemseditor/CuemsWsUser.py` and register it in the action map (`:255-290`). It resolves `project_uuid` as `config_save` does (`:681-693`), maps `SchemaError` / `IngestError` / `ValidationError` to `config_load_failed`, and sends every other failure as the error frame.
-- [ ] T041 [US2] Add `refusal_value(schema, project_uuid, error)` in `src/cuemseditor/CuemsWsUser.py`, modelled on `load_failed_value` (`:139-150`). It returns `{schema, project_uuid, field, location, rule, message}`:
+- [X] T040 [US2] Add `async def config_load(self, value, action)` to `src/cuemseditor/CuemsWsUser.py` and register it in the action map (`:255-290`). It resolves `project_uuid` as `config_save` does (`:681-693`), maps `SchemaError` / `IngestError` / `ValidationError` to `config_load_failed`, and sends every other failure as the error frame.
+- [X] T041 [US2] Add `refusal_value(schema, project_uuid, error)` in `src/cuemseditor/CuemsWsUser.py`, modelled on `load_failed_value` (`:139-150`). It returns `{schema, project_uuid, field, location, rule, message}`:
   - `field` is `violation.location[1]`, or `None`;
   - `location` is `list(violation.location)`, or `None`;
   - `rule` is `violation.rule`, or `None`;
   - `message` is `str(error)`.
 
   Never parse the message (research R5).
-- [ ] T042 [US2] Rewrite `config_save` and `_save_config_document` in `src/cuemseditor/CuemsWsUser.py` (`:129-135`, `:636-705`):
+- [X] T042 [US2] Rewrite `config_save` and `_save_config_document` in `src/cuemseditor/CuemsWsUser.py` (`:129-135`, `:636-705`):
   - remove `network_map` from `CONFIG_SAVE_TARGETS` and add it to `CONFIG_SAVE_REFUSED` with the text "network_map.xml is written by cuems-nodeconf; set an alias with node_set";
   - require the `base_revision` key, sending the error frame if it is missing;
   - resolve the target path in the executor;
@@ -252,19 +252,19 @@ FR-015a; Q3).
   - map library refusals to `config_save_refused` via `refusal_value`.
 
   Delete the `network_map` node-refresh branch.
-- [ ] T043 [US2] Add `async def notify_others_config_changed(self, calling_user, value)` to `src/cuemseditor/CuemsWsServer.py`, modelled on `notify_others_list_changes` (`:360`). It sends `{"type":"config_changed","value":value}` to every user except `calling_user`.
-- [ ] T044 [US2] In `tests/ws-command-responses.txt`, **in the same commit as T042** (plan ordering 5):
+- [X] T043 [US2] Add `async def notify_others_config_changed(self, calling_user, value)` to `src/cuemseditor/CuemsWsServer.py`, modelled on `notify_others_list_changes` (`:360`). It sends `{"type":"config_changed","value":value}` to every user except `calling_user`.
+- [X] T044 [US2] In `tests/ws-command-responses.txt`, **in the same commit as T042** (plan ordering 5):
   - add rows for `config_load`, `config_load_failed`, `config_conflict`, `config_save_refused` and `config_changed`, and the new `config_save` inbound and reply shapes, each with its audience (contracts/ws-messages.md);
   - rewrite the "schema_descriptor / config_save" section (`:73-90`) to match: `network_map` is refused, `base_revision` is required, the backup is written, the restart notice is given;
   - document the three save quirks of FR-023 verbatim.
-- [ ] T045 [US2] Write `specs/002-config-round-trip/upstream-reports/UR-7-project-settings-has-no-read-projection.md`, in the style of `specs/001-cuems-utils-migration/upstream-reports/UR-6-*.md`, addressed to `cuems-utils` (spec M4, `cuems-utils` requirements doc §0a G2):
+- [X] T045 [US2] Write `specs/002-config-round-trip/upstream-reports/UR-7-project-settings-has-no-read-projection.md`, in the style of `specs/001-cuems-utils-migration/upstream-reports/UR-6-*.md`, addressed to `cuems-utils` (spec M4, `cuems-utils` requirements doc §0a G2):
   - **Observed**: `_PROJECTABLE_SECTIONS` (`ConfigManager.py:166`) lacks `project_settings`, and `_project_settings_document` (`:531`) is private;
   - **Why**: `config_load` FR-018;
   - **Workaround**: none; `config_load` refuses, naming this report;
   - **Expected**: §0a G2's shape;
   - the editor test that flips.
-- [ ] T046 [US2] Add `test_config_load_project_settings_round_trips` to `tests/test_upstream_gates.py` (create the file). Mark it `@pytest.mark.xfail(strict=True, raises=AssertionError, reason="cuems-editor UR-7: project_settings has no public read projection (gate G2)")`. It asserts `config_load` returns `exists: true` and the document that was written.
-- [ ] T047 [US2] Run `tests/test_config_round_trip.py`, `tests/test_schema_descriptor.py` and `tests/test_upstream_gates.py`. Everything passes except the two expected xfails (G1, G2).
+- [X] T046 [US2] Add `test_config_load_project_settings_round_trips` to `tests/test_upstream_gates.py` (create the file). Mark it `@pytest.mark.xfail(strict=True, raises=AssertionError, reason="cuems-editor UR-7: project_settings has no public read projection (gate G2)")`. It asserts `config_load` returns `exists: true` and the document that was written.
+- [X] T047 [US2] Run `tests/test_config_round_trip.py`, `tests/test_schema_descriptor.py` and `tests/test_upstream_gates.py`. Everything passes except the two expected xfails (G1, G2).
 
 **Checkpoint**: US2 is complete. Commit T042, T043 and T044 together.
 

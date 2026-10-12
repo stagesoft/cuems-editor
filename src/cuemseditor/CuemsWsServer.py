@@ -384,6 +384,23 @@ class CuemsWsServer():
                     await user.outgoing.put(message)
                     Logger.debug('notifing {} {}'.format(user, list_type))
 
+    async def notify_others_config_changed(self, calling_user, value):
+        """Tell every other session that a configuration document changed (FR-017).
+
+        ``{"type": "config_changed", "value": {schema, project_uuid,
+        revision}}``. It carries no document: a session holding the old
+        revision re-runs ``config_load`` before editing. The saver has its
+        ``config_save`` reply instead.
+
+        Args:
+            calling_user: The session that saved; excluded.
+            value: ``{"schema", "project_uuid", "revision"}``.
+        """
+        message = json.dumps({"type": "config_changed", "value": value})
+        for user in list(self.users):
+            if user is not calling_user:
+                await user.outgoing.put(message)
+
     async def notify_others_same_project(self, calling_user, msg_type, project_uuid=None):
         """Notify users who have the same project loaded that it was modified.
 
