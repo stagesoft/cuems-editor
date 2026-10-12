@@ -1,0 +1,22 @@
+$ E=$(hatch env find)
+$ $E/bin/python -m pip install -e ../cuems-utils pytest pytest-asyncio
+$ $E/bin/python -m pytest -q
+
+# measured 2026-10-12T20:49:24+02:00
+# hatch env: /home/adria/.local/share/hatch/env/virtual/cuemseditor/ObVrCH_5/cuemseditor
+# cuems-utils HEAD: cdb3befd21834a17e55d1147b1071c8ca55297b1 docs(014): T034-T036 green - the feature closes at 45/46, T039 handed to the editor
+# cuems-utils branch: 014-xs-boolean-and-media-elements
+# cuems-utils src/ clean: yes
+# cuems-utils src/ diff since research's b2ea09a: (empty = none)
+# cuemsutils.__version__: 0.1.0rc16
+# cuemsutils.__file__: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/__init__.py
+# python: 3.11.5
+# cuems-nodeconf branch: feat/xml-refactor @ 65605de8b24a55b72ad4672be1bff3766cda48cc
+# cuems-nodeconf carries engine_callback: 1 definition(s); node_set handled: 0 mention(s)
+# editor HEAD: 355dbb5168fed9f16b9b79e0995b58c9b3c3bf13 docs(002): analyze — apply findings across spec, plan, tasks, contracts
+
+# baseline suite:
+160 passed, 3 skipped, 1 warning in 3.61s
+
+`hatch run` re-syncs the environment and replaces the editable cuemsutils with a non-editable
+rc16 from the index (research R1); it must not be used for any recorded run.

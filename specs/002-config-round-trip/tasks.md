@@ -58,8 +58,8 @@ under `specs/002-config-round-trip/`. Evidence goes in `specs/002-config-round-t
 **Purpose**: record what the feature is verified against, before any test is written for evidence.
 This phase makes no `src/` edit.
 
-- [ ] T001 Create `specs/002-config-round-trip/evidence/README.md`. State that files in this directory are immutable once committed and that a correction is a new file naming the one it supersedes, mirroring `specs/001-cuems-utils-migration/evidence/README.md:8-10`. List each evidence file that the tasks below create.
-- [ ] T002 Record the environment in `specs/002-config-round-trip/evidence/environment.txt` (FR-034, research R1):
+- [X] T001 Create `specs/002-config-round-trip/evidence/README.md`. State that files in this directory are immutable once committed and that a correction is a new file naming the one it supersedes, mirroring `specs/001-cuems-utils-migration/evidence/README.md:8-10`. List each evidence file that the tasks below create.
+- [X] T002 Record the environment in `specs/002-config-round-trip/evidence/environment.txt` (FR-034, research R1):
   - the commands from the header above, run as written;
   - `git -C ../cuems-utils rev-parse HEAD`, and whether `git -C ../cuems-utils status --short src/` is empty;
   - `cuemsutils.__version__` and `cuemsutils.__file__`;
@@ -69,7 +69,7 @@ This phase makes no `src/` edit.
   - a sentence saying that `hatch run` re-syncs and must not be used for recorded runs.
 
   If `../cuems-nodeconf` is not on a branch carrying `engine_callback` (`feat/xml-refactor`), write that down; it matters to T050.
-- [ ] T003 [P] Capture the four refused descriptor instances (research R4) in `specs/002-config-round-trip/evidence/descriptor-instance-config.txt`. For each of `settings`, `network_map`, `project_mappings` and `project_settings`:
+- [X] T003 [P] Capture the four refused descriptor instances (research R4) in `specs/002-config-round-trip/evidence/descriptor-instance-config.txt`. For each of `settings`, `network_map`, `project_mappings` and `project_settings`:
   - take the root type, meaning `key.is_path` and no `/` in `key.name`;
   - run `ConfigManager(load_all=False).from_json(schema, instance)` followed by `.save(tmp)`;
   - record the exception type and message.
