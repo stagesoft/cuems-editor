@@ -13,8 +13,8 @@ maintainer's call.
 **Created**: 2026-10-08
 
 **Status**: Clarified 2026-10-08 (four questions) and amended 2026-10-12 to absorb part of
-869fat84r (Q5–Q9; see [Clarifications](#clarifications)). The plan artifacts are updated to match.
-Ready for `/speckit-tasks`.
+869fat84r (Q5–Q9; see [Clarifications](#clarifications)). The plan and tasks are updated to match,
+and `/speckit-analyze` findings were applied on 2026-10-12.
 
 **Input**: `specs/planning/xml-refactor/002-specify-prompt.md` (committed at `a3309ab`), which
 takes up `specs/planning/xml-refactor/FROM-cuems-frontend-001.md` items 1 to 6. Line numbers below
@@ -42,7 +42,7 @@ this feature's.
   state keyed by project UUID. Acknowledgments are recorded per `session_id` inside that state.
   Reconnects, second sessions and stale tabs are all covered, and 001 FR-021 ("another session's
   acknowledgment does not count") is kept (FR-006).
-- Q: When should the editor check the script file on disk before saving? → A: **B.** It checks
+- Q: When should the editor check the script file on disk before saving? (Q4) → A: **B.** It checks
   when it holds no record of the project (FR-009), and also when a record exists but the file's
   md5 differs from the md5 taken when the report was made. A changed file gets a fresh report, and
   the old acknowledgments are dropped. A clean, unchanged project gets no extra load (FR-009a).
@@ -60,7 +60,7 @@ this feature's.
     md5), and the `_fix_one_media` fill ported to objects (FR-036 to FR-042).
   - Deferred to a follow-on feature, with its collision surface recorded (spec M9): no probe at
     save time, no `media_check_report`, and no `CuemsMediaRefresh`.
-- Q: May a media report ever refuse a `project_save` on its own? (Q6; the prompt's Q3) → A: **A,
+- Q: May a media report ever refuse a `project_save` on its own? (Q6; prompt question 3) → A: **A,
   never.** But, in the maintainer's words, "repaired stale media should go to the script-repair
   report and be acknowledged by the operator". Follow-up → **B, already in 002.**
   - At load, the editor compares each cue's stored `Media` values with that file's library row, on
@@ -72,7 +72,7 @@ this feature's.
     report.
   - The deferred media check, when built, adds its findings to the same section. It never sends a
     frame of its own that gates a save (FR-043 to FR-046).
-- Q: One report on the wire, or two? (the prompt's Q2) → **Settled by Q6, not asked separately:
+- Q: One report on the wire, or two? (prompt question 2) → **Settled by Q6, not asked separately:
   one frame.** `document_load_report` carries both parts, with one `report_id`, one acknowledgment
   and one lifecycle. The `report_id` re-use rule gains a second condition, a digest of the library
   rows the media comparison read (FR-045).
@@ -83,11 +83,11 @@ this feature's.
     non-empty.
   - `file_differs_from_loaded` is true when either part differs.
   - These are new optional keys, so there is no payload-version bump (FR-044).
-- Q: One state store, or two? (Q8; the prompt's Q4) → **Moot under Q5 = C, not asked.** No
+- Q: One state store, or two? (Q8; prompt question 4) → **Moot under Q5 = C, not asked.** No
   in-flight registry (`_IN_PROGRESS`, `_OPEN_IN_PROGRESS`) comes into 002. If the follow-on
   brings them, they stay request de-duplication outside `GateState`, because `GateState` is the
   state that must survive a reconnect (M9).
-- Q: `GateState.file_md5` and `Media.file_md5` share a name. Rename? (Q9; the prompt's Q5) →
+- Q: `GateState.file_md5` and `Media.file_md5` share a name. Rename? (Q9; prompt question 5) →
   **Renamed, not asked.** The gate's field is `script_md5`. `file_md5` is a schema element name
   (`cms:Md5Type`, `cuems-utils` 014) and is fixed upstream.
 
@@ -535,6 +535,10 @@ holds a duration different from its library row, and assert that `media_repairs`
 - **A library row changes while a media report is outstanding** (a re-upload of the same name, or
   the repair tool's pass A): the script's bytes are unchanged, but the rows digest is not. The
   report is re-derived with a new `report_id`, and acknowledgments are dropped (FR-045).
+- **A library row changes after a clean load** (a re-upload, or the repair tool's pass A): the gate
+  state is clean, so the save neither re-hashes nor re-reads the rows (Q4), and it writes the new
+  row's values with no report. This is accepted. The operator chose to edit and save the project
+  after the load, and a change made after load is acknowledged by that save (SC-012 is "at load").
 - **A cue whose media file has no library row** (an orphan): its values are left as they are, and
   it is not reported as stale.
 - **A row whose value is itself invalid** (a pre-migration `file_size` of `0`): `dimensions_of_row`
@@ -602,7 +606,7 @@ holds a duration different from its library row, and assert that `media_repairs`
     (FR-045).
   - If the hash is the same, the recorded acknowledgments decide.
 
-  Projects whose gate state is clean need no hash and no extra load (Clarifications).
+  Projects whose gate state is clean need no hash and no extra load (Clarifications, Q4).
 - **FR-010**: `project_unload` (`CuemsWsUser.py:515-518`) MUST clear that session's acknowledgment
   for the project. When no session still references the project's state, that state MUST be dropped.
   A successful save that writes the repaired document MUST retire the outstanding report, because the
@@ -650,8 +654,10 @@ holds a duration different from its library row, and assert that `media_repairs`
   byte-identical to the old file.
 - **FR-016**: A successful `config_save` MUST reply
   `{"type": "config_save", "value": {schema, project_uuid, revision, restart}}`. `revision` is the
-  new md5. `restart` lists the services that must restart for the change to take effect: for
-  `settings`, `cuems-controller-engine`, plus `cuems-node-engine` where it is active; for the other
+  new md5. `restart` lists the services that must restart for the change to take effect, as
+  `{"service", "where_active"}` objects: for `settings`,
+  `[{"service": "cuems-controller-engine", "where_active": false}, {"service": "cuems-node-engine",
+  "where_active": true}]` (`where_active: true` means "only where it is active"); for the other
   domains, an empty list. This form replaces `"OK"`, and it is part of restated version 1 (M3,
   FR-002).
 - **FR-017**: After a successful save, `{"type": "config_changed", "value": {schema, project_uuid,
@@ -669,16 +675,17 @@ holds a duration different from its library row, and assert that `media_repairs`
   removed with the save.
 - **FR-020**: A document the library refuses (`SchemaError`, `IngestError`, or a validation error
   carrying a violation) MUST be answered with
-  `{"type": "config_save_refused", "value": {schema, project_uuid, field, location, message}}`,
+  `{"type": "config_save_refused", "value": {schema, project_uuid, field, location, rule, message}}`,
   modelled on `load_failed_value` / `document_load_failed`. `location` is the violation's location
-  when the library gives one, and `null` otherwise. `message` is the library's text. Other failures
+  when the library gives one, and `null` otherwise. `rule` is the violation's rule, or `null`.
+  `message` is the library's text. Other failures
   (I/O, an unknown project) stay the error frame. A refusal by `config_load` for a document the
   library cannot load (for example the pre-013 shape) uses the same shape under type
   `config_load_failed`.
 - **FR-021**: The restart notice MUST be the only thing the editor does about restarting. The engine
   caches its configuration at startup (CLAUDE.md), and an engine-side reload is out of scope.
 - **FR-022**: Every new frame type (`config_load`, `config_load_failed`, `config_conflict`,
-  `config_changed`, `config_save_refused`, `node_set`) MUST get a row in
+  `config_changed`, `config_save_refused`, `node_set`, `node_set_refused`) MUST get a row in
   `tests/ws-command-responses.txt`, with its audience. New types need no version bump.
 - **FR-023**: The protocol document MUST record these measured quirks of a config save, without
   fixing them:
@@ -779,6 +786,12 @@ holds a duration different from its library row, and assert that `media_repairs`
   assignment (`media[key] = …`), `del media[key]`, `media.pop(key)` and assigning `0` are forbidden
   for the stored keys (M11), and a test greps the source for them. No raw client value is ever
   assigned.
+
+  The stored keys are **derived values owned by the library row** (Key Entities, "Stored media
+  values"). A client's copy is a cache of the row, not operator data, so normalising or dropping an
+  invalid client value is not the save-time validation that constitution III forbids from
+  silently fixing a field. Each value dropped or normalised is logged at WARNING with the cue id,
+  the file name and the key.
 - **FR-041**: Media values the save writes MUST come from the library row, for the keys the cue may
   carry. A row value that is unknown or invalid removes the cue's value. An orphan cue (no row)
   keeps its values unchanged.
@@ -831,7 +844,7 @@ Each gate is a strict xfail here. All must flip before the tag (S7).
 |---|---|---|
 | **G1**: `cuems-editor` UR-6. `conf_path`/`project_path` refuse a file not yet created. Wanted shape: `must_exist=False` | `cuems-utils` | today's error pin `test_config_save_of_project_settings_fails_before_the_file_exists_pending_ur6`, rewritten as a round-trip assertion (first `config_save` of a project's `settings.xml`, then `config_load`) |
 | **G2**: `cuems-editor` UR-7 (filed by this feature). `project_settings` has no public read projection: it is missing from `_PROJECTABLE_SECTIONS` and has no public property | `cuems-utils` | `config_load('project_settings')` round trip |
-| **G3**: `cuems-frontend` UR-1. The descriptor `instance` is not in `to_wire()` shape, and some required output fields have `null` defaults | `cuems-utils` | a cue built from `schema_descriptor('script')`'s `instance`, saved through `project_save`, and reloaded |
+| **G3**: `cuems-frontend` UR-1. The descriptor `instance` is not in `to_wire()` shape, and some required output fields have `null` defaults. This covers the script instances and the config root-type instances that `config_load` serves when `exists: false` (FR-013; evidence `descriptor-instance-config.txt`) | `cuems-utils` | (a) a cue built from `schema_descriptor('script')`'s `instance`, saved through `project_save`, and reloaded; (b) for each of `settings`, `project_mappings` and `project_settings`, the root-type `instance` saved through `config_save` over an existing file with its current `base_revision` |
 | **G4**: `node_set` IPC command (`cuems-editor` UR-8, filed by this feature) | `cuems-utils` (`NodeIndex.set_alias`, requirements doc §0a G4), then `cuems-nodeconf` (the handler) | the US4 test against a real-shaped reply from nodeconf's handler |
 
 `cuems-utils` §0a also lists **G5**: 013's reshape defeats F3's `settings` 1 → 2 conversion
@@ -891,19 +904,27 @@ the gate list is complete there as well.
   retires them.
 - **SC-011**: FR-042's six tests pass, each shown failing first. Item assignment on `Media`'s stored
   keys occurs 0 times in `src/`.
-- **SC-012**: In 100% of the tested cases, a project whose script holds a media value that differs
-  from its library row is never saved without an acknowledgment and a preserved original. A
+- **SC-012**: In 100% of the tested cases, a project whose script holds, **at load**, a media value
+  that differs from its library row is never saved without an acknowledgment and a preserved
+  original. A
   pre-rc15 project with merely missing values needs neither.
 
 ## Clarification agenda
 
-All three were resolved on 2026-10-08, each taking its default (see [Clarifications](#clarifications)).
+All nine are resolved (see [Clarifications](#clarifications)): Q1–Q4 on 2026-10-08, Q5–Q9 on
+2026-10-12.
 
-| # | Question | Default in this spec |
+| # | Question | Resolution |
 |---|---|---|
-| **Q1** | Key the repair gate by `session_id` (fixes reconnects only) or by project UUID on the server (also covers a second session and a stale tab)? | **Resolved 2026-10-08 (B): by project UUID** (the prompt's recommendation, because the risk is to the file on disk), with acknowledgment recorded per `session_id` inside the project's state. This keeps 001 FR-021's "another session's acknowledgment does not count". Plus FR-009: with no state in this process (an editor restart), the gate is re-derived from the file before writing (M2). Neither keying alone covers a restart |
-| **Q2** | `node_set` route: the editor opens `/tmp/nodeconf.ipc` directly, or the engine relays it as it relays `nodelist_modify` (M1)? | **Resolved 2026-10-08 (A): direct to `/tmp/nodeconf.ipc`**, as the prompt states. A direct hop keeps `cuems-engine` out of a contract that is about a file the engine never writes. `nodelist_modify` stays on its engine route, because the engine must refuse adoption while a project is loaded. An alias change has no such engine precondition |
-| **Q3** | Is `base_revision` required on every `config_save`, or optional, meaning "last writer wins"? | **Resolved 2026-10-08 (A): required.** `config_save` has not shipped in any released UI (it is part of version 1), so requiring it breaks no deployed consumer. An optional revision would leave the overwrite this feature exists to prevent as the easy path |
+| **Q1** | Key the repair gate by `session_id` or by project UUID? | **B, by project UUID**, with acknowledgment per `session_id` inside the project's state (001 FR-021 kept). With FR-009, the gate is re-derived from the file when the process holds no state (M2) |
+| **Q2** | `node_set` route: direct to `/tmp/nodeconf.ipc`, or relayed by the engine (M1)? | **A, direct.** `nodelist_modify` keeps its engine route |
+| **Q3** | Is `base_revision` required on every `config_save`? | **A, required.** `null` means "I expect no file" |
+| **Q4** | When does the editor check the script file on disk before saving? | **B.** With no state (FR-009), or when the state is not clean and the file's md5 changed (FR-009a). A clean project gets no extra load and no hash |
+| **Q5** | Which parts of 869fat84r come in? | **C, the save path only** (M9) |
+| **Q6** | May a media report refuse a `project_save` on its own? | **A, never.** Stale media values join `document_load_report` and its acknowledgment |
+| **Q7** | How does the report say that a clean script has stale media? | **B.** `media_repairs[]` and `acknowledgment_required`; `outcome` stays the library's |
+| **Q8** | One state store or two? | **Moot under Q5 = C.** Any later in-flight registry stays outside `GateState` |
+| **Q9** | Rename `GateState.file_md5`? | **Renamed to `script_md5`** |
 
 ## Out of scope
 

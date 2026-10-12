@@ -94,7 +94,7 @@ the script's md5. US1, US2 and US6 all build on these.
   - change `open(uuid)` to read the script's bytes once, compute their md5, then call `CuemsScript.load_with_report(path)`, and return `(value, report, script_md5)`;
   - add `inspect(uuid) -> (LoadReport, script_md5)`, which does the same read and load without building the wire value.
 
-  Both raise exactly what `open` raises today (research R8.1, R8.2). Update the one caller, `CuemsWsUser.send_project` (`src/cuemseditor/CuemsWsUser.py:809`), to unpack three values and ignore the md5 for now. US6's T066 later extends both return values with the media comparison.
+  Both raise exactly what `open` raises today (research R8.1, R8.2). The md5 is taken from one read and the library loads the path again, so a write between the two reads binds the report to the earlier bytes. That race is accepted: the next save re-hashes the file (FR-009a) and re-derives the gate on a mismatch. Update the one caller, `CuemsWsUser.send_project` (`src/cuemseditor/CuemsWsUser.py:809`), to unpack three values and ignore the md5 for now. US6's T066 later extends both return values with the media comparison.
 - [ ] T008 Add `tests/test_db_project_inspect.py`, which asserts on a temporary library (the `lib` fixture pattern from `tests/test_document_load_report.py:79-99`):
   - `open` and `inspect` return the md5 of the file's exact bytes;
   - `inspect` writes nothing (sha256 is unchanged);
@@ -155,7 +155,7 @@ object over the same library.
   - **State that requires acknowledgment**: `bytes_md5` in the executor. A mismatch runs `inspect` and `derive_gate(prior=None)`, which mints a new id and clears the acknowledgments.
   - **Refuse** with `unacknowledged` when the state requires acknowledgment and `self.session_id not in acknowledged_by`.
   - **Claim `preserved`** before the executor `await`, as at `:918-920` today.
-  - **After a successful `update`**, replace the state with a clean one carrying the new file's md5, from `bytes_md5` in the executor.
+  - **After a successful `update` of a state that required acknowledgment**, replace it with a clean one carrying the new file's md5, from `bytes_md5` in the executor. A state that was already clean stays as it is, with no hash, so T014 holds (Q4).
   - **On `OriginalNotPreserved`**, set `preserved = False` and refuse with `preserve_failed`, as today.
 
   Delete `self.repair_state` from `__init__` (`:191-197`).
@@ -203,7 +203,8 @@ FR-015a; Q3).
 - [ ] T031 [P] [US2] In `tests/test_config_round_trip.py`, add these refusal tests:
   - `test_missing_base_revision_is_refused` (Q3);
   - `test_null_base_revision_with_an_existing_file_conflicts`;
-  - `test_network_map_save_is_refused_and_names_node_set` (FR-019): the file is unchanged, and no `notify_all_node_list_update` is awaited.
+  - `test_network_map_save_is_refused_and_names_node_set` (FR-019): the file is unchanged, and no `notify_all_node_list_update` is awaited;
+  - `test_no_source_path_writes_network_map` (SC-006, FR-025): `'network_map'` is not a key of `CONFIG_SAVE_TARGETS`, and a grep of `src/cuemseditor/` finds no `save_network_map`.
 - [ ] T032 [P] [US2] In `tests/test_config_round_trip.py`, add `test_a_library_refusal_is_config_save_refused_with_its_location` (FR-020, research R5). Use a `project_mappings` document with an invalid value, measuring first which field `.save()` refuses with a `Violation` (e.g. a `class` enumeration). Expect:
   - `field`, `location` as a list, `rule` and `message`, with `message` verbatim;
   - the file unchanged.
@@ -304,7 +305,8 @@ With no socket, assert `unavailable` and no `Communicator` built.
   - `test_nodeconf_error_is_relayed_verbatim_without_retry` (`{"OK": False, "error": "Node x not found"}`: `node_set_refused`, reason `nodeconf_error`, `send_request` called once);
   - `test_a_timeout_is_node_set_refused_timeout` (`send_request` sleeps past a patched `TIMEOUT`);
   - `test_a_sys_exit_from_communicator_is_unavailable` (the fake's constructor raises `SystemExit(1)`; the process survives);
-  - `test_non_operator_fields_are_refused_before_ipc`: each of `name`, `node_role`, `ip`, `online`, `adopted`, `role_id`, `hostname` and `mac` gives `node_set_refused` with reason `not_operator_field`, and no instantiation;
+  - `test_non_operator_fields_are_refused_before_ipc`: each of `uuid`, `name`, `node_role`, `ip`, `online`, `adopted`, `role_id`, `hostname` and `mac` gives `node_set_refused` with reason `not_operator_field`, and no instantiation (spec US4 #4);
+  - `test_an_invalid_node_uuid_is_refused_before_ipc`: a `node_uuid` that `coerce_identity` rejects gives the refusal and no instantiation (FR-024);
   - `test_the_action_is_registered`.
 - [ ] T051 [US4] Implement `async def node_set(self, value, action)` in `src/cuemseditor/CuemsWsUser.py` per research R7. Import `Communicator` from `cuemsutils.tools.CommunicatorServices`. Add `NODECONF_IPC = '/tmp/nodeconf.ipc'` reading `CuemsWsServer.NODECONF_IPC` (do not duplicate the string). The order is:
   1. validate the keys: only `node_uuid` and `alias`;
@@ -348,7 +350,7 @@ file size, `cd37792` for size and md5, `b29d40e` for the relink guard (FR-048).
 
 ### Tests for User Story 6 (red first)
 
-- [ ] T055 [US6] (red first, FR-042) Create `tests/test_media_values.py` with the six T039 tests. Each builds a `CuemsScript` from `tests/fixtures/script_minimal_013.xml`, sets `Media` values on its cues **through attribute assignment**, and runs `CuemsDBProject.update` against a temporary library whose `Media` rows carry known values. Build the library with the `lib` fixture pattern, after T058's columns exist; until then, the tests fail at the row insert, which counts as red.
+- [ ] T055 [US6] (red first, FR-042) Create `tests/test_media_values.py` with the six T039 tests. Each builds a `CuemsScript` from `tests/fixtures/script_minimal_013.xml`, sets `Media` values on its cues **through attribute assignment**, and runs `CuemsDBProject.update` against a temporary library whose `Media` rows carry known values. Build the library with the `lib` fixture pattern. A failure at the row insert is **not** red: record the red run only after T058 (columns) and T062 (value functions) land and before T063 (the fill), so each test fails on its own assertion.
   1. `test_an_audio_cue_loses_pixel_size_and_a_video_cue_keeps_it`;
   2. `test_an_unknown_class_media_cue_keeps_its_pixel_size` (a cue with `class="lighting"` decodes to a bare `MediaCue`);
   3. `test_an_uppercase_client_md5_is_stored_lowercase_and_the_save_succeeds`, built at the dict payload level (`data` passed to `update`), because a setter would refuse the uppercase value;
@@ -356,7 +358,7 @@ file size, `cd37792` for size and md5, `b29d40e` for the relink guard (FR-048).
   5. `test_zero_float_and_bool_file_sizes_are_dropped_not_assigned` (`0`, `1.5`, `True`, each in the payload dict);
   6. `test_a_cleared_value_is_absent_not_zero_not_null`. After the save, reload with `CuemsScript.load`: the key is not in the cue's `Media`, and `to_wire()` has no such key.
 
-  Save the failing run in `specs/002-config-round-trip/evidence/media-values-failing-first.txt`.
+  Save that failing run (taken between T062 and T063) in `specs/002-config-round-trip/evidence/media-values-failing-first.txt`.
 - [ ] T056 [P] [US6] In `tests/test_media_values.py`, add `test_no_item_assignment_on_stored_media_keys` (FR-040, M11). Grep `src/cuemseditor/` with a regex for `\[['"](pixel_width|pixel_height|file_size|file_md5)['"]\]\s*=`, `del \w+\[['"](pixel_width|pixel_height|file_size|file_md5)` and `\.pop\(['"](pixel_width|pixel_height|file_size|file_md5)`. Expect zero hits.
 - [ ] T057 [P] [US6] Create `tests/test_media_migration.py`:
   - `test_start_up_adds_the_four_columns_and_keeps_rows`: a SQLite DB made with the **old** `media` schema (no new columns), opened through `CuemsProjectManager`;
@@ -388,7 +390,7 @@ file size, `cd37792` for size and md5, `b29d40e` for the relink guard (FR-048).
     2. the duration is set from `resolver`, as today (an orphan stops here);
     3. `_set_stored(media, dimensions_resolver(file_name), cue)`, when a resolver is given and the file has a row.
 
-    One block that fails is logged and skipped, and the walk goes on.
+    One block that fails is logged and skipped, and the walk goes on. Every client value that step 1 drops or normalises is logged at WARNING with the cue id, the file name and the key (FR-040: the stored keys are derived values owned by the row, so this is not save-time validation).
   - `_walk_media_durations` passes the cue.
   - `fix_media_durations_in_contents(contents, resolver, dimensions_resolver=None)`.
   - `_fix_media_durations` passes `db_dimensions_resolver`, with no probe (Q5).
@@ -399,6 +401,8 @@ file size, `cd37792` for size and md5, `b29d40e` for the relink guard (FR-048).
   - `test_pixel_size_on_an_audio_cue_is_a_media_repair_with_current_null`;
   - `test_missing_values_are_not_stale`: a pre-rc15 script with no stored sizes gives `media_repairs == []`, `acknowledgment_required` false, and the save adds the values;
   - `test_an_orphan_is_not_stale`;
+  - `test_an_orphan_keeps_its_values_on_save` (FR-041): a cue whose file has no row keeps its valid stored values through `project_save`;
+  - `test_an_invalid_row_value_is_a_media_repair_with_current_null` (spec Edge Cases, FR-044): the row's `file_size` is `0` and the cue holds a valid size. Expect the entry with `current: null`, and after acknowledgment the save removes the cue's value;
   - `test_a_row_change_after_acknowledgment_gets_a_new_report` (FR-045): update the `Media` row between the acknowledgment and the save;
   - `test_media_repairs_is_always_present`: `[]` on a clean load.
 
@@ -437,6 +441,8 @@ produces a `project` frame.
 - [ ] T073 [P] [US5] Create `specs/001-cuems-utils-migration/evidence/project-capture/capture_load_tip.py`. Its docstring names `capture_load.py` as the procedure it supersedes at the tip. It mirrors `capture_load.py`'s temporary-library setup, calls `script, report = CuemsDBProject.load_xml(...)` on `tests/fixtures/script_minimal_013.xml`, and prints `json.dumps({"type": "project", "value": script.to_wire()})`. Run it as quickstart §5 shows, into `specs/002-config-round-trip/evidence/project-frame-tip.json`. Assert `git diff --exit-code specs/001-cuems-utils-migration/evidence/project-capture/capture_load.py` (FR-030).
 - [ ] T074 [US5] Add `test_a_cue_built_from_the_descriptor_instance_saves_through_project_save` to `tests/test_upstream_gates.py` (gate G3). Take `schema_descriptor('script')`'s `Cue` and `CueOutput` instances, assemble a script with one audio cue, send it through `CuemsWsUser.received_project` against a temporary library, and assert the `project_save` reply. Mark it `xfail(strict=True, raises=AssertionError, reason="cuems-frontend UR-1: the descriptor instance is not in to_wire() shape and has null required defaults (gate G3)")`.
 
+  Add `test_a_config_root_instance_saves_through_config_save`, parametrized over `settings`, `project_mappings` and `project_settings` (spec G3 (b)). For each, an existing file is in place (a copy from `tests/fixtures/conf`; for the project domains, under the temporary library's `projects/test_project/`). Send the root-type `instance` from `get_schema_descriptor` through `config_save` with the file's current md5 as `base_revision`, and assert the `config_save` reply. Same marker and reason. Using an existing file keeps G1 (UR-6) out of this test.
+
 **Checkpoint**: US5 is complete, with G3 standing.
 
 ---
@@ -452,7 +458,7 @@ produces a `project` frame.
 
   Cite reports as `<repo> UR-<n>`.
 - [ ] T076 [P] Create `specs/002-config-round-trip/tag-readiness.md` (FR-033). `../.xml-refactor-tag-messages/` does not exist on this machine; say so, and say that the maintainer copies the text into the tag message. List:
-  - each standing strict xfail by gate and `<repo> UR-<n>`: G1 cuems-editor UR-6, G2 cuems-editor UR-7, G3 cuems-frontend UR-1, G4 cuems-editor UR-8 (cuems-utils `set_alias` + cuems-nodeconf);
+  - each standing strict xfail by gate, `<repo> UR-<n>` and test node id: G1 cuems-editor UR-6, G2 cuems-editor UR-7, G3 cuems-frontend UR-1 (the script test and the three config-instance parameters), G4 cuems-editor UR-8 (cuems-utils `set_alias` + cuems-nodeconf);
   - G5 (cuems-utils' settings-reshape defect, no editor test);
   - the statement "not ready while any xfail stands" (S7).
 - [ ] T077 [P] Create `specs/002-config-round-trip/merge-notes.md` (FR-048). Include:
@@ -469,7 +475,7 @@ produces a `project` frame.
 
   Do not edit anything in `../cuems-utils`.
 - [ ] T079 Run the full suite as the header shows. Record in `specs/002-config-round-trip/evidence/suite-final.txt`:
-  - the summary line: everything passes except exactly four `xfailed` (G1 to G4), with no `XPASS`;
+  - the summary line: everything passes except exactly seven `xfailed` (G1, G2, G3 × 4, G4), with no `XPASS`. Each matches a node id in `tag-readiness.md`;
   - `cuemsutils.__file__`;
   - the `cuems-utils` SHA.
 
@@ -488,7 +494,7 @@ produces a `project` frame.
 - **US2 (Phase 4)** depends on Phase 2 (`file_lock`, `bytes_md5`). It is independent of US1.
 - **US3 (Phase 5)** is independent. T049 edits the same file as T023, T044 and T052, so it runs sequentially with them, but in any order.
 - **US4 (Phase 6)** depends on Phase 2 only.
-- **US6 (Phase 7)** depends on **US1** (T017 to T020: `derive_gate`, `received_project`). T055 to T064 (values, migration, fill) can start right after Phase 2. T065 to T070 (staleness) need US1 done.
+- **US6 (Phase 7)** depends on **US1** (T017 to T020: `derive_gate`, `received_project`). T055 to T064 (values, migration, fill) can start right after Phase 2, but T055's red run is recorded between T062 and T063. T065 to T070 (staleness) need US1 done.
 - **US5 (Phase 8)** is independent. T074 needs `tests/test_upstream_gates.py` from T046.
 - **Polish** depends on every story it summarises. T078 depends on T064.
 
@@ -519,7 +525,7 @@ edits land in the same commit as the payload change they describe (Principle I; 
 US1: T009 → T010..T016 → T017..T023
 US2: T024..T038 → T039..T047
 US4: T050 → T051..T054
-US6 values: T055..T057 → T058..T064   (staleness T065..T070 waits for US1)
+US6 values: T055..T057 → T058..T062 → (T055 red run) → T063..T064   (staleness T065..T070 waits for US1)
 ```
 
 ---
@@ -535,8 +541,8 @@ Phases 1 and 2, then US1. That closes the only data-loss path (frontend item 2) 
 
 1. US1, the gate: data safety.
 2. US2 and US3, the config round trip and the restated version 1: the frontend's editing views.
-3. US6, the media values: the gate already covers them.
-4. US4, `node_set`: G4 stands until nodeconf lands.
+3. US4, `node_set`: G4 stands until nodeconf lands.
+4. US6, the media values: the gate already covers them.
 5. US5, the documentation and G3.
 6. Polish: the tag-readiness and merge notes.
 

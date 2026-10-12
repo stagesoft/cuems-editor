@@ -32,8 +32,9 @@ Record these in `specs/002-config-round-trip/evidence/environment.txt` (FR-034):
 $E/bin/python -m pytest -q
 ```
 
-**Expected while any upstream gate is open:** everything passes, plus one `xfailed` per open gate
-(G1 to G4). Every strict xfail's reason names its gate as `<repo> UR-<n>`.
+**Expected while any upstream gate is open:** everything passes, plus the `xfailed` tests of each
+open gate: one each for G1, G2 and G4, and four for G3 (the script instance and three config
+instances), so seven while all four are open. Every strict xfail's reason names its gate as `<repo> UR-<n>`.
 
 A gate that its owner has fixed shows as `XPASS(strict)`, which **fails** the run. That is the
 signal to replace the xfail with the plain assertion (S6).

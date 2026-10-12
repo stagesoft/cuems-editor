@@ -16,6 +16,21 @@ M3, FR-002), because version 1 has not shipped.
 `revision` is a 32-hex-character md5 of the file's bytes, or `null` for "no file". It is never
 `doc_version`, and never the payload version.
 
+## Consumers of each changed message (constitution I)
+
+Measured in `cuems-frontend` @ `f5453a3`. "None" means that no shipped component reads the
+message, and the line that shows it is given.
+
+| Delta | Old → new | Consuming `cuems-frontend` file:line |
+|---|---|---|
+| `project` `enabled` | `"True"`/`"False"` → JSON boolean (`8f8b46e`) | `src/app/components/projects/project-edit/sequence/sequence.component.ts:479` (dual read; the `'True'` branch can go) |
+| `project` `autoload`, `timecode` | `"True"`/`"False"` → JSON boolean (`8f8b46e`) | none: no component reads either key |
+| `node_list` node `adopted`, `online` | `"True"`/`"False"` → JSON boolean (`8f8b46e`) | `src/app/services/projects/projects.service.ts:75-76` (the type union), `src/app/components/nodes/node-adoption.component.ts:201` (dual read) |
+| `config_save` reply | `"OK"` → `{schema, project_uuid, revision, restart}` | none: `src/app/components/config/schema-document-view/schema-document-view.component.ts:14-16` sends no `config_save` (frontend item 3) |
+| `config_save` inbound `base_revision` | absent → required | none (as above) |
+| `config_save` of `network_map` | accepted → error frame | none (as above) |
+| Repair gate durability | lost on reconnect → per project | `src/app/services/projects/load-report.service.ts:50-52` (reload on reconnect) and `:200-203` (re-acknowledge after a reconnect), both retirable |
+
 ---
 
 ## Restated version 1: the row that replaces `ws-command-responses.txt:68-71`
@@ -42,7 +57,7 @@ not "OK" (002, folded in, not bumped).
 | Reply | `{"type": "config_load", "value": {"schema", "project_uuid", "exists", "revision", "document"}}` |
 | Audience | the caller only |
 | `exists: true` | `revision` is the file's md5. `document` is `ConfigManager.to_wire(section)` on a manager loaded for this request |
-| `exists: false` | `revision: null`. `document` is the descriptor `instance` of the domain's root type (the one whose key has no `/`). **It is a starting point for a form, not saveable as-is.** Required leaves are `null`, and `network_map`'s instance is not in `to_wire` shape (`cuems-frontend` UR-1, research R4). Saving it unedited gets `config_save_refused` |
+| `exists: false` | `revision: null`. `document` is the descriptor `instance` of the domain's root type (the one whose key has no `/`). **It is a starting point for a form, not saveable as-is.** Required leaves are `null`, and `network_map`'s instance is not in `to_wire` shape (`cuems-frontend` UR-1, research R4). Saving it unedited gets `config_save_refused`. Gate G3 covers this |
 | Domains | `settings`, `network_map` (read only), `project_mappings`, `project_settings` (refused with the error frame naming `cuems-editor` UR-7 until gate G2 flips) |
 | Library refusal | `config_load_failed` (shape as `config_save_refused`), e.g. a `settings.xml` in the pre-013 device shape |
 | Other failures | the error frame: unknown schema, missing or unknown `project_uuid`, I/O |
@@ -142,7 +157,7 @@ FR-006 to FR-011, FR-045):
   acknowledged, and its original is moved to the trash before the first save.
 - `repair_acknowledge` from a reconnected session answers with the echo, not the error frame.
 - The `ws-command-responses.txt:169-175` text is replaced. It also states that `cuems-frontend`'s
-  reload-on-reconnect (`load-report.service.ts`) is no longer needed.
+  reload-on-reconnect (`load-report.service.ts:50-52`) is no longer needed.
 
 ## Documentation-only rows (no wire change)
 

@@ -8,7 +8,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 **Branch**: `002-config-round-trip` (local only; never pushed, no upstream) | **Date**: 2026-10-12 |
 **Spec**: [spec.md](spec.md)
 
-**Input**: the feature specification, clarified 2026-10-08 (Q1–Q4).
+**Input**: the feature specification, clarified 2026-10-08 (Q1–Q4) and 2026-10-12 (Q5–Q9).
 
 ## Summary
 
@@ -37,7 +37,7 @@ research R11, R12):
 The rest of 869fat84r is deferred, with its collision surface recorded.
 
 Four upstream gaps (G1–G4) are strict xfails that must flip before the tag. The approach comes from
-[research.md](research.md) R1–R10.
+[research.md](research.md) R1–R12.
 
 ## Technical Context
 
@@ -58,8 +58,7 @@ Four upstream gaps (G1–G4) are strict xfails that must flip before the tag. Th
 
 **Storage**: files, plus `project-manager.db` (SQLite through peewee), which gains four nullable
 `media` columns through an additive `ALTER TABLE` (FR-036). Files: The config XML is under `CUEMS_CONF_PATH` and `<library>/projects/<uname>/`,
-and the script XML under the library. In-memory server tables: `repair_gates` and `file_locks`. No
-DB schema change.
+and the script XML under the library. In-memory server tables: `repair_gates` and `file_locks`.
 
 **Testing**: `pytest` with the environment's interpreter (`$(hatch env find)/bin/python -m pytest`,
 never `hatch run`, research R1). The tests use temporary libraries, `MagicMock` servers, and fake
@@ -100,7 +99,9 @@ Wire deltas, each enumerated in [contracts/ws-messages.md](contracts/ws-messages
   version 1, which has not shipped.
 - **New types**: `config_load`, `config_load_failed`, `config_conflict`, `config_save_refused`,
   `config_changed`, `node_set`, `node_set_refused`. No bump.
-- **Consumer**: `cuems-frontend` does not read `config_save` today. Its own gate fails on any use
+- **Consumer**: each delta's consuming `cuems-frontend` file:line, or "none" with the line that
+  shows it, is in contracts/ws-messages.md "Consumers of each changed message" (measured at
+  `f5453a3`). `cuems-frontend` does not read `config_save` today. Its own gate fails on any use
   (frontend item 3). So no deployed component's reading changes before the UI.
 - **Pre-change captures**: the existing tests pin `{"type":"config_save","value":"OK"}` and the
   `project` frame. The new tests assert the new shapes and fail against `a3309ab` (IV.2).
@@ -130,6 +131,14 @@ Every new frame has a declared audience (contracts).
 | `node_set` | the editor writes nothing; nodeconf owns the file |
 | `project_save` writing corrected media values (FR-041) | a present-but-different value is reported and acknowledged first, and the original is preserved in the trash (FR-043, FR-044). A merely missing value is added without a report (Q6) |
 | `ensure_media_columns` (`ALTER TABLE ADD COLUMN` on `project-manager.db`) | **No backup.** It is additive and idempotent, and an older editor still reads the result. Recorded in Complexity Tracking, not waived |
+
+**Save-time normalisation of stored media values (FR-040).** An invalid client `file_md5`,
+`file_size`, `pixel_width` or `pixel_height` is normalised or dropped, and the save succeeds. This
+is not the "silently dropping or fixing a field" that Principle III forbids of save-time
+validation. These keys are **derived values owned by the library row**: the save overwrites them
+from the row (FR-041), and a client's copy is a cache of it, not operator data. Where no row exists
+(an orphan), a dropped value means "unknown", which is what an invalid value already meant. Each
+drop or normalisation is logged at WARNING with the cue id, the file name and the key (T063).
 
 A write either completes or leaves the prior file: `.save` is a temp-file rename. Tests against a
 temporary library assert both recovery paths (IV.3).
@@ -209,8 +218,11 @@ tests/
 ├── test_protocol_doc.py            # US3: no live string boolean; the restated row exists
 ├── test_media_values.py            # FR-042's six (red first), FR-036/037/041, item-assignment grep
 ├── test_media_staleness.py         # US6: media_repairs, acknowledgment_required, rows digest (FR-043 to FR-045)
-├── test_upstream_gates.py          # G1–G3 strict xfails (G1 replaces the _pending_ur6 pin)
-├── test_schema_descriptor.py       # edited: config_save cases gain base_revision; network_map now refused
+├── test_media_migration.py         # US6: columns at start-up, repair-tool dry run, upload probe (FR-036, FR-037)
+├── test_db_project_inspect.py      # open/inspect return the script md5; inspect writes nothing
+├── test_upstream_gates.py          # G2–G4 strict xfails (G3 for the script and the config instances)
+├── test_schema_descriptor.py       # edited: config_save cases gain base_revision; network_map now refused;
+│                                   #   G1's xfail replaces the _pending_ur6 pin
 ├── test_document_load_report.py    # edited where it reached self.repair_state
 └── ws-command-responses.txt        # restated v1, new rows, gate text, qualifications
 
@@ -221,8 +233,9 @@ specs/001-cuems-utils-migration/evidence/
 CLAUDE.md                # field notes (FR-035)
 ```
 
-**Structure Decision**: the existing single package. No new module. The work stays in the three
-files that own sessions, the server and the project store. The tests split by user story, so each
+**Structure Decision**: the existing single package. No new module. Most of the work is in the three
+files that own sessions, the server and the project store. The 869fat84r port touches the other
+five files listed above. The tests split by user story, so each
 story's failing-first run can be captured on its own.
 
 ## Ordering constraints for /speckit-tasks
@@ -236,8 +249,9 @@ story's failing-first run can be captured on its own.
    (Principle I: the document describes what is sent at every commit).
 6. **The upstream reports** (UR-7 to `cuems-utils`, UR-8 to `cuems-nodeconf`) are written when their
    xfails are added, so each xfail's reason names a file that exists.
-7. **869fat84r port**: FR-042's six tests first (captured red), then FR-036/037 (columns, upload),
-   then the fill (FR-038 to FR-041), then the comparison (FR-043 to FR-045). The comparison lands
+7. **869fat84r port**: FR-042's six tests first, then FR-036/037 (columns, upload) and the value
+   functions, then the six tests' red run (so each fails on its assertion, not at a missing
+   column), then the fill (FR-038 to FR-041), then the comparison (FR-043 to FR-045). The comparison lands
    after the gate rewrite (step 3), because it feeds `GateState`.
 8. **Documentation-only items** (US5) can go in parallel with anything after step 1.
 
