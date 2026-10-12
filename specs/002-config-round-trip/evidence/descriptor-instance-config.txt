@@ -1,0 +1,41 @@
+# 002 T003: the four config root-type descriptor instances, from_json + .save
+# measured 2026-10-12T20:49:37+02:00 against cuems-utils cdb3befd21834a17e55d1147b1071c8ca55297b1
+# run: $E/bin/python -I probe_instances.py tests/fixtures/conf  (from a scratchpad directory)
+#
+# --- probe script ---
+# """Root-type descriptor instance -> from_json -> .save, per config domain (002 T003)."""
+# import json, os, shutil, sys, tempfile, traceback
+# from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
+# 
+# src_conf = sys.argv[1]
+# work = tempfile.mkdtemp()
+# conf = os.path.join(work, 'conf')
+# shutil.copytree(src_conf, conf)
+# os.environ['CUEMS_CONF_PATH'] = conf
+# for schema in ('settings', 'network_map', 'project_mappings', 'project_settings'):
+#     manager = ConfigManager(load_all=False)
+#     types = manager.get_schema_descriptor(SchemaName(schema))
+#     roots = [t for t in types if t.key.is_path and '/' not in t.key.name]
+#     root = roots[0]
+#     instance = json.loads(json.dumps(root.instance, default=str))
+#     print(f'== {schema}: root type {root.key.name}')
+#     print(f'   instance: {json.dumps(instance)[:300]}')
+#     try:
+#         built = ConfigManager(load_all=False).from_json(SchemaName(schema), instance)
+#         built.save(os.path.join(work, f'{schema}.xml'))
+#         print('   result: saved (NOT refused)')
+#     except Exception as e:
+#         print(f'   result: {type(e).__module__}.{type(e).__name__}: {e}')
+# --- output ---
+== settings: root type CuemsSettings
+   instance: {"Settings": null}
+   result: cuemsutils.errors.SchemaError: [T1] Xsd11Group at Settings: The content of element 'Settings' is not complete. Tag 'conf_path' expected. (at /{https://stagelab.coop/cuems/}CuemsSettings/Settings)
+== network_map: root type CuemsNetworkMap
+   instance: {"node_list": {"node": [{"uuid": null, "mac": null, "name": null, "node_role": null, "ip": null, "adopted": null, "online": null, "role_id": null, "alias": null, "hostname": null}]}}
+   result: cuemsutils.errors.SchemaError: [T1] {https://stagelab.coop/cuems/}NodeUuidType at uuid: invalid value '' (at /{https://stagelab.coop/cuems/}CuemsNetworkMap/node_list/node/uuid)
+== project_mappings: root type CuemsProjectMappings
+   instance: {"number_of_nodes": null, "defaults": {"default": [{"&": null, "class": null, "direction": null}]}, "nodes": {"node": [{"uuid": null, "mac": null, "devices": {"device": [{"outputs": [{"output": [{"id": null, "name": null, "mappings": null}], "input": [{"id": null, "name": null, "mappings": null}]}],
+   result: cuemsutils.errors.SchemaError: [T1] {http://www.w3.org/2001/XMLSchema}nonNegativeInteger at number_of_nodes: invalid literal for int() with base 10: '' (at /{https://stagelab.coop/cuems/}CuemsProjectMappings/number_of_nodes)
+== project_settings: root type CuemsProjectSettings
+   instance: {"setting": [{"name": null, "value": null}]}
+   result: cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at name: value doesn't match any pattern of ['.*[^\\s].*'] (at /{https://stagelab.coop/cuems/}CuemsProjectSettings/setting/name)

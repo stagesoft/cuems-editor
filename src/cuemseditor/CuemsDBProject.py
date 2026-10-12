@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import traceback
 import shutil
@@ -30,6 +32,8 @@ class DurationFixStats:
             invisible to a pattern scan; report it explicitly instead).
         changes: ``(file_name, previous, replacement)`` for each replacement,
             both as ``CTimecode`` (``previous`` may be ``None``).
+        errors: ``file_name`` values whose ``Media`` block could not be
+            processed (logged; the walk went on with the next cue).
     """
 
     def __init__(self):
@@ -37,6 +41,53 @@ class DurationFixStats:
         self.replacements = 0
         self.orphans = []
         self.changes = []
+        self.errors = []
+
+
+#: What a cue's ``Media`` stores about its file (869fat84r, ``0b291d1``), in
+#: ``MediaType`` order: the pixel size (not on an ``AudioCue``), then the
+#: file's size and MD5 (every media cue, D18).
+PIXEL_KEYS = ('pixel_width', 'pixel_height')
+STORED_KEYS = PIXEL_KEYS + ('file_size', 'file_md5')
+
+
+def _positive_int(value):
+    """A usable stored size: a positive int (a digit string is accepted and
+    converted). ``None`` for anything else, ``bool`` included."""
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def _md5(value):
+    """A usable MD5: 32 hex digits, returned lowercase; ``None`` otherwise."""
+    if isinstance(value, str) and len(value) == 32 and all(
+            c in '0123456789abcdef' for c in value.lower()):
+        return value.lower()
+    return None
+
+
+def _valid(key, value):
+    return _md5(value) if key == 'file_md5' else _positive_int(value)
+
+
+def dimensions_of_row(media):
+    """What a ``Media`` row knows about its file: ``pixel_width`` and
+    ``pixel_height`` (both or neither), ``file_size``, ``file_md5``; only the
+    valid ones. ``None`` when it knows nothing."""
+    values = {}
+    width, height = _positive_int(media.pixel_width), _positive_int(media.pixel_height)
+    if width and height:
+        values.update(pixel_width=width, pixel_height=height)
+    size = _positive_int(media.file_size)
+    if size:
+        values.update(file_size=size)
+    md5 = _md5(getattr(media, 'file_md5', None))
+    if md5:
+        values.update(file_md5=md5)
+    return values or None
 
 
 def db_duration_resolver(file_name):
@@ -52,53 +103,106 @@ def db_duration_resolver(file_name):
     return media.duration
 
 
+def db_dimensions_resolver(file_name):
+    """Resolve a media ``unix_name`` to its stored size (see
+    :func:`dimensions_of_row`), or ``None`` when unknown. Read-only: no probe.
+
+    Raises ``KeyError`` when no ``Media`` row exists for *file_name*.
+    """
+    try:
+        media = Media.get(Media.unix_name == file_name)
+    except DoesNotExist:
+        raise KeyError(file_name)
+    return dimensions_of_row(media)
+
+
 # Cues that can carry a ``Media`` block. A cue whose ``class`` is none of
 # audio / video / dmx decodes as a bare ``MediaCue``, so it is listed too: a
 # walker that only knows the three named classes skips it.
 MEDIA_CUES = (AudioCue, VideoCue, DmxCue, MediaCue)
 
 
-def fix_media_durations_in_contents(contents, resolver):
-    """Overwrite each media cue's ``Media.duration`` from *resolver*, on the object.
+def fix_media_durations_in_contents(contents, resolver, dimensions_resolver=None):
+    """Overwrite each media cue's ``Media`` values from the library, on the object.
 
     Shared by the WebSocket save path (:meth:`CuemsDBProject._fix_media_durations`)
     and the standalone duration-repair tool, so both trust the same DB source
-    of truth and walk cue trees identically. The library will not fill a
-    duration from ``project-manager.db``; this is the one place that does.
+    of truth and walk cue trees identically. The library will not fill these
+    values from ``project-manager.db``; this is the one place that does.
+
+    For every media cue's ``Media`` block, in this order (002 FR-038 to FR-041):
+
+    1. each stored value present (``pixel_width``, ``pixel_height``,
+       ``file_size``, ``file_md5``) is normalised with ``_valid``; one that is
+       not valid, or that the cue may not carry (a pixel size on an
+       ``AudioCue``), is cleared. ``CuemsScript.from_json`` stores a client's
+       values raw, and ``CuemsScript.save`` would refuse the whole document;
+    2. the duration, from *resolver* (an orphan stops here, untouched);
+    3. the stored values, from *dimensions_resolver* when given: they replace
+       the client's, for the keys the cue may carry; an unknown one (``None``)
+       clears it.
+
+    Every value is written through the ``Media`` attribute setters, never by
+    item assignment (M11), and cleared by assigning ``None``. One block that
+    fails is logged, counted in ``stats.errors`` and skipped; the walk goes on.
 
     Args:
         contents: ``CueList.contents`` of a ``CuemsScript`` (nested ``CueList``
             objects are walked).
         resolver: callable ``file_name -> duration_str_or_None``; must raise
             ``KeyError`` for a media file absent from the DB.
+        dimensions_resolver: optional callable ``file_name -> dict | None``
+            (see :func:`db_dimensions_resolver`); ``KeyError`` for an orphan.
 
     Returns:
         :class:`DurationFixStats`.
     """
     stats = DurationFixStats()
-    _walk_media_durations(contents, resolver, stats)
+    _walk_media_durations(contents, resolver, dimensions_resolver, stats)
     return stats
 
 
-def _walk_media_durations(contents, resolver, stats):
-    for cue in contents or ():
-        if isinstance(cue, CueList):
-            _walk_media_durations(cue.contents, resolver, stats)
-            continue
-        if not isinstance(cue, MEDIA_CUES):
-            continue
-        media = cue.get('Media')
-        if not media:
-            continue
-        file_name = media.get('file_name')
+def _allowed_keys(cue):
+    """The stored keys *cue* may carry, by cue identity (FR-039): size and MD5
+    on an ``AudioCue``; all four on anything else, a bare ``MediaCue`` (an
+    unknown ``class``) included."""
+    return STORED_KEYS[len(PIXEL_KEYS):] if isinstance(cue, AudioCue) else STORED_KEYS
+
+
+def _set_stored(media, values, cue):
+    """Make *media*'s stored values exactly *values* (``None``: none), keeping
+    only what *cue* may carry. Attribute assignment only; ``None`` clears."""
+    allowed = _allowed_keys(cue)
+    for key in STORED_KEYS:
+        setattr(media, key, _valid(key, (values or {}).get(key)) if key in allowed else None)
+
+
+def _fix_one_media(cue, media, resolver, dimensions_resolver, stats):
+    file_name = media.get('file_name')
+    try:
+        # 1. Never let an invalid client value reach the schema, and never a
+        #    pixel size on an AudioCue. These are derived values the row owns
+        #    (FR-040): a drop or a normalisation is logged, not refused.
+        allowed = _allowed_keys(cue)
+        for key in STORED_KEYS:
+            if key not in media:
+                continue
+            raw = media.get(key)
+            value = _valid(key, raw) if key in allowed else None
+            if value is None or value != raw or type(value) is not type(raw):
+                Logger.warning(
+                    f"media value {key}={raw!r} of cue {cue.get('id')} ({file_name!r}) "
+                    + ('dropped' if value is None else f'normalised to {value!r}'))
+                setattr(media, key, value)
         if not file_name:
-            continue
+            return
         stats.media_refs += 1
+        # 2. Duration.
         try:
             duration = resolver(file_name)
         except KeyError:
             stats.orphans.append(file_name)  # media not in DB; keep original
-            continue
+            return
         if duration:
             new_value = CTimecode(str(duration))
             previous = media.get('duration')
@@ -106,6 +210,109 @@ def _walk_media_durations(contents, resolver, stats):
                 media.duration = new_value
                 stats.replacements += 1
                 stats.changes.append((file_name, previous, new_value))
+        # 3. The stored values, from the row.
+        if dimensions_resolver is not None:
+            try:
+                values = dimensions_resolver(file_name)
+            except KeyError:
+                return
+            _set_stored(media, values, cue)
+    except Exception as e:
+        stats.errors.append(file_name)
+        Logger.warning(f'media values fix skipped for {file_name!r} (cue {cue.get("id")}): '
+                       f'{type(e).__name__}: {e}')
+
+
+def _walk_media_durations(contents, resolver, dimensions_resolver, stats):
+    for cue in contents or ():
+        if isinstance(cue, CueList):
+            _walk_media_durations(cue.contents, resolver, dimensions_resolver, stats)
+            continue
+        if not isinstance(cue, MEDIA_CUES):
+            continue
+        media = cue.get('Media')
+        if not media:
+            continue
+        _fix_one_media(cue, media, resolver, dimensions_resolver, stats)
+
+
+def _media_cues(contents):
+    """Every media cue of *contents*, nested ``CueList`` objects walked."""
+    for cue in contents or ():
+        if isinstance(cue, CueList):
+            yield from _media_cues(cue.contents)
+        elif isinstance(cue, MEDIA_CUES):
+            yield cue
+
+
+def _stale_entries(cue, media, row):
+    """The values PRESENT in *media* that the fill would change (002 FR-043).
+
+    The decisions of ``0b291d1`` ``stale_changes``, on the object: the same
+    as :func:`_fix_one_media`'s. A value that is only missing (a project
+    written before rc15) is not stale: the next save adds it. An orphan (no
+    *row*) is compared with nothing; only a value its cue may not carry is
+    stale there. ``stored`` and ``current`` are strings, ``current`` ``None``
+    when the save will remove the value.
+    """
+    file_name = media.get('file_name')
+    allowed = _allowed_keys(cue)
+    present = {key: media.get(key) for key in STORED_KEYS if key in media}
+    known = row is not None
+    expected = ({key: value for key, value in (dimensions_of_row(row) or {}).items() if key in allowed}
+                if known else {})
+    wrong = {key for key, value in present.items()
+             if key not in allowed or _valid(key, value) is None
+             or (known and _valid(key, value) != expected.get(key))}
+    entry = lambda field, stored, current: {
+        'cue_id': str(cue.get('id')), 'file_name': file_name, 'field': field,
+        'stored': stored, 'current': current}
+    entries = []
+    if known and row.duration and media.get('duration') is not None:
+        current = CTimecode(str(row.duration))
+        if media.get('duration') != current:
+            entries.append(entry('duration', str(media.get('duration')), str(current)))
+    if wrong & set(PIXEL_KEYS):
+        stored = f"{present.get('pixel_width', '?')}x{present.get('pixel_height', '?')}"
+        current = (f"{expected['pixel_width']}x{expected['pixel_height']}"
+                   if 'pixel_width' in expected else None)
+        entries.append(entry('pixel_size', stored, current))
+    for key in ('file_size', 'file_md5'):
+        if key in wrong:
+            current = expected.get(key)
+            entries.append(entry(key, str(present[key]), None if current is None else str(current)))
+    return entries
+
+
+def _rows_digest(rows):
+    """md5 of the canonical JSON of the rows a comparison read (FR-045)."""
+    tuples = sorted(
+        (row.unix_name, None if row.duration is None else str(row.duration),
+         row.pixel_width, row.pixel_height, row.file_size, row.file_md5)
+        for row in rows if row is not None)
+    return hashlib.md5(json.dumps(tuples, separators=(',', ':')).encode()).hexdigest()
+
+
+def media_staleness(script):
+    """``(media_repairs, media_rows_digest)`` of a loaded *script* (002 FR-043, FR-045).
+
+    Compares each media cue's present stored values with its file's library
+    row, on the object: no probe, no second reader of the file.
+    ``media_repairs`` lists ``{cue_id, file_name, field, stored, current}``
+    (see :func:`_stale_entries`); ``media_rows_digest`` changes whenever a
+    row the comparison read changes, or a row appears for a file that had
+    none. Reads the database: call it in the executor.
+    """
+    rows, repairs = {}, []
+    for cue in _media_cues(script.cuelist.contents):
+        media = cue.get('Media')
+        file_name = media.get('file_name') if media else None
+        if not file_name:
+            continue
+        if file_name not in rows:
+            rows[file_name] = Media.get_or_none(Media.unix_name == file_name)
+        repairs.extend(_stale_entries(cue, media, rows[file_name]))
+    return repairs, _rows_digest(rows.values())
 
 
 def _fade_duration_ms(duration):
@@ -268,12 +475,16 @@ class CuemsDBProject(StringSanitizer):
         return script.to_wire()
 
     def open(self, uuid):
-        """Open a live project for a session: its wire value and the load report.
+        """Open a live project for a session: its wire value and what the gate needs.
 
-        One library load, one ``to_wire()``. The file is not written.
+        One library load, one ``to_wire()``, and the media comparison on the
+        loaded object (002 FR-043). The file is not written.
 
         Returns:
-            ``(value, LoadReport)`` — *value* is what :meth:`load` returns.
+            ``(value, LoadReport, script_md5, media_repairs, media_rows_digest)``
+            — *value* is what :meth:`load` returns; *script_md5* is the md5 of
+            the bytes read for the report; the last two are
+            :func:`media_staleness`'s.
 
         Raises:
             NonExistentItemError: no live project with *uuid*.
@@ -282,18 +493,50 @@ class CuemsDBProject(StringSanitizer):
                 than the library). ``SchemaError`` and ``OSError`` propagate
                 unwrapped.
         """
+        script, report, script_md5 = self._load_for_gate(uuid)
+        media_repairs, media_rows_digest = media_staleness(script)
+        return script.to_wire(), report, script_md5, media_repairs, media_rows_digest
+
+    def inspect(self, uuid):
+        """What :meth:`open` reports, without building the wire value.
+
+        The repair gate's view of the file on disk (FR-009, FR-009a). The
+        file is not written.
+
+        Returns:
+            ``(LoadReport, script_md5, media_repairs, media_rows_digest)``.
+
+        Raises:
+            As :meth:`open`.
+        """
+        script, report, script_md5 = self._load_for_gate(uuid)
+        return (report, script_md5) + media_staleness(script)
+
+    def media_rows_digest(self, uuid):
+        """The rows digest of the script on disk now (FR-045): has a row changed since the report?"""
+        return self.inspect(uuid)[3]
+
+    def _load_for_gate(self, uuid):
+        """Hash the script's bytes once, then load it with the library's report.
+
+        The library reads the path again, so a write between the two reads
+        binds the report to the earlier bytes. The next save re-hashes and
+        re-derives the gate on a mismatch, so that race fails safe.
+        """
         try:
             project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
         path = self.script_path(project.unix_name)
+        with open(path, 'rb') as fh:
+            script_md5 = hashlib.md5(fh.read()).hexdigest()
         try:
             script, report = CuemsScript.load_with_report(path)
         except SchemaError:
             raise
         except ValidationError as e:
             raise DocumentLoadFailed(path, e) from e
-        return script.to_wire(), report
+        return script, report, script_md5
 
     def load_with_report(self, uuid, include_trash=False):
         """Load a project's script object and the library's report of what the load did.
@@ -446,27 +689,35 @@ class CuemsDBProject(StringSanitizer):
             shutil.move(os.path.join(self.trash_path, trashed), path)
             raise
 
-    # SAFETY NET (see update()): overwrite frontend-sent Media durations from
+    # SAFETY NET (see update()): overwrite frontend-sent Media values from
     # the DB. Delegates to the module-level fix_media_durations_in_contents so
     # the repair tool and this path share one walk.
     def _fix_media_durations(self, project_object):
-        """Overwrite each media cue's ``Media.duration`` from the database, on the object.
+        """Overwrite each media cue's ``Media`` values from the database, on the object.
 
-        The DB is the source of truth for media duration. This corrects the
-        legacy frontend behaviour of sending ``00:00:00.000``. Orphaned media
-        references (no ``Media`` row) are logged, not modified.
+        The DB is the source of truth for a media file's duration, pixel size,
+        size and MD5 (002 FR-041). This corrects the legacy frontend behaviour
+        of sending ``00:00:00.000``, and writes the values the upload stored.
+        The resolvers only read the database: no probe, no file read (Q5).
+        Orphaned media references (no ``Media`` row) are logged, not modified.
 
         Args:
             project_object: ``CuemsScript`` built from the client payload.
         """
         try:
-            stats = fix_media_durations_in_contents(project_object.cuelist.contents, db_duration_resolver)
-            if stats.orphans:
-                Logger.warning(
-                    f"media duration fix: {len(stats.orphans)} cue(s) reference "
-                    f"media not in DB (duration left as-is): {stats.orphans}")
+            stats = fix_media_durations_in_contents(project_object.cuelist.contents, db_duration_resolver,
+                                                    db_dimensions_resolver)
         except Exception as e:
-            Logger.warning(f"Could not fix media durations: {e}")
+            Logger.warning(f"Could not fix media values: {e}")
+            return
+        if stats.orphans:
+            Logger.warning(
+                f"media values fix: {len(stats.orphans)} cue(s) reference "
+                f"media not in DB (values left as-is): {stats.orphans}")
+        if stats.errors:
+            Logger.warning(
+                f"media values fix: {len(stats.errors)} cue(s) could not be corrected "
+                f"and keep the client's values: {stats.errors}")
 
     def new(self, data, unix_name):
         """Create a new project: allocate a UUID, write the XML, insert the DB row.

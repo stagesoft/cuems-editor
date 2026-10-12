@@ -1,0 +1,50 @@
+# 002 T065: tests/test_media_staleness.py before media_staleness (T066) and the gate's media half (T067, T068).
+# Working tree on top of 1502d64; cuems-utils cdb3bef; measured 2026-10-12T21:10:13+02:00.
+#
+# Seven fail: document_load_report has no media_repairs / acknowledgment_required, and a project
+# whose row changed after acknowledgment is saved instead of re-reported. test_an_orphan_keeps_its_values_on_save
+# passes: it pins FR-041 on the fill, which T063 already landed, so it has no red phase of its own;
+# it is measured at the fill because update_media_relations refuses a project naming a file
+# with no Media row (MediaDoesNotExist) before the fill runs — an existing constraint, measured.
+
+$ $E/bin/python -m pytest -q -p no:cacheprovider --tb=line tests/test_media_staleness.py
+FFFF.FFF                                                                 [100%]
+=================================== FAILURES ===================================
+E   KeyError: 'media_repairs'
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+/disk/Projects/StageLab/cuems-editor/tests/test_media_staleness.py:97: KeyError: 'media_repairs'
+E   KeyError: 'media_repairs'
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+/disk/Projects/StageLab/cuems-editor/tests/test_media_staleness.py:127: KeyError: 'media_repairs'
+E   KeyError: 'media_repairs'
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+/disk/Projects/StageLab/cuems-editor/tests/test_media_staleness.py:141: KeyError: 'media_repairs'
+E   KeyError: 'media_repairs'
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+/disk/Projects/StageLab/cuems-editor/tests/test_media_staleness.py:161: KeyError: 'media_repairs'
+E   KeyError: 'media_repairs'
+------------------------------ Captured log call -------------------------------
+/disk/Projects/StageLab/cuems-editor/tests/test_media_staleness.py:203: KeyError: 'media_repairs'
+E   AssertionError: assert ['project_save'] == ['repair_save_refused']
+      At index 0 diff: 'project_save' != 'repair_save_refused'
+      Use -v to get more diff
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+/disk/Projects/StageLab/cuems-editor/tests/test_media_staleness.py:226: AssertionError: assert ['project_save'] == ['repair_save_refused']
+E   AssertionError: assert ('media_repairs' in {'report_id': '786345f1-b746-402a-b13b-5748651f0d21', 'project_uuid': 'ddba3000-7894-4a60-a6c1-e73b9bbed8c0', 'document': '/tmp/pytest-of-adria/pytest-43/test_media_repairs_is_always_p0/projects/minimal/script.xml', 'outcome': 'clean', ...})
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+/disk/Projects/StageLab/cuems-editor/tests/test_media_staleness.py:235: AssertionError: assert ('media_repairs' in {'report_id': '786345f1-b746-402a-b13b-5748651f0d21', 'project_uuid': 'ddba3000-7894-4a60-a6c1-e73b9bbed8c0', 'document': '/tmp/pytest-of-adria/pytest-43/test_media_repairs_is_always_p0/projects/minimal/script.xml', 'outcome': 'clean', ...})
+=========================== short test summary info ============================
+FAILED tests/test_media_staleness.py::test_a_stale_duration_is_a_media_repair_and_requires_acknowledgment
+FAILED tests/test_media_staleness.py::test_pixel_size_on_an_audio_cue_is_a_media_repair_with_current_null
+FAILED tests/test_media_staleness.py::test_missing_values_are_not_stale - Key...
+FAILED tests/test_media_staleness.py::test_an_orphan_is_not_stale - KeyError:...
+FAILED tests/test_media_staleness.py::test_an_invalid_row_value_is_a_media_repair_with_current_null
+FAILED tests/test_media_staleness.py::test_a_row_change_after_acknowledgment_gets_a_new_report
+FAILED tests/test_media_staleness.py::test_media_repairs_is_always_present - ...
+7 failed, 1 passed in 1.74s

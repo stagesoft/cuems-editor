@@ -1,0 +1,65 @@
+# 002 T080: quickstart.md §3, each scenario against the test that proves it.
+# Every test named below passes in suite-final.txt (G4's row is the standing xfail it describes).
+# Scenarios without a test: none.
+
+[x] A reconnect keeps the repair gate (US1 #1, #2; FR-005)
+    tests/test_repair_gate_durable.py::test_a_reconnect_with_the_same_session_id_keeps_the_gate
+    tests/test_repair_gate_durable.py::test_a_reacknowledge_after_reconnect_is_echoed_then_the_save_preserves
+    failing first: evidence/repair-gate-failing-first.txt
+[x] A second session or a stale tab is refused (US1 #3)
+    tests/test_repair_gate_durable.py::test_a_session_that_never_loaded_the_project_is_refused
+    tests/test_document_load_report.py::test_another_sessions_acknowledgment_does_not_unlock_this_save
+[x] A save after an editor restart (US1 #4)
+    tests/test_repair_gate_durable.py::test_after_an_editor_restart_the_gate_is_rederived_from_the_file
+[x] A file changed after acknowledgment (FR-009a)
+    tests/test_repair_gate_durable.py::test_a_file_changed_after_acknowledgment_gets_a_new_report
+[x] A clean project adds no load (US1 #7)
+    tests/test_repair_gate_durable.py::test_a_clean_project_save_adds_no_load
+[x] Config round trip (US2 #1, #4)
+    tests/test_config_round_trip.py::test_config_load_settings_serves_the_file
+    tests/test_config_round_trip.py::test_round_trip_settings
+    tests/test_config_round_trip.py::test_round_trip_project_mappings
+[x] No file yet (US2 #2)
+    tests/test_config_round_trip.py::test_config_load_without_a_file_is_exists_false_with_the_root_instance
+[x] A stale save (US2 #5)
+    tests/test_config_round_trip.py::test_a_stale_base_revision_is_config_conflict_and_writes_nothing
+[x] Simultaneous saves (US2 #6)
+    tests/test_config_round_trip.py::test_two_simultaneous_saves_write_once_and_conflict_once
+[x] A library refusal (US2 #7)
+    tests/test_config_round_trip.py::test_a_library_refusal_is_config_save_refused_with_its_location
+    tests/test_config_round_trip.py::test_an_unknown_top_level_key_is_config_save_refused_without_location
+    note: the quickstart's example is node_role "bogus" in a project mapping; a project mapping has no
+    node_role, so the test uses a mapping default's direction "sideways", which save's T1 refuses with
+    rule XsdEnumerationFacets at location [null, "default"] (measured).
+[x] Restart notice (US2 #8)
+    tests/test_config_round_trip.py::test_settings_save_names_the_engines_to_restart
+[x] network_map is not written (US2 #9, SC-006)
+    tests/test_config_round_trip.py::test_network_map_save_is_refused_and_names_node_set
+    tests/test_config_round_trip.py::test_no_source_path_writes_network_map
+    tests/test_schema_descriptor.py::test_config_save_refuses[network_map]
+[x] Version 1 restated (US3)
+    tests/test_payload_version.py (all)
+    tests/test_protocol_doc.py::test_no_live_frame_section_says_string_booleans
+    tests/test_protocol_doc.py::test_version_1_is_restated_with_json_booleans
+    failing first: evidence/protocol-doc-failing-first.txt
+[x] Renaming a node (US4 #1-#4)
+    tests/test_node_set.py::test_node_set_sends_the_alias_and_refreshes_everyone
+    tests/test_node_set.py::test_unavailable_answers_at_once_and_builds_no_communicator
+    tests/test_node_set.py::test_nodeconf_error_is_relayed_verbatim_without_retry
+    tests/test_node_set.py::test_non_operator_fields_are_refused_before_ipc
+[x] G4 against the real handler (research R7)
+    tests/test_upstream_gates.py::test_nodeconf_engine_callback_accepts_node_set  (xfailed: "unknown action: node_set")
+[x] FR-042's six media tests (US6)
+    tests/test_media_values.py (the six; node ids in evidence/t039-absorbed.md)
+    failing first: evidence/media-values-failing-first.txt
+[x] Columns migrate (US6 #2)
+    tests/test_media_migration.py::test_start_up_adds_the_four_columns_and_keeps_rows
+    tests/test_media_migration.py::test_a_migration_failure_stops_the_start
+    tests/test_media_migration.py::test_repair_tool_dry_run_never_writes_the_database
+[x] Stale media is acknowledged (US6 #5)
+    tests/test_media_staleness.py::test_a_stale_duration_is_a_media_repair_and_requires_acknowledgment
+    failing first: evidence/media-staleness-failing-first.txt
+[x] A changed row invalidates the report (FR-045)
+    tests/test_media_staleness.py::test_a_row_change_after_acknowledgment_gets_a_new_report
+[x] Pre-rc15 project (US6 #6)
+    tests/test_media_staleness.py::test_missing_values_are_not_stale

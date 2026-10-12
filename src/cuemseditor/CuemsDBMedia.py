@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import os
 import math
 import shutil
@@ -16,10 +19,48 @@ from cuemsutils.log import logged, Logger
 from cuemsutils.helpers import new_datetime
 
 from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia
+from cuemseditor.CuemsDBProject import _md5
 from cuemseditor.CuemsErrors import *
 
 
 FFPROBE_TIMEOUT = 30  # seconds; local-disk probes finish in <1s, NFS/USB headroom
+# The engine's own timeout for the same query: a save waits on this probe.
+DIMENSIONS_PROBE_TIMEOUT = 5  # seconds
+
+
+def probe_dimensions(file_path):
+    """Return ``(width, height)`` px of a file's first video stream, or
+    ``(None, None)``.
+
+    The same ffprobe query the engine ran when it armed a video cue, so the
+    stored values are the values the engine used to measure (869fat84r).
+    Never raises: a failure logs a WARNING and returns ``(None, None)``.
+    """
+    cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+           '-show_entries', 'stream=width,height', '-of', 'csv=p=0', file_path]
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                timeout=DIMENSIONS_PROBE_TIMEOUT)
+        if result.returncode == 0:
+            parts = result.stdout.decode('utf8', errors='replace').strip().split(',')
+            if len(parts) == 2:
+                width, height = int(parts[0]), int(parts[1])
+                if width > 0 and height > 0:
+                    return (width, height)
+        Logger.warning(f'could not read the pixel size of {file_path} '
+                       f'(ffprobe rc={result.returncode})')
+    except (subprocess.TimeoutExpired, OSError, ValueError) as e:
+        Logger.warning(f'could not read the pixel size of {file_path}: {e}')
+    return (None, None)
+
+
+def media_file_size(file_path):
+    """Size in bytes, or ``None`` when unreadable or empty."""
+    try:
+        size = os.stat(file_path).st_size
+    except OSError:
+        return None
+    return size if size > 0 else None
 
 
 def probe_duration(file_path):
@@ -137,7 +178,7 @@ class CuemsDBMedia(StringSanitizer):
         except KeyError as e:
             Logger.error(f'can not read settings {e}')
 
-    def new(self, tmp_file_path, filename):
+    def new(self, tmp_file_path, filename, md5=None):
         """Intake a newly uploaded file: move it into the media library and create sidecars.
 
         Steps performed atomically:
@@ -156,6 +197,9 @@ class CuemsDBMedia(StringSanitizer):
         Args:
             tmp_file_path: Absolute path to the file in the tmp upload directory.
             filename: Sanitised target filename (no directory component).
+            md5: the file's MD5 as the upload verified it (``None`` when the
+                caller has none); stored as ``file_md5`` (869fat84r, D18),
+                normalised by ``CuemsDBProject._md5`` (lowercase, or ``None``).
 
         Returns:
             The actual destination filename (may differ from *filename* if
@@ -209,8 +253,21 @@ class CuemsDBMedia(StringSanitizer):
                     Logger.error(f'could not generate {_type} thumbnail or waveform; error : {e}')
                     media_thumbnail_binary_data = None
 
+                # Stored like the duration (869fat84r): a movie's pixel size, so
+                # the engine does not probe the file when it arms a cue (a
+                # failed probe stores nothing; never fatal); and, for every
+                # media type, the file's size and the MD5 the upload verified.
+                dest_path = self.get_file_path(dest_filename)
+                pixel_width = pixel_height = None
+                if _type is MediaType.MOVIE:
+                    width, height = probe_dimensions(dest_path)
+                    if width and height:
+                        pixel_width, pixel_height = width, height
+                file_size = media_file_size(dest_path)
+                file_md5 = _md5(md5)
+
                 media_uuid = new_uuid()
-                Media.create(uuid=str(media_uuid), name=dest_filename, unix_name=dest_filename, created=new_datetime(), modified=new_datetime(), duration=media_duration, media_type=_type.name, in_trash=False)
+                Media.create(uuid=str(media_uuid), name=dest_filename, unix_name=dest_filename, created=new_datetime(), modified=new_datetime(), duration=media_duration, media_type=_type.name, in_trash=False, pixel_width=pixel_width, pixel_height=pixel_height, file_size=file_size, file_md5=file_md5)
                 Logger.debug(f'new media created: {media_uuid} {dest_filename}')
                 return dest_filename
             except Exception as e:

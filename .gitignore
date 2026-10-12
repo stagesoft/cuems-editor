@@ -28,3 +28,7 @@ debian/*.substvars
 debian/*.debhelper
 debian/*.log
 debian/debhelper-build-stamp
+
+.venv/
+venv/
+*.egg-info/

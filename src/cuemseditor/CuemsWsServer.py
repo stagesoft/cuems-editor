@@ -87,6 +87,14 @@ class CuemsWsServer():
         self.engine_messages = list()
         self.users = dict()
         self.sessions = dict()
+        # Project uuid -> GateState dict (specs/002-config-round-trip/data-model.md):
+        # the outstanding load report of each project and which sessions
+        # acknowledged it. Read and written only on the event-loop thread.
+        self.repair_gates = dict()
+        # os.path.realpath(path) -> asyncio.Lock, one per config document or
+        # script file a save writes. Created lazily on the loop thread
+        # (CuemsWsUser.file_lock) and never evicted.
+        self.file_locks = dict()
         self.settings_dict = settings_dict
         # Projected once, here. json.dumps of the library's mappings object
         # re-projects it through the mappings schema on every message and drops
@@ -375,6 +383,23 @@ class CuemsWsServer():
                 if user is not calling_user:
                     await user.outgoing.put(message)
                     Logger.debug('notifing {} {}'.format(user, list_type))
+
+    async def notify_others_config_changed(self, calling_user, value):
+        """Tell every other session that a configuration document changed (FR-017).
+
+        ``{"type": "config_changed", "value": {schema, project_uuid,
+        revision}}``. It carries no document: a session holding the old
+        revision re-runs ``config_load`` before editing. The saver has its
+        ``config_save`` reply instead.
+
+        Args:
+            calling_user: The session that saved; excluded.
+            value: ``{"schema", "project_uuid", "revision"}``.
+        """
+        message = json.dumps({"type": "config_changed", "value": value})
+        for user in list(self.users):
+            if user is not calling_user:
+                await user.outgoing.put(message)
 
     async def notify_others_same_project(self, calling_user, msg_type, project_uuid=None):
         """Notify users who have the same project loaded that it was modified.

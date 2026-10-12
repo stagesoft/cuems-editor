@@ -73,9 +73,12 @@ repositories (cuems-utils requirements doc §4).
    an IP change, any adopt or un-adopt). Field ownership:
    - `uuid`/`name`/`node_role`/`ip`/`online`: discovery overwrites them on every pass.
    - `adopted`: nodeconf, through `nodelist_modify` ADD/REMOVE.
-   - `alias`: the operator, per the XSD comment. Also `role_id`/`hostname` during the transition.
+   - `role_id`/`hostname`: nodeconf (`cuems-common` `docs/node-identity-contract.md:35-37`). Not
+     editable from the UI.
+   - `alias`: the operator (UI), and the only node field the operator owns.
 
-   nodeconf also publishes `alias` over mDNS. So: `config_save` stops accepting `network_map`;
+   (Correction 2026-10-08: nodeconf does **not** publish the operator `alias` over mDNS; its
+   `_ui_alias` is a deployment constant.) So: `config_save` stops accepting `network_map`;
    reading it through `config_load` is fine; alias edits go to nodeconf over IPC (§3, item D).
 6. **Every upstream gap stays a strict xfail that flips when the library fixes it**, never a
    hand-rolled workaround. Do not duplicate the `library_path/projects/<uname>/<file>` convention.
@@ -215,7 +218,8 @@ Verify both with `git log -1 -- specs/001-cuems-utils-migration/tasks.md` before
 `/speckit-specify` with §2-§5 as the feature description, then `/speckit-clarify`. Clarify must at
 least settle:
 - the repair-gate key (§3 B);
-- the `node_set` message shape, and whether `role_id`/`hostname` are editable;
+- the `node_set` message shape (`alias` only: `role_id`/`hostname` are nodeconf's, settled
+  2026-10-08);
 - whether a `config_conflict` reply carries the current document or only the revision.
 
 Then `/speckit-plan`, `/speckit-tasks`, `/speckit-analyze`.

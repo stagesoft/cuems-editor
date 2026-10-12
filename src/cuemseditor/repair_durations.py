@@ -25,6 +25,11 @@ in the pre-013 device shape (``<AudioCue>`` with no ``class``) is corrected by
 running ``cuems-reshape-devices`` over the whole library and then saving in
 the editor, not by this tool.
 
+The DB gains the four ``media`` columns (pixel size, file size, MD5;
+869fat84r) here if the editor has not added them yet: after the backup with
+``--apply``. A dry-run never writes the DB: on a database that lacks them it
+reads a migrated temporary copy.
+
 Dry-run is the default; ``--apply`` writes the DB after backing it up. Run
 with the editor STOPPED (single-writer SQLite).
 
@@ -35,10 +40,13 @@ import argparse
 import os
 import shutil
 import sys
+import tempfile
 from datetime import datetime
 
 from cuemseditor.cli import get_settings
-from cuemseditor.CuemsDBModel import Project, Media, database
+from cuemseditor.CuemsDBModel import (
+    Project, Media, database, ensure_media_columns, missing_media_columns,
+)
 from cuemseditor.CuemsDBMedia import probe_duration
 from cuemseditor.CuemsDBProject import (
     fix_media_durations_in_contents,
@@ -266,10 +274,25 @@ def main(argv=None):
         settings['library_path'],
         'duration_repair_backup_' + datetime.now().strftime('%Y%m%d-%H%M%S'))
 
+    tmp_dir = None
     database.init(db_path)
     database.connect()
     if args.apply:
         backup_database(settings, backup_dir)
+        added = ensure_media_columns(database)  # after the backup
+        if added:
+            print(f'  DB migrated: added media columns {added}')
+    elif missing_media_columns(database):
+        # A dry-run never writes the DB: read a migrated temporary copy.
+        database.close()
+        tmp_dir = tempfile.mkdtemp(prefix='repair_durations_dryrun_')
+        tmp_db = os.path.join(tmp_dir, os.path.basename(db_path))
+        shutil.copy2(db_path, tmp_db)
+        database.init(tmp_db)
+        database.connect()
+        ensure_media_columns(database)
+        print('  DB lacks the media columns the editor adds at start; '
+              'this dry-run reads a migrated temporary copy')
 
     report = Report()
     try:
@@ -277,6 +300,8 @@ def main(argv=None):
         scan_scripts(settings, args, report, corrected)
     finally:
         database.close()
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     print('\n== Report ==')
     report.dump()

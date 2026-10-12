@@ -13,15 +13,20 @@ UR-5). ``project_mappings``/``project_settings`` additionally need
 ``value["project_uuid"]``, resolved to a ``unix_name`` the same way
 ``project_ready`` resolves one. Pending cuems-utils UR-6, a project's
 ``config_save`` still fails before the target file has ever been saved —
-``ConfigManager.project_path`` raises ``FileNotFoundError`` for it.
+``ConfigManager.project_path`` raises ``FileNotFoundError`` for it (gate G1).
+
+Since 002 every ``config_save`` carries ``base_revision`` (Q3) and is answered
+with an object, not ``"OK"`` (M3), and ``network_map`` is refused (FR-019).
+The config round trip itself is ``tests/test_config_round_trip.py``.
 """
 
 import asyncio
 import concurrent.futures
+import hashlib
 import json
 import os
 import shutil
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -39,6 +44,12 @@ FIELD_KEYS = ['name', 'xsd_type', 'required', 'repeated', 'order', 'kind',
 def conf(tmp_path, monkeypatch):
     target = tmp_path / 'conf'
     shutil.copytree(CONF, target)
+    # config_save backs up into <library_path>/trash/config: keep it in tmp_path,
+    # where project_dir points ConfigManager.library_path too.
+    settings = target / 'settings.xml'
+    settings.write_text(settings.read_text(encoding='utf-8').replace(
+        '<library_path>/opt/cuems_library</library_path>',
+        f'<library_path>{tmp_path}</library_path>'), encoding='utf-8')
     monkeypatch.setenv('CUEMS_CONF_PATH', str(target))
     return target
 
@@ -47,12 +58,20 @@ def conf(tmp_path, monkeypatch):
 def user(conf):
     server = MagicMock()
     server.users = {}
+    server.repair_gates = {}
+    server.file_locks = {}
+    server.notify_others_config_changed = AsyncMock()
     server.event_loop = asyncio.new_event_loop()
     server.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     session = CuemsWsUser(server, MagicMock())
     yield session
     server.executor.shutdown(wait=True)
     server.event_loop.close()
+
+
+def _md5(path):
+    with open(path, 'rb') as fh:
+        return hashlib.md5(fh.read()).hexdigest()
 
 
 def _call(user, coro):
@@ -84,10 +103,12 @@ def test_schema_descriptor_of_an_unknown_schema_is_an_error(user):
     assert frames[0]['type'] == 'error' and frames[0]['action'] == 'schema_descriptor'
 
 
-@pytest.mark.parametrize('schema', ['script', 'hardware_outputs', 'default_mappings', 'outputs', None])
+@pytest.mark.parametrize('schema', ['script', 'hardware_outputs', 'network_map', 'default_mappings', 'outputs', None])
 def test_config_save_refuses(user, conf, schema):
     before = {p.name: p.read_bytes() for p in conf.iterdir()}
-    frames = _call(user, user.config_save({'schema': schema, 'document': {}}, 'config_save'))
+    base_revision = _md5(conf / 'network_map.xml') if schema == 'network_map' else None
+    frames = _call(user, user.config_save(
+        {'schema': schema, 'document': {}, 'base_revision': base_revision}, 'config_save'))
 
     assert frames[0]['type'] == 'error' and frames[0]['action'] == 'config_save'
     assert {p.name: p.read_bytes() for p in conf.iterdir()} == before
@@ -96,8 +117,11 @@ def test_config_save_refuses(user, conf, schema):
 def test_config_save_of_settings_persists_through_save_settings(user, conf):
     manager = ConfigManager(load_all=False)
     document = manager.to_wire('settings')
-    frames = _call(user, user.config_save({'schema': 'settings', 'document': document}, 'config_save'))
-    assert frames == [{'type': 'config_save', 'value': 'OK'}]
+    frames = _call(user, user.config_save(
+        {'schema': 'settings', 'document': document, 'base_revision': _md5(conf / 'settings.xml')}, 'config_save'))
+    assert [f['type'] for f in frames] == ['config_save']
+    assert frames[0]['value']['schema'] == 'settings'
+    assert frames[0]['value']['revision'] == _md5(conf / 'settings.xml')
 
 
 # ─── project_mappings / project_settings need a project_uuid ─────────────
@@ -123,7 +147,7 @@ def project_dir(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize('schema', ['project_mappings', 'project_settings'])
 def test_config_save_of_a_project_schema_needs_a_project_uuid(user, conf, schema):
-    frames = _call(user, user.config_save({'schema': schema, 'document': {}}, 'config_save'))
+    frames = _call(user, user.config_save({'schema': schema, 'document': {}, 'base_revision': None}, 'config_save'))
     assert frames[0]['type'] == 'error' and frames[0]['action'] == 'config_save'
     assert 'project_uuid' in frames[0]['value']
 
@@ -133,24 +157,31 @@ def test_config_save_of_a_project_schema_refuses_an_unknown_project(user, conf, 
     user.server.db.project.get_project_unix_name.side_effect = NonExistentItemError(
         "item with uuid: bogus does not exist")
     frames = _call(user, user.config_save(
-        {'schema': schema, 'document': {}, 'project_uuid': 'bogus'}, 'config_save'))
+        {'schema': schema, 'document': {}, 'project_uuid': 'bogus', 'base_revision': None}, 'config_save'))
     assert frames[0]['type'] == 'error' and frames[0]['action'] == 'config_save'
 
 
-def test_config_save_of_project_settings_fails_before_the_file_exists_pending_ur6(user, conf, project_dir):
-    """cuems-utils UR-6: project_path raises for a project's first config_save.
+@pytest.mark.xfail(strict=True, raises=AssertionError,
+                   reason="cuems-editor UR-6: ConfigManager.project_path refuses a file not yet created (gate G1)")
+def test_first_config_save_of_project_settings_round_trips(user, conf, project_dir):
+    """Gate G1: a project's first ``config_save`` (no file, ``base_revision`` null).
 
-    This project_uname resolves and the document decodes cleanly — the only
-    thing standing between this and a real save is the existence check this
-    gate is petitioning cuems-utils to relax. When UR-6 lands, this test
-    should be replaced by one that asserts the save succeeds.
+    Today ``project_path``'s existence check refuses it, and the reply is the
+    error frame. The value is checked in the written file rather than with
+    ``config_load``, which is refused for ``project_settings`` until gate G2
+    closes: each gate flips on its own fix. UR-6's wanted shape is a
+    ``must_exist=False`` parameter, so when it lands the editor's
+    ``_config_path`` has to pass it; then this test XPASSes and the marker
+    comes off.
     """
     user.server.db.project.get_project_unix_name.return_value = 'test_project'
     document = {'setting': [{'name': 'example', 'value': '1'}]}
     frames = _call(user, user.config_save(
-        {'schema': 'project_settings', 'document': document, 'project_uuid': 'irrelevant-here'}, 'config_save'))
-    assert frames[0]['type'] == 'error' and frames[0]['action'] == 'config_save'
-    assert 'not found' in frames[0]['value']
+        {'schema': 'project_settings', 'document': document, 'project_uuid': 'irrelevant-here',
+         'base_revision': None}, 'config_save'))
+    assert [f['type'] for f in frames] == ['config_save']
+    saved = (project_dir / 'settings.xml').read_text(encoding='utf-8')
+    assert '<name>example</name>' in saved and '<value>1</value>' in saved
 
 
 def test_config_save_of_project_settings_persists_once_the_file_exists(user, conf, project_dir):
@@ -165,9 +196,12 @@ def test_config_save_of_project_settings_persists_once_the_file_exists(user, con
     document = {'setting': [{'name': 'example', 'value': '1'}]}
 
     frames = _call(user, user.config_save(
-        {'schema': 'project_settings', 'document': document, 'project_uuid': 'some-uuid'}, 'config_save'))
+        {'schema': 'project_settings', 'document': document, 'project_uuid': 'some-uuid',
+         'base_revision': _md5(project_dir / 'settings.xml')}, 'config_save'))
 
-    assert frames == [{'type': 'config_save', 'value': 'OK'}]
+    assert frames == [{'type': 'config_save', 'value': {
+        'schema': 'project_settings', 'project_uuid': 'some-uuid',
+        'revision': _md5(project_dir / 'settings.xml'), 'restart': []}}]
     saved = (project_dir / 'settings.xml').read_text(encoding='utf-8')
     assert '<name>example</name>' in saved and '<value>1</value>' in saved
     assert 'previous' not in saved

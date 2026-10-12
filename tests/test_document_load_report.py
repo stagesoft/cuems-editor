@@ -86,9 +86,13 @@ def lib(tmp_path):
     database.create_tables([Project, Media, ProjectMedia], safe=True)
     Project.create(uuid=SCRIPT_ID, name='Test Script', unix_name='minimal',
                    created=new_datetime(), modified=new_datetime(), in_trash=False)
+    # Rows that agree with the fixture's media (durations 00:00:00.000, no
+    # stored values): these tests are about the script's report, and a
+    # differing row would add media_repairs (002 FR-043; that is
+    # tests/test_media_staleness.py).
     for name in ('file.ext', 'file_video.ext'):
         Media.create(uuid=str(new_uuid()), name=name, unix_name=name, created=new_datetime(),
-                     modified=new_datetime(), duration='00:01:00.000', media_type='AUDIO',
+                     modified=new_datetime(), duration='00:00:00.000', media_type='AUDIO',
                      in_trash=False)
     settings = get_settings()
     settings['library_path'] = root
@@ -104,6 +108,8 @@ def server(lib):
     server = MagicMock()
     server.users = {}
     server.sessions = {}
+    server.repair_gates = {}
+    server.file_locks = {}
     server.event_loop = asyncio.new_event_loop()
     server.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     server.db.project = lib.project
@@ -174,7 +180,7 @@ def test_a_repaired_open_reports_the_repair_and_writes_nothing(lib, server):
         'rule_name': 'target_resolves',
     }]
     assert second['repairs'] == first['repairs']           # a second open reports it again
-    assert second['report_id'] != first['report_id']
+    assert second['report_id'] == first['report_id']       # same bytes, same report (002 R8.5)
 
 
 def test_a_converted_open_reports_the_conversion(lib, server):
@@ -270,6 +276,8 @@ def test_after_acknowledge_the_original_is_in_trash_and_the_repair_is_saved(lib,
 
 
 def test_another_sessions_acknowledgment_does_not_unlock_this_save(lib, server):
+    # Since 002 the report is the project's (R8.5): both sessions see one
+    # report_id, and each acknowledges for itself (001 FR-021, 002 FR-006).
     _write_variant(lib.script, 'repairable')
     before = _sha256(lib.script)
     mine, theirs = _session(server), _session(server)
@@ -277,9 +285,10 @@ def test_another_sessions_acknowledgment_does_not_unlock_this_save(lib, server):
     theirs_id = _open(server, theirs)[1]['value']['report_id']
 
     _ack(server, theirs, theirs_id)
-    refused = _ack(server, mine, theirs_id)                 # someone else's report id
+    refused = _ack(server, mine, str(new_uuid()))           # a report id that is not outstanding
     frames = _save(server, mine)
 
+    assert theirs_id == mine_id
     assert refused[0]['type'] == 'repair_save_refused'
     assert frames[0]['type'] == 'repair_save_refused'
     assert frames[0]['value']['report_id'] == mine_id

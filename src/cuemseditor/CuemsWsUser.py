@@ -2,11 +2,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import functools
+import hashlib
 import json
 import asyncio
+import os
 from datetime import datetime, timedelta
 from cuemsutils.helpers import new_uuid, new_datetime, Unset
 from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
+from cuemsutils.tools.CommunicatorServices import Communicator
+from cuemsutils.tools import coerce_identity
+from cuemsutils.tools.Uuid import Uuid
+from cuemsutils.errors import IngestError, ValidationError
 import websockets as ws
 import sys
 
@@ -24,6 +30,24 @@ functionNameAsString = lambda n=0: sys._getframe(n + 1).f_code.co_name
 LOAD_FAILED_NEXT_STEPS = ['restore_from_conversion_backup', 'correct_field_by_hand', 'remove_document']
 
 
+def file_lock(server, path):
+    """The ``asyncio.Lock`` that serialises saves of *path* (research R6).
+
+    Keyed by the resolved path, so two spellings of one file share a lock.
+    Event-loop thread only: ``server.file_locks`` is shared state.
+    """
+    return server.file_locks.setdefault(os.path.realpath(path), asyncio.Lock())
+
+
+def bytes_md5(path):
+    """md5 hex digest of *path*'s bytes, or ``None`` when it does not exist. Runs in the executor."""
+    try:
+        with open(path, 'rb') as fh:
+            return hashlib.md5(fh.read()).hexdigest()
+    except FileNotFoundError:
+        return None
+
+
 def _json_safe(value):
     """A library value as JSON: scalars as they are, ``None`` as null, anything
     else (``CTimecode``, ``Uuid``, an enum) as its string form."""
@@ -35,14 +59,77 @@ def _json_safe(value):
     return str(value)
 
 
-def load_report_value(report_id, project_uuid, report):
-    """The ``value`` of ``document_load_report`` for a library ``LoadReport``."""
+def derive_gate(project_uuid, report, script_md5, media_repairs=(), media_rows_digest=None, prior=None):
+    """The repair gate of *project_uuid* for a load of the bytes hashed as *script_md5*.
+
+    A ``GateState`` (specs/002-config-round-trip/data-model.md): the library's
+    *report* and the stale media values of the same load (*media_repairs*,
+    read from the library rows that hash to *media_rows_digest*). When
+    *prior* describes the same bytes and the same rows, it is updated in
+    place and returned: its ``report_id``, ``acknowledged_by`` and
+    ``preserved`` stand, so a second session loading the project does not
+    revoke the first one's acknowledgment (research R8.5, FR-045).
+    Otherwise a new ``report_id`` is minted and no session has acknowledged
+    it. Event-loop thread only.
+    """
+    if (prior is not None and prior['script_md5'] == script_md5
+            and prior['media_rows_digest'] == media_rows_digest):
+        state = prior
+    else:
+        state = {
+            'project_uuid': project_uuid,
+            'report_id': str(new_uuid()),
+            'script_md5': script_md5,
+            'media_rows_digest': media_rows_digest,
+            'preserved': False,
+            'acknowledged_by': set(),
+        }
+    state['outcome'] = report.outcome.value
+    state['media_repairs'] = list(media_repairs)
+    state['acknowledgment_required'] = state['outcome'] != 'clean' or bool(media_repairs)
+    state['file_differs_from_loaded'] = bool(report.file_differs_from_loaded) or bool(media_repairs)
+    state['report'] = report
+    return state
+
+
+def clean_gate(project_uuid, script_md5):
+    """The gate after a save wrote the document: nothing outstanding (FR-010)."""
+    return {
+        'project_uuid': project_uuid,
+        'report_id': str(new_uuid()),
+        'outcome': 'clean',
+        'media_repairs': [],
+        'acknowledgment_required': False,
+        'file_differs_from_loaded': False,
+        'script_md5': script_md5,
+        'media_rows_digest': None,
+        'preserved': False,
+        'acknowledged_by': set(),
+        'report': None,
+    }
+
+
+def gate_requires_ack(state):
+    """Whether a save of the project waits for the saving session's acknowledgment."""
+    return state['acknowledgment_required']
+
+
+def load_report_value(report_id, project_uuid, report, media_repairs=()):
+    """The ``value`` of ``document_load_report`` for a library ``LoadReport``.
+
+    ``outcome``, ``conversions`` and ``repairs`` are the library's, verbatim.
+    ``media_repairs`` (always a list) are the stale media values the editor
+    found at load (002 FR-043, FR-044); ``acknowledgment_required`` says
+    whether a save waits for an acknowledgment, and ``file_differs_from_loaded``
+    covers both parts.
+    """
+    media_repairs = list(media_repairs)
     return {
         'report_id': report_id,
         'project_uuid': project_uuid,
         'document': report.document,
         'outcome': report.outcome.value,
-        'file_differs_from_loaded': bool(report.file_differs_from_loaded),
+        'file_differs_from_loaded': bool(report.file_differs_from_loaded) or bool(media_repairs),
         'conversions': [
             {
                 'from_version': step.from_version,
@@ -61,6 +148,8 @@ def load_report_value(report_id, project_uuid, report):
             }
             for repair in report.repairs
         ],
+        'media_repairs': media_repairs,
+        'acknowledgment_required': report.outcome.value != 'clean' or bool(media_repairs),
     }
 
 
@@ -104,35 +193,187 @@ def schema_descriptor_value(schema, types):
     }
 
 
-# config_save targets that are refused, with the reason the client is told.
-CONFIG_SAVE_REFUSED = {
-    'script': 'a script is saved with project_save, not config_save',
-    'hardware_outputs': 'hardware_outputs is reserved and has no model bindings',
-}
-
-# The four domains config_save can persist, the file each writes, and
-# whether that file is system-wide (ConfigManager.conf_path) or per-project
-# (ConfigManager.project_path, which needs the unix_name config_save's
-# "project_uuid" resolves). cuems-utils UR-6: project_path/conf_path raise
-# FileNotFoundError when the target has never been saved before, which is
-# the ordinary state for a project's settings.xml/mappings.xml before an
-# operator customises them — so a project's *first* config_save still fails
-# until that is fixed upstream.
-CONFIG_SAVE_TARGETS = {
+# The four configuration documents, the file each is, and whether that file
+# is system-wide (ConfigManager.conf_path) or per-project
+# (ConfigManager.project_path, which needs the unix_name a "project_uuid"
+# resolves to). Both raise FileNotFoundError for a file not created yet: on
+# the read side that is the "exists: false" signal; on the write side it is
+# cuems-editor UR-6 (gate G1), so a project's first config_save still fails.
+CONFIG_FILES = {
     'settings': ('conf', 'settings.xml'),
     'network_map': ('conf', 'network_map.xml'),
     'project_mappings': ('project', 'mappings.xml'),
     'project_settings': ('project', 'settings.xml'),
 }
 
+# config_save targets that are refused, with the reason the client is told.
+CONFIG_SAVE_REFUSED = {
+    'script': 'a script is saved with project_save, not config_save',
+    'hardware_outputs': 'hardware_outputs is reserved and has no model bindings',
+    'network_map': 'network_map.xml is written by cuems-nodeconf; set an alias with node_set',
+}
 
-def _save_config_document(name, document, project_uname=None):
-    """Build and write one ``config_save`` document. Runs in the executor."""
+# The domains config_save writes. network_map is not one (FR-019): nodeconf
+# owns that file and reverts any other writer.
+CONFIG_SAVE_TARGETS = {name: CONFIG_FILES[name] for name in ('settings', 'project_mappings', 'project_settings')}
+
+# The services whose cached configuration a save makes stale (FR-016). The
+# editor only says so (FR-021). where_active: the editor cannot see whether
+# cuems-node-engine runs on this host, so the operator decides.
+CONFIG_RESTART = {
+    'settings': [
+        {'service': 'cuems-controller-engine', 'where_active': False},
+        {'service': 'cuems-node-engine', 'where_active': True},
+    ],
+}
+
+# config_load targets that are refused, with the reason the client is told.
+CONFIG_LOAD_REFUSED = {
+    'script': 'a script is loaded with project_load, not config_load',
+    'hardware_outputs': 'hardware_outputs is reserved and has no model bindings',
+    'project_settings': ('project_settings has no public read projection in cuemsutils '
+                         '(cuems-editor UR-7); it cannot be loaded yet'),
+}
+
+# What a fresh ConfigManager(load_all=False) must load before
+# to_wire(<schema>) can project the domain (research R2), each step called
+# with the manager and the project's unix_name.
+CONFIG_LOAD_STEPS = {
+    'settings': (),
+    'network_map': (lambda manager, uname: manager.load_network_map(),),
+    'project_mappings': (lambda manager, uname: manager.load_net_and_node_mappings(),
+                         lambda manager, uname: manager.load_project_mappings(uname)),
+}
+
+# Errors by which the library refuses a document: config_save_refused /
+# config_load_failed, not the error frame (research R5). SchemaError is a
+# ValidationError.
+LIBRARY_REFUSALS = (IngestError, ValidationError)
+
+
+class ConfigChanged(Exception):
+    """The file changed between the revision check and the backup, under the lock."""
+
+
+def _config_path(manager, name, project_uname):
+    """The document's path. ``FileNotFoundError`` when it does not exist (UR-6)."""
+    kind, file_name = CONFIG_FILES[name.value]
+    return manager.conf_path(file_name) if kind == 'conf' else manager.project_path(project_uname, file_name)
+
+
+def _root_instance(manager, name):
+    """The descriptor ``instance`` of the domain's root type (FR-013, research R4).
+
+    A starting point for a form, not a saveable document: its required
+    leaves are null (cuems-frontend UR-1, gate G3).
+    """
+    types = manager.get_schema_descriptor(name)
+    root = next(t for t in types if t.key.is_path and '/' not in t.key.name)
+    return json.loads(json.dumps(root.instance, default=_json_safe))
+
+
+def _load_config_document(name, project_uname=None):
+    """``(exists, revision, document)`` of one config document. Runs in the executor.
+
+    The revision is the md5 of the bytes, taken before the load: a file that
+    changes in between makes the client's next save a conflict carrying the
+    current document, which is safe. A fresh manager per call: the server's
+    startup copy is never served (S3).
+    """
+    manager = ConfigManager(load_all=False)
+    try:
+        path = _config_path(manager, name, project_uname)
+    except FileNotFoundError:
+        return False, None, _root_instance(manager, name)
+    revision = bytes_md5(path)
+    if name.value not in CONFIG_LOAD_STEPS:
+        return True, revision, None   # project_settings: no read projection (UR-7)
+    for step in CONFIG_LOAD_STEPS[name.value]:
+        step(manager, project_uname)
+    document = json.loads(json.dumps(manager.to_wire(name.value), default=_json_safe))
+    return True, revision, document
+
+
+def _resolve_config_path(name, project_uname=None):
+    """The target path, or ``None`` when the file does not exist. Runs in the executor."""
+    try:
+        return _config_path(ConfigManager(load_all=False), name, project_uname)
+    except FileNotFoundError:
+        return None
+
+
+def _save_config_document(name, document, path, scope, revision):
+    """Back up, build and write one ``config_save`` document; return the new md5. Runs in the executor.
+
+    Called under the file's lock after the revision check. The bytes backed
+    up are the bytes that hashed to *revision*: a writer outside the editor
+    in between raises :class:`ConfigChanged`. The document is built first, so
+    a payload the library refuses leaves no backup; a refusal at ``.save()``
+    (T1) removes the backup it made, since the file is unchanged. If the
+    backup cannot be written, nothing is saved (FR-015a).
+    """
+    with open(path, 'rb') as fh:
+        original = fh.read()
+    if hashlib.md5(original).hexdigest() != revision:
+        raise ConfigChanged(path)
     manager = ConfigManager(load_all=False)
     built = manager.from_json(name, document)
-    kind, file_name = CONFIG_SAVE_TARGETS[name.value]
-    path = manager.conf_path(file_name) if kind == 'conf' else manager.project_path(project_uname, file_name)
-    built.save(path)
+    backup = _write_config_backup(manager.library_path, scope, path, original)
+    try:
+        built.save(path)
+    except Exception:
+        os.remove(backup)
+        raise
+    Logger.info(f'config_save of {name.value}: {path} replaced, previous bytes in {backup}')
+    return bytes_md5(path)
+
+
+def _write_config_backup(library_path, scope, path, original):
+    """``<library>/trash/config/<scope>_<file stem>_<YYYYmmddTHHMMSS>.xml``, never overwritten."""
+    directory = os.path.join(library_path, 'trash', 'config')
+    os.makedirs(directory, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(path))[0]
+    base = f"{scope}_{stem}_{datetime.now().strftime('%Y%m%dT%H%M%S')}"
+    candidate, n = os.path.join(directory, f'{base}.xml'), 0
+    while True:
+        try:
+            with open(candidate, 'xb') as fh:
+                fh.write(original)
+            return candidate
+        except FileExistsError:
+            n += 1
+            candidate = os.path.join(directory, f'{base}-{n}.xml')
+
+
+def refusal_value(schema, project_uuid, error):
+    """The ``value`` of ``config_save_refused`` / ``config_load_failed`` for a library refusal.
+
+    The location comes from the library's ``Violation``, never from parsing
+    its message (research R5): a refusal without one has null ``field``,
+    ``location`` and ``rule``.
+    """
+    violation = getattr(error, 'violation', None)
+    location = getattr(violation, 'location', None)
+    return {
+        'schema': schema,
+        'project_uuid': project_uuid,
+        'field': location[1] if location and len(location) > 1 else None,
+        'location': None if location is None else list(location),
+        'rule': getattr(violation, 'rule', None),
+        'message': str(error),
+    }
+
+
+# node_set carries the one node field the operator owns (002 M7,
+# cuems-common docs/node-identity-contract.md). Discovery owns uuid, name,
+# node_role, ip and online; nodeconf owns adopted, role_id and hostname.
+NODE_SET_FIELDS = ('node_uuid', 'alias')
+
+
+def node_set_refused(node_uuid, reason, message):
+    """``node_set_refused``: unavailable, timeout, nodeconf_error, not_operator_field or invalid_value."""
+    return json.dumps({"type": "node_set_refused", "value": {
+        "node_uuid": node_uuid, "reason": reason, "message": message}})
 
 
 def load_failed_value(project_uuid, error):
@@ -190,11 +431,6 @@ class CuemsWsUser():
         self.outgoing = asyncio.Queue()
         self.websocket = websocket
         self.session_id = None
-        # This session's last project_load and what the library did to it:
-        # project_uuid, report_id, outcome, file_differs_from_loaded,
-        # acknowledged, preserved. Only this session reads or writes it, and
-        # only on the event-loop thread. It dies with the connection.
-        self.repair_state = None
         server.users[self] = None
 
     async def consumer_handler(self):
@@ -276,11 +512,13 @@ class CuemsWsUser():
                     "nodeconf": lambda: self.nodeconf(action),
                     "nodelist_modify": lambda: self.nodelist_modify(value, action, data.get("modify_action")),
                     "nodelist_get": lambda: self.nodelist_get(action),
+                    "node_set": lambda: self.node_set(value, action),
                     "node_status": lambda: self.node_status(action),
                     "project_status": lambda: self.project_status(action),
                     "project_unload": lambda: self.project_unload(action),
                     "repair_acknowledge": lambda: self.repair_acknowledge(value, action),
                     "schema_descriptor": lambda: self.schema_descriptor(value, action),
+                    "config_load": lambda: self.config_load(value, action),
                     "config_save": lambda: self.config_save(value, action),
                 }
 
@@ -513,9 +751,11 @@ class CuemsWsUser():
             result = await self.comunicate_with_engine(action, action_uuid, engine_command)
 
             self.server.users[self] = None
+            loaded = None
             if self.session_id and self.session_id in self.server.sessions:
+                loaded = self.server.sessions[self.session_id].get('loaded_project')
                 self.server.sessions[self.session_id]['loaded_project'] = None
-            self.repair_state = None
+            self.release_gate(loaded)
 
             await self.outgoing.put(json.dumps({"type": functionNameAsString(), "value": "OK"}))
 
@@ -575,6 +815,80 @@ class CuemsWsUser():
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), action=action)
 
+    async def node_set(self, value, action):
+        """Set or remove a node's alias through cuems-nodeconf (FR-024 to FR-026).
+
+        Sent straight to nodeconf on ``server.NODECONF_IPC``, not through the
+        engine (Q2), as ``{"action": "node_set", "node_uuid", "alias"}``. The
+        editor writes no file: nodeconf owns ``network_map.xml`` and persists
+        the alias itself. On ``{"OK": true}`` the caller gets ``node_set`` and
+        every session a fresh ``node_list``; nodeconf's ``error`` is relayed
+        verbatim and not retried.
+
+        Refused (``node_set_refused``) before any IPC: a field other than
+        ``node_uuid`` and ``alias`` (``not_operator_field``); an alias that is
+        not a non-empty string or null, or a ``node_uuid`` that
+        ``coerce_identity`` does not turn into a uuid (``invalid_value``); no
+        nodeconf socket on this host (``unavailable``, at once).
+
+        Args:
+            value: ``{"node_uuid": "<uuid>", "alias": "<text>" | null}``;
+                null removes the alias.
+            action: Action name from the WebSocket frame.
+        """
+        value = value if isinstance(value, dict) else {}
+        node_uuid = value.get('node_uuid')
+        others = sorted(str(key) for key in value if key not in NODE_SET_FIELDS)
+        if others:
+            await self.outgoing.put(node_set_refused(node_uuid, 'not_operator_field',
+                f"node_set sets the alias only; not an operator field: {', '.join(others)}"))
+            return
+        alias = value.get('alias', Unset)
+        if not (alias is None or (isinstance(alias, str) and alias.strip())):
+            await self.outgoing.put(node_set_refused(node_uuid, 'invalid_value',
+                'alias must be a non-empty string, or null to remove it'))
+            return
+        identity = coerce_identity(node_uuid) if isinstance(node_uuid, str) else None
+        if not isinstance(identity, Uuid):
+            await self.outgoing.put(node_set_refused(node_uuid, 'invalid_value',
+                f"node_uuid {node_uuid!r} is not a node identity"))
+            return
+        if not self.server.nodeconf_available():
+            await self.outgoing.put(node_set_refused(node_uuid, 'unavailable',
+                'cuems-nodeconf is not running on this controller; a node alias cannot be set here'))
+            return
+        request = {"action": "node_set", "node_uuid": str(identity), "alias": alias}
+        Logger.info(f"user {id(self.websocket)} requesting node_set {request}")
+        try:
+            # Communicator calls sys.exit(1) on an unreadable socket path;
+            # that must never stop the editor.
+            nodeconf = Communicator(self.server.NODECONF_IPC)
+        except (SystemExit, PermissionError) as e:
+            Logger.error(f"node_set: cannot open {self.server.NODECONF_IPC}: {e!r}")
+            await self.outgoing.put(node_set_refused(node_uuid, 'unavailable',
+                f"cannot reach cuems-nodeconf on {self.server.NODECONF_IPC}"))
+            return
+        try:
+            async with asyncio.timeout(TIMEOUT):
+                reply = await nodeconf.send_request(request)
+        except TimeoutError:
+            await self.outgoing.put(node_set_refused(node_uuid, 'timeout',
+                f"cuems-nodeconf did not answer in {TIMEOUT}s"))
+            return
+        if not isinstance(reply, dict):
+            await self.outgoing.put(node_set_refused(node_uuid, 'unavailable',
+                'no reply from cuems-nodeconf'))
+            return
+        if reply.get('OK') is not True:
+            await self.outgoing.put(node_set_refused(node_uuid, 'nodeconf_error', str(reply.get('error'))))
+            return
+        await self.outgoing.put(json.dumps({"type": "node_set", "value": {
+            "node_uuid": node_uuid, "alias": alias}}))
+        try:
+            await self.server.notify_all_node_list_update()
+        except Exception as e:
+            Logger.warning(f'Failed to reload and broadcast node list update after node_set: {e}')
+
     async def nodelist_get(self, action):
         """Re-read network_map.xml and send this client the current node list.
 
@@ -633,75 +947,166 @@ class CuemsWsUser():
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), action=action)
 
-    async def config_save(self, value, action):
-        """Persist a configuration document sent by the client.
+    async def config_domain(self, value, action, refused, targets):
+        """Resolve a config request's ``(SchemaName, project_uuid, unix_name)``, or answer it.
 
-        Refuses ``script`` (that is ``project_save``), ``hardware_outputs`` (no
-        model bindings), and anything that is not a ``SchemaName`` —
-        ``default_mappings.xml`` included, which is not a target.
-
-        All four domains are built with ``ConfigManager.from_json`` (cuemsutils
-        014, UR-5) and written with the object's own ``save(path)`` — the same
-        body ``save_settings``/``save_network_map``/``save_project_mappings``/
-        ``save_project_settings`` delegate to. ``project_mappings`` and
-        ``project_settings`` additionally need ``value["project_uuid"]``, since
-        the document alone does not say which project it belongs to; it is
-        resolved to a ``unix_name`` the same way ``project_ready`` does
-        (``CuemsDBProject.get_project_unix_name``). A successful ``network_map``
-        save also refreshes all sessions, same as ``nodelist_modify``.
-
-        Pending cuems-utils UR-6, a project's config_save still fails the first
-        time: ``ConfigManager.project_path``/``conf_path`` raise
-        ``FileNotFoundError`` for a file that has never been saved before,
-        which is the ordinary state of a project's ``settings.xml``/
-        ``mappings.xml`` before an operator customises them.
-
-        Args:
-            value: ``{"schema": <SchemaName value>, "document": {...}}``, plus
-                ``"project_uuid"`` for ``project_mappings``/``project_settings``.
-            action: Action name from the WebSocket frame.
+        Shared by ``config_load`` and ``config_save``. Sends the error frame
+        and returns ``None`` for a name that is not a schema, a refused or
+        non-target domain, and a project domain whose ``project_uuid`` is
+        missing or unknown (FR-014).
         """
         schema = value.get('schema') if isinstance(value, dict) else None
         try:
             name = SchemaName(schema)
         except ValueError:
-            await self.notify_error_to_user(f"config_save: {schema!r} is not a schema", action=action)
-            return
-        if name.value in CONFIG_SAVE_REFUSED:
-            await self.notify_error_to_user(f"config_save: {CONFIG_SAVE_REFUSED[name.value]}", action=action)
-            return
-        if name.value not in CONFIG_SAVE_TARGETS:
-            await self.notify_error_to_user(f"config_save: {name.value} is not a target", action=action)
-            return
-        document = value.get('document') if isinstance(value, dict) else None
-        project_uname = None
-        if CONFIG_SAVE_TARGETS[name.value][0] == 'project':
-            project_uuid = value.get('project_uuid') if isinstance(value, dict) else None
+            await self.notify_error_to_user(f"{action}: {schema!r} is not a schema", action=action)
+            return None
+        if name.value in refused:
+            await self.notify_error_to_user(f"{action}: {refused[name.value]}", action=action)
+            return None
+        if name.value not in targets:
+            await self.notify_error_to_user(f"{action}: {name.value} is not a target", action=action)
+            return None
+        project_uuid = project_uname = None
+        if CONFIG_FILES[name.value][0] == 'project':
+            project_uuid = value.get('project_uuid')
             if not project_uuid or not isinstance(project_uuid, str):
-                await self.notify_error_to_user(
-                    f"config_save of {name.value} needs a project_uuid", action=action)
-                return
+                await self.notify_error_to_user(f"{action} of {name.value} needs a project_uuid", action=action)
+                return None
             try:
                 project_uname = await self.server.event_loop.run_in_executor(
                     self.server.executor, self.server.db.project.get_project_unix_name, project_uuid)
             except Exception as e:
                 Logger.error(f"error: {type(e)} {e}")
                 await self.notify_error_to_user(str(e), action=action)
-                return
+                return None
+        return name, project_uuid, project_uname
+
+    async def config_load(self, value, action):
+        """Send this client a configuration document as the file holds it (FR-012, FR-013).
+
+        Replies ``config_load`` with ``{schema, project_uuid, exists,
+        revision, document}``: the document is ``ConfigManager.to_wire`` of a
+        manager loaded for this request, and ``revision`` the md5 of the
+        file's bytes, to send back as ``config_save``'s ``base_revision``.
+        With no file, ``exists`` is false, ``revision`` null, and the document
+        the descriptor's root ``instance``, a form's starting point that is
+        not saveable as it is. ``network_map`` is served read only.
+        ``project_settings`` is refused until cuemsutils projects it
+        (cuems-editor UR-7, gate G2). A document the library cannot load is
+        ``config_load_failed``; anything else the error frame.
+
+        Args:
+            value: ``{"schema": <name>}``, plus ``"project_uuid"`` for
+                ``project_mappings``.
+            action: Action name from the WebSocket frame.
+        """
+        domain = await self.config_domain(value, action, CONFIG_LOAD_REFUSED, CONFIG_FILES)
+        if domain is None:
+            return
+        name, project_uuid, project_uname = domain
         try:
-            await self.server.event_loop.run_in_executor(
-                self.server.executor,
-                functools.partial(_save_config_document, name, document, project_uname))
+            exists, revision, document = await self.server.event_loop.run_in_executor(
+                self.server.executor, functools.partial(_load_config_document, name, project_uname))
+        except LIBRARY_REFUSALS as e:
+            Logger.warning(f"config_load of {name.value} refused by the library: {e}")
+            await self.outgoing.put(json.dumps({
+                "type": "config_load_failed", "value": refusal_value(name.value, project_uuid, e)}))
+            return
         except Exception as e:
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), action=action)
             return
-        await self.outgoing.put(json.dumps({"type": "config_save", "value": "OK"}))
-        if name is SchemaName.NETWORK_MAP:
-            try:
-                await self.server.notify_all_node_list_update()
-            except Exception as e:
-                Logger.warning(f'Failed to reload and broadcast node list update after config_save: {e}')
+        await self.outgoing.put(json.dumps({"type": "config_load", "value": {
+            "schema": name.value, "project_uuid": project_uuid,
+            "exists": exists, "revision": revision, "document": document}}))
+
+    async def config_save(self, value, action):
+        """Persist a whole configuration document the client loaded (FR-015 to FR-020).
+
+        ``value["base_revision"]`` is required: the ``revision`` the client's
+        ``config_load`` returned, or null for "I expect no file" (Q3). Under
+        the file's lock the file is hashed again; a mismatch writes nothing
+        and answers ``config_conflict`` with the current revision and
+        document. Otherwise the bytes just hashed are copied into
+        ``<library>/trash/config/`` (if that fails, nothing is saved), the
+        document is built with ``ConfigManager.from_json`` and written with
+        its own ``save(path)``. The reply carries the new revision and the
+        services to restart; every other session gets ``config_changed``.
+
+        Refuses ``script`` (that is ``project_save``), ``hardware_outputs``
+        (no model bindings), ``network_map`` (cuems-nodeconf's file; an alias
+        is set with ``node_set``), and anything that is not a ``SchemaName``,
+        ``default_mappings.xml`` included. A document the library refuses is
+        ``config_save_refused`` with the violation's location.
+
+        Pending cuems-editor UR-6 (gate G1), a project's first config_save
+        still fails: ``ConfigManager.project_path`` raises
+        ``FileNotFoundError`` for a file not created yet.
+
+        Args:
+            value: ``{"schema", "document", "base_revision"}``, plus
+                ``"project_uuid"`` for ``project_mappings``/``project_settings``.
+            action: Action name from the WebSocket frame.
+        """
+        domain = await self.config_domain(value, action, CONFIG_SAVE_REFUSED, CONFIG_SAVE_TARGETS)
+        if domain is None:
+            return
+        name, project_uuid, project_uname = domain
+        if 'base_revision' not in value:
+            await self.notify_error_to_user(
+                f"config_save of {name.value} needs base_revision (the revision config_load returned, "
+                f"or null for no file)", action=action)
+            return
+        base_revision = value['base_revision']
+        document = value.get('document')
+        scope = 'controller' if CONFIG_FILES[name.value][0] == 'conf' else project_uname
+        try:
+            path = await self.server.event_loop.run_in_executor(
+                self.server.executor, functools.partial(_resolve_config_path, name, project_uname))
+            if path is None:
+                if base_revision is not None:
+                    await self.send_config_conflict(name, project_uuid, project_uname)
+                    return
+                # A first save. project_path / conf_path refuse a file not
+                # created yet (cuems-editor UR-6, gate G1): this raises unless
+                # the file appeared meanwhile, which the check below then
+                # answers as a conflict.
+                path = await self.server.event_loop.run_in_executor(
+                    self.server.executor, lambda: _config_path(ConfigManager(load_all=False), name, project_uname))
+            async with file_lock(self.server, path):
+                current = await self.server.event_loop.run_in_executor(self.server.executor, bytes_md5, path)
+                if current != base_revision:
+                    await self.send_config_conflict(name, project_uuid, project_uname)
+                    return
+                try:
+                    revision = await self.server.event_loop.run_in_executor(
+                        self.server.executor,
+                        functools.partial(_save_config_document, name, document, path, scope, current))
+                except ConfigChanged:
+                    await self.send_config_conflict(name, project_uuid, project_uname)
+                    return
+        except LIBRARY_REFUSALS as e:
+            Logger.warning(f"config_save of {name.value} refused by the library: {e}")
+            await self.outgoing.put(json.dumps({
+                "type": "config_save_refused", "value": refusal_value(name.value, project_uuid, e)}))
+            return
+        except Exception as e:
+            Logger.error(f"error: {type(e)} {e}")
+            await self.notify_error_to_user(str(e), action=action)
+            return
+        await self.outgoing.put(json.dumps({"type": "config_save", "value": {
+            "schema": name.value, "project_uuid": project_uuid, "revision": revision,
+            "restart": CONFIG_RESTART.get(name.value, [])}}))
+        await self.server.notify_others_config_changed(self, {
+            "schema": name.value, "project_uuid": project_uuid, "revision": revision})
+
+    async def send_config_conflict(self, name, project_uuid, project_uname):
+        """``config_conflict`` with the document's current revision and content (FR-015)."""
+        _exists, revision, document = await self.server.event_loop.run_in_executor(
+            self.server.executor, functools.partial(_load_config_document, name, project_uname))
+        await self.outgoing.put(json.dumps({"type": "config_conflict", "value": {
+            "schema": name.value, "project_uuid": project_uuid, "revision": revision, "document": document}}))
 
     async def node_status(self, action):
         """Ask the engine which nodes are answering right now.
@@ -799,34 +1204,29 @@ class CuemsWsUser():
         session stays up and the project stays listed. Opening writes nothing.
 
         Also records *project_uuid* as the session's loaded project in
-        ``server.users`` and ``server.sessions``, and replaces this session's
-        repair state.
+        ``server.users`` and ``server.sessions``, and derives the project's
+        repair gate (``server.repair_gates``). The file unchanged since the
+        outstanding report keeps that report's ``report_id``.
 
         Args:
             project_uuid: UUID string of the project to load.
             action: Action name from the WebSocket frame.
         """
-        self.repair_state = None   # a new load replaces whatever this session held
         try:
             Logger.info("user {} loading project {}".format(id(self.websocket), project_uuid))
-            project, report = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.open, project_uuid)
+            project, report, script_md5, media_repairs, rows_digest = await self.server.event_loop.run_in_executor(
+                self.server.executor, self.server.db.project.open, project_uuid)
             msg = json.dumps({"type": "project", "value": project})
             await self.outgoing.put(msg)
             self.server.users[self] = project_uuid
             self.server.sessions[self.session_id]['loaded_project'] = project_uuid
 
-            report_id = str(new_uuid())
-            self.repair_state = {
-                'project_uuid': project_uuid,
-                'report_id': report_id,
-                'outcome': report.outcome.value,
-                'file_differs_from_loaded': bool(report.file_differs_from_loaded),
-                'acknowledged': False,
-                'preserved': False,
-            }
+            state = derive_gate(project_uuid, report, script_md5, media_repairs, rows_digest,
+                                prior=self.server.repair_gates.get(project_uuid))
+            self.server.repair_gates[project_uuid] = state
             await self.outgoing.put(json.dumps({
                 "type": "document_load_report",
-                "value": load_report_value(report_id, project_uuid, report),
+                "value": load_report_value(state['report_id'], project_uuid, report, state['media_repairs']),
             }))
         except DocumentLoadFailed as e:
             Logger.warning(f"project {project_uuid} not opened: {e}")
@@ -842,30 +1242,30 @@ class CuemsWsUser():
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
 
     async def repair_acknowledge(self, value, action):
-        """Record that this session's operator has seen the load report.
+        """Record that this session's operator has seen the project's load report.
 
-        Only this session's current report counts, by ``project_uuid`` and
-        ``report_id``; another session's acknowledgment never unlocks this one.
-        Writes nothing to disk.
+        The report is the project's outstanding one in ``server.repair_gates``,
+        matched by ``project_uuid`` and ``report_id``. The acknowledgment is
+        this session's: another session's never unlocks this one's save
+        (001 FR-021). A session that reconnected with its ``session_id`` may
+        acknowledge without loading again (FR-008). Writes nothing to disk.
 
         Args:
             value: ``{"project_uuid": ..., "report_id": ...}``.
             action: Action name from the WebSocket frame.
         """
-        state = self.repair_state
-        if state is None:
-            await self.notify_error_to_user('no load report to acknowledge on this session', action=action)
-            return
         value = value if isinstance(value, dict) else {}
-        if value.get('project_uuid') != state['project_uuid'] or value.get('report_id') != state['report_id']:
-            await self.refuse_save(state, 'unacknowledged')
+        state = self.server.repair_gates.get(value.get('project_uuid'))
+        if state is None or value.get('report_id') != state['report_id']:
+            await self.refuse_save(state or {'project_uuid': value.get('project_uuid'), 'report_id': None},
+                                   'unacknowledged')
             return
-        state['acknowledged'] = True
+        state['acknowledged_by'].add(self.session_id)
         await self.outgoing.put(json.dumps({"type": "repair_acknowledge", "value": {
             "project_uuid": state['project_uuid'], "report_id": state['report_id']}}))
 
     async def refuse_save(self, state, reason):
-        """``repair_save_refused`` for this session's report."""
+        """``repair_save_refused`` for the project's outstanding report."""
         await self.outgoing.put(json.dumps({"type": "repair_save_refused", "value": {
             "project_uuid": state['project_uuid'], "report_id": state['report_id'], "reason": reason}}))
 
@@ -893,13 +1293,21 @@ class CuemsWsUser():
     async def received_project(self, data, action):
         """Save an edited project and notify the client and other users.
 
-        A project this session opened with a repair or a conversion is not
-        saved until this session acknowledges that report
-        (``repair_save_refused``, reason ``unacknowledged``). The first save
-        after that moves the original file into the trash before overwriting
-        it; if that move fails nothing is saved (reason ``preserve_failed``).
-        The decision is made here, on the event-loop thread; the move and the
-        save run in the executor.
+        The gate is the project's (``server.repair_gates``), not the
+        connection's. A project whose script the library repaired or
+        converted is not saved until *this* session acknowledges the
+        outstanding report (``repair_save_refused``, reason
+        ``unacknowledged``). The first save after that moves the original file
+        into the trash before overwriting it; if that move fails nothing is
+        saved (reason ``preserve_failed``).
+
+        With no state for the project (an editor restart, a session that never
+        loaded it), the gate is derived from the file on disk first (FR-009).
+        With a state that still waits for acknowledgment, the file is
+        re-hashed, and a changed file gets a new report (FR-009a). A clean
+        state adds no hash and no load (Q4). The decision is made on the
+        event-loop thread under the script's file lock; hashing, loading and
+        saving run in the executor.
 
         Args:
             data: ``CuemsScript`` dict containing ``id`` and updated fields.
@@ -910,17 +1318,36 @@ class CuemsWsUser():
         preserve = False
         try:
             project_uuid = data['CuemsScript']['id']
-            if self.repair_state and self.repair_state['project_uuid'] == project_uuid:
-                state = self.repair_state
-            if state and state['outcome'] != 'clean' and not state['acknowledged']:
-                await self.refuse_save(state, 'unacknowledged')
-                return
-            preserve = bool(state and state['file_differs_from_loaded'] and not state['preserved'])
-            if preserve:
-                state['preserved'] = True   # claimed before the await: one move per load
-            await self.server.event_loop.run_in_executor(
-                self.server.executor,
-                functools.partial(self.server.db.project.update, project_uuid, data, preserve_original=preserve))
+            unix_name = await self.server.event_loop.run_in_executor(
+                self.server.executor, self.server.db.project.get_project_unix_name, project_uuid)
+            path = self.server.db.project.script_path(unix_name)
+            async with file_lock(self.server, path):
+                state = self.server.repair_gates.get(project_uuid)
+                if state is None:
+                    state = await self.rederive_gate(project_uuid)
+                elif gate_requires_ack(state):
+                    on_disk = await self.server.event_loop.run_in_executor(self.server.executor, bytes_md5, path)
+                    if on_disk != state['script_md5']:
+                        state = await self.rederive_gate(project_uuid)
+                    else:
+                        rows = await self.server.event_loop.run_in_executor(
+                            self.server.executor, self.server.db.project.media_rows_digest, project_uuid)
+                        if rows != state['media_rows_digest']:
+                            state = await self.rederive_gate(project_uuid)
+                if state is not None and gate_requires_ack(state) and self.session_id not in state['acknowledged_by']:
+                    await self.refuse_save(state, 'unacknowledged')
+                    return
+                required = state is not None and gate_requires_ack(state)
+                preserve = bool(state and state['file_differs_from_loaded'] and not state['preserved'])
+                if preserve:
+                    state['preserved'] = True   # claimed before the await: one move per stale file
+                await self.server.event_loop.run_in_executor(
+                    self.server.executor,
+                    functools.partial(self.server.db.project.update, project_uuid, data, preserve_original=preserve))
+                if required:
+                    # The file now holds the saved document: the report is retired.
+                    written = await self.server.event_loop.run_in_executor(self.server.executor, bytes_md5, path)
+                    self.server.repair_gates[project_uuid] = clean_gate(project_uuid, written)
             Logger.info("user {} saving project {}".format(id(self.websocket), project_uuid))
 
             self.server.users[self] = project_uuid
@@ -936,6 +1363,38 @@ class CuemsWsUser():
                 state['preserved'] = False
             Logger.error("error: {} {}".format(type(e), e))
             await self.notify_error_to_user((str(type(e)) + str(e)), uuid=project_uuid, action=action)
+
+    async def rederive_gate(self, project_uuid):
+        """Derive the project's gate from the script file on disk (FR-009, FR-009a).
+
+        ``inspect`` runs in the executor; the table is written here, on the
+        loop. Bytes unchanged since a state recorded meanwhile keep that
+        state's report. Returns ``None``, recording nothing, when there is no
+        script file: there is no original to protect.
+        """
+        try:
+            report, script_md5, media_repairs, rows_digest = await self.server.event_loop.run_in_executor(
+                self.server.executor, self.server.db.project.inspect, project_uuid)
+        except FileNotFoundError:
+            return None
+        state = derive_gate(project_uuid, report, script_md5, media_repairs, rows_digest,
+                            prior=self.server.repair_gates.get(project_uuid))
+        self.server.repair_gates[project_uuid] = state
+        return state
+
+    def release_gate(self, project_uuid):
+        """This session leaves *project_uuid*: drop its acknowledgment (FR-010).
+
+        The project's state goes too once no session has it loaded. A later
+        save re-derives it from the file. Event-loop thread only.
+        """
+        state = self.server.repair_gates.get(project_uuid)
+        if state is None:
+            return
+        state['acknowledged_by'].discard(self.session_id)
+        if not any(session.get('loaded_project') == project_uuid
+                   for session in self.server.sessions.values()):
+            del self.server.repair_gates[project_uuid]
 
     async def list_project_trash(self, action):
         """Send the list of trashed projects to the client.
@@ -962,6 +1421,7 @@ class CuemsWsUser():
             Logger.info("user {} deleting project: {}".format(id(self.websocket), project_uuid))
 
             await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.delete, project_uuid)
+            self.server.repair_gates.pop(project_uuid, None)
 
             await self.notify_user(uuid=project_uuid, action=action)
             await self.server.notify_others_same_project(self, "project_update", project_uuid=project_uuid)

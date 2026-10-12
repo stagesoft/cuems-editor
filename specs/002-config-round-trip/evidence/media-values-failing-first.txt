@@ -1,0 +1,86 @@
+# 002 T055 (FR-042): tests/test_media_values.py after T058 (columns) and T062 (value functions),
+# before T063 (the object fill). Working tree on top of e0f8308; cuems-utils cdb3bef; measured 2026-10-12T21:07:28+02:00.
+#
+# Each of the six fails on its own claim, none at the row insert: tests 1, 2 and 6 on the stored
+# values (the client's kept, not the row's); tests 3, 4 and 5 on 'the save succeeds' (the raw client
+# value reaches CuemsScript.save, whose T1 check refuses it). The item-assignment grep (T056) passes.
+
+$ $E/bin/python -m pytest -q -p no:cacheprovider --tb=line tests/test_media_values.py
+FFFFFFFFFFF.                                                             [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert {'pixel_width..._height': 480} == {'file_size': 500}
+      Left contains 2 more items:
+      {'pixel_height': 480, 'pixel_width': 640}
+      Right contains 1 more item:
+      {'file_size': 500}
+      Use -v to get more diff
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+/disk/Projects/StageLab/cuems-editor/tests/test_media_values.py:151: AssertionError: assert {'pixel_width..._height': 480} == {'file_size': 500}
+E   AssertionError: assert {'pixel_width..._height': 480} == {'pixel_width...aaaaaaaaaaaa'}
+      Differing items:
+      {'pixel_height': 480} != {'pixel_height': 1080}
+      {'pixel_width': 640} != {'pixel_width': 1920}
+      Right contains 2 more items:
+      {'file_md5': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'file_size': 1000}
+      Use -v to get more diff
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+/disk/Projects/StageLab/cuems-editor/tests/test_media_values.py:167: AssertionError: assert {'pixel_width..._height': 480} == {'pixel_width...aaaaaaaaaaaa'}
+E   cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[1]/Media/file_md5)
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+ERROR    cuemseditor.CuemsDBProject:test_media_values.py:130 error: <class 'cuemsutils.errors.SchemaError'> [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[1]/Media/file_md5) trying to update  project, rolling back database update
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/cues/CuemsScript.py:542: cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[1]/Media/file_md5)
+E   cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5)
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+ERROR    cuemseditor.CuemsDBProject:test_media_values.py:130 error: <class 'cuemsutils.errors.SchemaError'> [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5) trying to update  project, rolling back database update
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/cues/CuemsScript.py:542: cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5)
+E   cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5)
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+ERROR    cuemseditor.CuemsDBProject:test_media_values.py:130 error: <class 'cuemsutils.errors.SchemaError'> [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5) trying to update  project, rolling back database update
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/cues/CuemsScript.py:542: cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5)
+E   cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5)
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+ERROR    cuemseditor.CuemsDBProject:test_media_values.py:130 error: <class 'cuemsutils.errors.SchemaError'> [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5) trying to update  project, rolling back database update
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/cues/CuemsScript.py:542: cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5)
+E   cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5)
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+ERROR    cuemseditor.CuemsDBProject:test_media_values.py:130 error: <class 'cuemsutils.errors.SchemaError'> [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5) trying to update  project, rolling back database update
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/cues/CuemsScript.py:542: cuemsutils.errors.SchemaError: [T1] XsdPatternFacets at file_md5: value doesn't match any pattern of ['[a-f0-9]{32}'] (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_md5)
+E   cuemsutils.errors.SchemaError: [T1] function at file_size: value must be positive (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_size)
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+ERROR    cuemseditor.CuemsDBProject:test_media_values.py:130 error: <class 'cuemsutils.errors.SchemaError'> [T1] function at file_size: value must be positive (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_size) trying to update  project, rolling back database update
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/cues/CuemsScript.py:542: cuemsutils.errors.SchemaError: [T1] function at file_size: value must be positive (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_size)
+E   cuemsutils.errors.SchemaError: [T1] {http://www.w3.org/2001/XMLSchema}positiveInteger at file_size: invalid literal for int() with base 10: '1.5' (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_size)
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+ERROR    cuemseditor.CuemsDBProject:test_media_values.py:130 error: <class 'cuemsutils.errors.SchemaError'> [T1] {http://www.w3.org/2001/XMLSchema}positiveInteger at file_size: invalid literal for int() with base 10: '1.5' (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_size) trying to update  project, rolling back database update
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/cues/CuemsScript.py:542: cuemsutils.errors.SchemaError: [T1] {http://www.w3.org/2001/XMLSchema}positiveInteger at file_size: invalid literal for int() with base 10: '1.5' (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_size)
+E   cuemsutils.errors.SchemaError: [T1] {http://www.w3.org/2001/XMLSchema}positiveInteger at file_size: invalid literal for int() with base 10: 'True' (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_size)
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+ERROR    cuemseditor.CuemsDBProject:test_media_values.py:130 error: <class 'cuemsutils.errors.SchemaError'> [T1] {http://www.w3.org/2001/XMLSchema}positiveInteger at file_size: invalid literal for int() with base 10: 'True' (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_size) trying to update  project, rolling back database update
+/disk/Projects/StageLab/cuems-utils/src/cuemsutils/cues/CuemsScript.py:542: cuemsutils.errors.SchemaError: [T1] {http://www.w3.org/2001/XMLSchema}positiveInteger at file_size: invalid literal for int() with base 10: 'True' (at /{https://stagelab.coop/cuems/}CuemsProject/CuemsScript/CueList/contents/Cue[2]/Media/file_size)
+E   AssertionError: assert 'file_md5' not in {'file_name': 'file.ext', 'id': 0ac1d420-452b-4c1b-9eed-1224ce3adcf8, 'duration': 00:01:00.000, 'regions': [{'id': 0, 'loop': 2, 'in_time': 00:00:00.000, 'out_time': 00:00:00.000}], 'file_md5': 'cccccccccccccccccccccccccccccccc'}
+------------------------------ Captured log setup ------------------------------
+------------------------------ Captured log call -------------------------------
+/disk/Projects/StageLab/cuems-editor/tests/test_media_values.py:208: AssertionError: assert 'file_md5' not in {'file_name': 'file.ext', 'id': 0ac1d420-452b-4c1b-9eed-1224ce3adcf8, 'duration': 00:01:00.000, 'regions': [{'id': 0, 'loop': 2, 'in_time': 00:00:00.000, 'out_time': 00:00:00.000}], 'file_md5': 'cccccccccccccccccccccccccccccccc'}
+=========================== short test summary info ============================
+FAILED tests/test_media_values.py::test_an_audio_cue_loses_pixel_size_and_a_video_cue_keeps_it
+FAILED tests/test_media_values.py::test_an_unknown_class_media_cue_keeps_its_pixel_size
+FAILED tests/test_media_values.py::test_an_uppercase_client_md5_is_stored_lowercase_and_the_save_succeeds
+FAILED tests/test_media_values.py::test_a_non_hex_or_wrong_length_md5_is_dropped_and_the_save_succeeds[zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz]
+FAILED tests/test_media_values.py::test_a_non_hex_or_wrong_length_md5_is_dropped_and_the_save_succeeds[abc]
+FAILED tests/test_media_values.py::test_a_non_hex_or_wrong_length_md5_is_dropped_and_the_save_succeeds[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]
+FAILED tests/test_media_values.py::test_a_non_hex_or_wrong_length_md5_is_dropped_and_the_save_succeeds[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]
+FAILED tests/test_media_values.py::test_zero_float_and_bool_file_sizes_are_dropped_not_assigned[0]
+FAILED tests/test_media_values.py::test_zero_float_and_bool_file_sizes_are_dropped_not_assigned[1.5]
+FAILED tests/test_media_values.py::test_zero_float_and_bool_file_sizes_are_dropped_not_assigned[True]
+FAILED tests/test_media_values.py::test_a_cleared_value_is_absent_not_zero_not_null
+11 failed, 1 passed in 1.82s
