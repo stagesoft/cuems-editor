@@ -449,7 +449,7 @@ produces a `project` frame.
 
 ## Phase 9: Polish & Cross-Cutting
 
-- [ ] T075 Add the field notes from FR-035 to `CLAUDE.md` "Field notes":
+- [X] T075 Add the field notes from FR-035 to `CLAUDE.md` "Field notes":
   - `network_map.xml` is nodeconf's, and the alias goes through `node_set`;
   - a `settings` save requires an engine restart, and the editor only says so;
   - `config_save` backs up into `<library>/trash/config/`, with no UI purge (plan Complexity Tracking);
@@ -457,30 +457,30 @@ produces a `project` frame.
   - the media columns are migrated at start-up, the save writes each cue's values from its row, a present-but-stale value is reported in `media_repairs` and acknowledged, and a later media check must add to that section, never gate on its own (FR-046).
 
   Cite reports as `<repo> UR-<n>`.
-- [ ] T076 [P] Create `specs/002-config-round-trip/tag-readiness.md` (FR-033). `../.xml-refactor-tag-messages/` does not exist on this machine; say so, and say that the maintainer copies the text into the tag message. List:
+- [X] T076 [P] Create `specs/002-config-round-trip/tag-readiness.md` (FR-033). `../.xml-refactor-tag-messages/` does not exist on this machine; say so, and say that the maintainer copies the text into the tag message. List:
   - each standing strict xfail by gate, `<repo> UR-<n>` and test node id: G1 cuems-editor UR-6, G2 cuems-editor UR-7, G3 cuems-frontend UR-1 (the script test and the three config-instance parameters), G4 cuems-editor UR-8 (cuems-utils `set_alias` + cuems-nodeconf);
   - G5 (cuems-utils' settings-reshape defect, no editor test);
   - the statement "not ready while any xfail stands" (S7).
-- [ ] T077 [P] Create `specs/002-config-round-trip/merge-notes.md` (FR-048). Include:
+- [X] T077 [P] Create `specs/002-config-round-trip/merge-notes.md` (FR-048). Include:
   - the 869fat84r absorption: `0b291d1`, what came in (by file and function), and what was deferred, with spec M9's collision surface verbatim;
   - the `pyproject.toml` hunk not taken (S1);
   - the `cuems-frontend` handover: the workarounds this feature retires (reload-on-reconnect, the `'True'` branch) and the new frames, by contracts/ws-messages.md section (SC-010).
 
   This is the text for the merge into `feat/xml-refactor`, which the maintainer performs.
-- [ ] T078 After T064 passes, write `specs/002-config-round-trip/evidence/t039-absorbed.md` (FR-047). Name:
+- [X] T078 After T064 passes, write `specs/002-config-round-trip/evidence/t039-absorbed.md` (FR-047). Name:
   - the six FR-042 test node ids in `tests/test_media_values.py`;
   - the commit that made them pass;
   - spec FR-036 to FR-046;
   - the sentence "cuems-utils may delete specs/planning/t039-editor-media-obligations.md and close T039 against these tests".
 
   Do not edit anything in `../cuems-utils`.
-- [ ] T079 Run the full suite as the header shows. Record in `specs/002-config-round-trip/evidence/suite-final.txt`:
+- [X] T079 Run the full suite as the header shows. Record in `specs/002-config-round-trip/evidence/suite-final.txt`:
   - the summary line: everything passes except exactly seven `xfailed` (G1, G2, G3 × 4, G4), with no `XPASS`. Each matches a node id in `tag-readiness.md`;
   - `cuemsutils.__file__`;
   - the `cuems-utils` SHA.
 
   Append the final counts to `evidence/environment.txt`'s run list, as a new file if the original is committed (T001's rule).
-- [ ] T080 Walk `specs/002-config-round-trip/quickstart.md` §3 and tick each scenario against the test that proves it. Note any scenario without a test in `specs/002-config-round-trip/evidence/quickstart-run.txt`; there should be none.
+- [X] T080 Walk `specs/002-config-round-trip/quickstart.md` §3 and tick each scenario against the test that proves it. Note any scenario without a test in `specs/002-config-round-trip/evidence/quickstart-run.txt`; there should be none.
 
 ---
 

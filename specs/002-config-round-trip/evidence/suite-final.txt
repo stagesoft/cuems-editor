@@ -1,0 +1,18 @@
+# 002 T079: the final suite run.
+# measured 2026-10-12T21:16:14+02:00 at editor 2b1edc4 with the polish files (CLAUDE.md, tag-readiness.md, merge-notes.md, evidence) uncommitted; src/ and tests/ as committed.
+# cuemsutils.__file__: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/__init__.py
+# cuems-utils SHA: cdb3befd21834a17e55d1147b1071c8ca55297b1
+# cuems-nodeconf: feat/xml-refactor @ 65605de8b24a55b72ad4672be1bff3766cda48cc
+#
+# Expected: everything passes except exactly seven xfailed (G1, G2, G3 x 4, G4), no XPASS. Each XFAIL
+# below matches a node id in specs/002-config-round-trip/tag-readiness.md.
+
+$ $E/bin/python -m pytest -q -p no:cacheprovider -W ignore::DeprecationWarning -rxX
+XFAIL tests/test_schema_descriptor.py::test_first_config_save_of_project_settings_round_trips - cuems-editor UR-6: ConfigManager.project_path refuses a file not yet created (gate G1)
+XFAIL tests/test_upstream_gates.py::test_config_load_project_settings_round_trips - cuems-editor UR-7: project_settings has no public read projection (gate G2)
+XFAIL tests/test_upstream_gates.py::test_a_cue_built_from_the_descriptor_instance_saves_through_project_save - cuems-frontend UR-1: the descriptor instance is not in to_wire() shape and has null required defaults (gate G3)
+XFAIL tests/test_upstream_gates.py::test_a_config_root_instance_saves_through_config_save[settings] - cuems-frontend UR-1: the descriptor instance is not in to_wire() shape and has null required defaults (gate G3)
+XFAIL tests/test_upstream_gates.py::test_a_config_root_instance_saves_through_config_save[project_mappings] - cuems-frontend UR-1: the descriptor instance is not in to_wire() shape and has null required defaults (gate G3)
+XFAIL tests/test_upstream_gates.py::test_a_config_root_instance_saves_through_config_save[project_settings] - cuems-frontend UR-1: the descriptor instance is not in to_wire() shape and has null required defaults (gate G3)
+XFAIL tests/test_upstream_gates.py::test_nodeconf_engine_callback_accepts_node_set - cuems-editor UR-8: cuems-nodeconf has no node_set (gate G4); needs cuems-utils NodeIndex.set_alias
+260 passed, 3 skipped, 7 xfailed in 9.64s

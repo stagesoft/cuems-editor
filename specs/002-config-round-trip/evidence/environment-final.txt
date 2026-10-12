@@ -1,0 +1,10 @@
+# 002 T079: final counts, appended to environment.txt's record as a new file (environment.txt is committed;
+# evidence/README.md: a correction or addition is a new file naming the one it follows). Follows: environment.txt.
+# measured 2026-10-12T21:16:19+02:00
+# cuems-utils HEAD: cdb3befd21834a17e55d1147b1071c8ca55297b1 (unchanged since environment.txt)
+# cuemsutils.__file__: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/__init__.py
+
+baseline (environment.txt):  160 passed, 3 skipped
+final (suite-final.txt):     260 passed, 3 skipped, 7 xfailed in 9.64s
+
++100 tests passing; 7 strict xfails, one per standing gate test (tag-readiness.md); no XPASS.
