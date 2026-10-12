@@ -487,6 +487,13 @@ there. Run the tip capture script and confirm it produces a `project` frame.
   - otherwise it runs `from_json` → `save` → re-hash.
 
   The hash, the build and the write run in the executor. The lock is held on the loop across them.
+- **FR-015a** *(added by the plan's Constitution Check, Principle III, 2026-10-12)*: Before a
+  `config_save` overwrites an existing file, the editor MUST write the bytes it just hashed to
+  `<library_path>/trash/config/<scope>_<file stem>_<YYYYmmddTHHMMSS>.xml`. `<scope>` is
+  `controller` or the project's `unix_name`. If that write fails, nothing is saved, and the reply
+  is the error frame. The live file is never moved away. A first save (no file) has nothing to
+  back up. A test against a temporary library MUST assert that the backup exists and is
+  byte-identical to the old file.
 - **FR-016**: A successful `config_save` MUST reply
   `{"type": "config_save", "value": {schema, project_uuid, revision, restart}}`. `revision` is the
   new md5. `restart` lists the services that must restart for the change to take effect: for
