@@ -55,6 +55,51 @@ def _json_safe(value):
     return str(value)
 
 
+def derive_gate(project_uuid, report, script_md5, prior=None):
+    """The repair gate of *project_uuid* for a load *report* of the bytes hashed as *script_md5*.
+
+    A ``GateState`` (specs/002-config-round-trip/data-model.md). When *prior*
+    describes the same bytes, it is updated in place and returned: its
+    ``report_id``, ``acknowledged_by`` and ``preserved`` stand, so a second
+    session loading the project does not revoke the first one's
+    acknowledgment (research R8.5). Otherwise a new ``report_id`` is minted
+    and no session has acknowledged it. Event-loop thread only.
+    """
+    if prior is not None and prior['script_md5'] == script_md5:
+        state = prior
+    else:
+        state = {
+            'project_uuid': project_uuid,
+            'report_id': str(new_uuid()),
+            'script_md5': script_md5,
+            'preserved': False,
+            'acknowledged_by': set(),
+        }
+    state['outcome'] = report.outcome.value
+    state['file_differs_from_loaded'] = bool(report.file_differs_from_loaded)
+    state['report'] = report
+    return state
+
+
+def clean_gate(project_uuid, script_md5):
+    """The gate after a save wrote the document: nothing outstanding (FR-010)."""
+    return {
+        'project_uuid': project_uuid,
+        'report_id': str(new_uuid()),
+        'outcome': 'clean',
+        'file_differs_from_loaded': False,
+        'script_md5': script_md5,
+        'preserved': False,
+        'acknowledged_by': set(),
+        'report': None,
+    }
+
+
+def gate_requires_ack(state):
+    """Whether a save of the project waits for the saving session's acknowledgment."""
+    return state['outcome'] != 'clean'
+
+
 def load_report_value(report_id, project_uuid, report):
     """The ``value`` of ``document_load_report`` for a library ``LoadReport``."""
     return {
@@ -210,11 +255,6 @@ class CuemsWsUser():
         self.outgoing = asyncio.Queue()
         self.websocket = websocket
         self.session_id = None
-        # This session's last project_load and what the library did to it:
-        # project_uuid, report_id, outcome, file_differs_from_loaded,
-        # acknowledged, preserved. Only this session reads or writes it, and
-        # only on the event-loop thread. It dies with the connection.
-        self.repair_state = None
         server.users[self] = None
 
     async def consumer_handler(self):
@@ -533,9 +573,11 @@ class CuemsWsUser():
             result = await self.comunicate_with_engine(action, action_uuid, engine_command)
 
             self.server.users[self] = None
+            loaded = None
             if self.session_id and self.session_id in self.server.sessions:
+                loaded = self.server.sessions[self.session_id].get('loaded_project')
                 self.server.sessions[self.session_id]['loaded_project'] = None
-            self.repair_state = None
+            self.release_gate(loaded)
 
             await self.outgoing.put(json.dumps({"type": functionNameAsString(), "value": "OK"}))
 
@@ -819,34 +861,28 @@ class CuemsWsUser():
         session stays up and the project stays listed. Opening writes nothing.
 
         Also records *project_uuid* as the session's loaded project in
-        ``server.users`` and ``server.sessions``, and replaces this session's
-        repair state.
+        ``server.users`` and ``server.sessions``, and derives the project's
+        repair gate (``server.repair_gates``). The file unchanged since the
+        outstanding report keeps that report's ``report_id``.
 
         Args:
             project_uuid: UUID string of the project to load.
             action: Action name from the WebSocket frame.
         """
-        self.repair_state = None   # a new load replaces whatever this session held
         try:
             Logger.info("user {} loading project {}".format(id(self.websocket), project_uuid))
-            project, report, _script_md5 = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.open, project_uuid)
+            project, report, script_md5 = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.open, project_uuid)
             msg = json.dumps({"type": "project", "value": project})
             await self.outgoing.put(msg)
             self.server.users[self] = project_uuid
             self.server.sessions[self.session_id]['loaded_project'] = project_uuid
 
-            report_id = str(new_uuid())
-            self.repair_state = {
-                'project_uuid': project_uuid,
-                'report_id': report_id,
-                'outcome': report.outcome.value,
-                'file_differs_from_loaded': bool(report.file_differs_from_loaded),
-                'acknowledged': False,
-                'preserved': False,
-            }
+            state = derive_gate(project_uuid, report, script_md5,
+                                prior=self.server.repair_gates.get(project_uuid))
+            self.server.repair_gates[project_uuid] = state
             await self.outgoing.put(json.dumps({
                 "type": "document_load_report",
-                "value": load_report_value(report_id, project_uuid, report),
+                "value": load_report_value(state['report_id'], project_uuid, report),
             }))
         except DocumentLoadFailed as e:
             Logger.warning(f"project {project_uuid} not opened: {e}")
@@ -862,30 +898,30 @@ class CuemsWsUser():
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
 
     async def repair_acknowledge(self, value, action):
-        """Record that this session's operator has seen the load report.
+        """Record that this session's operator has seen the project's load report.
 
-        Only this session's current report counts, by ``project_uuid`` and
-        ``report_id``; another session's acknowledgment never unlocks this one.
-        Writes nothing to disk.
+        The report is the project's outstanding one in ``server.repair_gates``,
+        matched by ``project_uuid`` and ``report_id``. The acknowledgment is
+        this session's: another session's never unlocks this one's save
+        (001 FR-021). A session that reconnected with its ``session_id`` may
+        acknowledge without loading again (FR-008). Writes nothing to disk.
 
         Args:
             value: ``{"project_uuid": ..., "report_id": ...}``.
             action: Action name from the WebSocket frame.
         """
-        state = self.repair_state
-        if state is None:
-            await self.notify_error_to_user('no load report to acknowledge on this session', action=action)
-            return
         value = value if isinstance(value, dict) else {}
-        if value.get('project_uuid') != state['project_uuid'] or value.get('report_id') != state['report_id']:
-            await self.refuse_save(state, 'unacknowledged')
+        state = self.server.repair_gates.get(value.get('project_uuid'))
+        if state is None or value.get('report_id') != state['report_id']:
+            await self.refuse_save(state or {'project_uuid': value.get('project_uuid'), 'report_id': None},
+                                   'unacknowledged')
             return
-        state['acknowledged'] = True
+        state['acknowledged_by'].add(self.session_id)
         await self.outgoing.put(json.dumps({"type": "repair_acknowledge", "value": {
             "project_uuid": state['project_uuid'], "report_id": state['report_id']}}))
 
     async def refuse_save(self, state, reason):
-        """``repair_save_refused`` for this session's report."""
+        """``repair_save_refused`` for the project's outstanding report."""
         await self.outgoing.put(json.dumps({"type": "repair_save_refused", "value": {
             "project_uuid": state['project_uuid'], "report_id": state['report_id'], "reason": reason}}))
 
@@ -913,13 +949,21 @@ class CuemsWsUser():
     async def received_project(self, data, action):
         """Save an edited project and notify the client and other users.
 
-        A project this session opened with a repair or a conversion is not
-        saved until this session acknowledges that report
-        (``repair_save_refused``, reason ``unacknowledged``). The first save
-        after that moves the original file into the trash before overwriting
-        it; if that move fails nothing is saved (reason ``preserve_failed``).
-        The decision is made here, on the event-loop thread; the move and the
-        save run in the executor.
+        The gate is the project's (``server.repair_gates``), not the
+        connection's. A project whose script the library repaired or
+        converted is not saved until *this* session acknowledges the
+        outstanding report (``repair_save_refused``, reason
+        ``unacknowledged``). The first save after that moves the original file
+        into the trash before overwriting it; if that move fails nothing is
+        saved (reason ``preserve_failed``).
+
+        With no state for the project (an editor restart, a session that never
+        loaded it), the gate is derived from the file on disk first (FR-009).
+        With a state that still waits for acknowledgment, the file is
+        re-hashed, and a changed file gets a new report (FR-009a). A clean
+        state adds no hash and no load (Q4). The decision is made on the
+        event-loop thread under the script's file lock; hashing, loading and
+        saving run in the executor.
 
         Args:
             data: ``CuemsScript`` dict containing ``id`` and updated fields.
@@ -930,17 +974,31 @@ class CuemsWsUser():
         preserve = False
         try:
             project_uuid = data['CuemsScript']['id']
-            if self.repair_state and self.repair_state['project_uuid'] == project_uuid:
-                state = self.repair_state
-            if state and state['outcome'] != 'clean' and not state['acknowledged']:
-                await self.refuse_save(state, 'unacknowledged')
-                return
-            preserve = bool(state and state['file_differs_from_loaded'] and not state['preserved'])
-            if preserve:
-                state['preserved'] = True   # claimed before the await: one move per load
-            await self.server.event_loop.run_in_executor(
-                self.server.executor,
-                functools.partial(self.server.db.project.update, project_uuid, data, preserve_original=preserve))
+            unix_name = await self.server.event_loop.run_in_executor(
+                self.server.executor, self.server.db.project.get_project_unix_name, project_uuid)
+            path = self.server.db.project.script_path(unix_name)
+            async with file_lock(self.server, path):
+                state = self.server.repair_gates.get(project_uuid)
+                if state is None:
+                    state = await self.rederive_gate(project_uuid)
+                elif gate_requires_ack(state):
+                    on_disk = await self.server.event_loop.run_in_executor(self.server.executor, bytes_md5, path)
+                    if on_disk != state['script_md5']:
+                        state = await self.rederive_gate(project_uuid)
+                if state is not None and gate_requires_ack(state) and self.session_id not in state['acknowledged_by']:
+                    await self.refuse_save(state, 'unacknowledged')
+                    return
+                required = state is not None and gate_requires_ack(state)
+                preserve = bool(state and state['file_differs_from_loaded'] and not state['preserved'])
+                if preserve:
+                    state['preserved'] = True   # claimed before the await: one move per stale file
+                await self.server.event_loop.run_in_executor(
+                    self.server.executor,
+                    functools.partial(self.server.db.project.update, project_uuid, data, preserve_original=preserve))
+                if required:
+                    # The file now holds the saved document: the report is retired.
+                    written = await self.server.event_loop.run_in_executor(self.server.executor, bytes_md5, path)
+                    self.server.repair_gates[project_uuid] = clean_gate(project_uuid, written)
             Logger.info("user {} saving project {}".format(id(self.websocket), project_uuid))
 
             self.server.users[self] = project_uuid
@@ -956,6 +1014,38 @@ class CuemsWsUser():
                 state['preserved'] = False
             Logger.error("error: {} {}".format(type(e), e))
             await self.notify_error_to_user((str(type(e)) + str(e)), uuid=project_uuid, action=action)
+
+    async def rederive_gate(self, project_uuid):
+        """Derive the project's gate from the script file on disk (FR-009, FR-009a).
+
+        ``inspect`` runs in the executor; the table is written here, on the
+        loop. Bytes unchanged since a state recorded meanwhile keep that
+        state's report. Returns ``None``, recording nothing, when there is no
+        script file: there is no original to protect.
+        """
+        try:
+            report, script_md5 = await self.server.event_loop.run_in_executor(
+                self.server.executor, self.server.db.project.inspect, project_uuid)
+        except FileNotFoundError:
+            return None
+        state = derive_gate(project_uuid, report, script_md5,
+                            prior=self.server.repair_gates.get(project_uuid))
+        self.server.repair_gates[project_uuid] = state
+        return state
+
+    def release_gate(self, project_uuid):
+        """This session leaves *project_uuid*: drop its acknowledgment (FR-010).
+
+        The project's state goes too once no session has it loaded. A later
+        save re-derives it from the file. Event-loop thread only.
+        """
+        state = self.server.repair_gates.get(project_uuid)
+        if state is None:
+            return
+        state['acknowledged_by'].discard(self.session_id)
+        if not any(session.get('loaded_project') == project_uuid
+                   for session in self.server.sessions.values()):
+            del self.server.repair_gates[project_uuid]
 
     async def list_project_trash(self, action):
         """Send the list of trashed projects to the client.
@@ -982,6 +1072,7 @@ class CuemsWsUser():
             Logger.info("user {} deleting project: {}".format(id(self.websocket), project_uuid))
 
             await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.delete, project_uuid)
+            self.server.repair_gates.pop(project_uuid, None)
 
             await self.notify_user(uuid=project_uuid, action=action)
             await self.server.notify_others_same_project(self, "project_update", project_uuid=project_uuid)

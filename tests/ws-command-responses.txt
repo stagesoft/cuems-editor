@@ -166,13 +166,34 @@ library's text. next_steps is always all three. The session stays up and
 the project stays in project_list. A malformed file still answers with the
 generic error frame.
 
-project_save of a project this session opened as converted / repaired is
-refused (reason "unacknowledged") until this session sends
-repair_acknowledge with that report_id. Another session's acknowledgment
-does not count, and a new load replaces the report. The first save after
-acknowledgment moves the file on disk into <library>/trash/projects/ as
-<unix_name>_<YYYYmmddTHHMMSS>_<script_file_name> before writing the repaired
-document; if that move fails, nothing is saved (reason "preserve_failed").
+The save gate is per project (002), not per connection. While a project's
+outstanding report is converted / repaired, project_save is refused (reason
+"unacknowledged") until the saving session sends repair_acknowledge with
+that report_id. Each session acknowledges for itself: another session's
+acknowledgment does not count. The report_id is the project's: every session
+that loads the unchanged file gets the same one, and loading it again does
+not revoke anyone's acknowledgment.
+
+What survives: an acknowledgment survives a reconnect that re-uses the
+session_id (repair_acknowledge from the reconnected session answers with the
+echo). The gate survives a reconnect with a new session_id, a second
+session, a stale tab and an editor restart: a save for a project the editor
+holds no report for is checked against the file on disk first, and refused
+while that file is not clean. The refusal's report_id is the one project_load
+returns. A file changed on disk since its report (another hand edit, a
+copy) gets a new report_id, and every acknowledgment is dropped.
+project_unload drops that session's acknowledgment. A clean project's save
+adds no check.
+
+The first save after acknowledgment moves the file on disk into
+<library>/trash/projects/ as <unix_name>_<YYYYmmddTHHMMSS>_<script_file_name>
+before writing the repaired document; if that move fails, nothing is saved
+(reason "preserve_failed"). One move per stale file: the save retires the
+report, and a second save makes no second copy.
+
+cuems-frontend's reload-on-reconnect (src/app/services/projects/
+load-report.service.ts) is no longer needed: a reconnected session keeps its
+acknowledgment, and one that never had it is refused, not let through.
 
 project_duplicate gains an optional "report" (same shape as
 document_load_report's value) when the source was not clean. The copy is the

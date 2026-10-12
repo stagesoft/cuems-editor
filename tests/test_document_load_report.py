@@ -176,7 +176,7 @@ def test_a_repaired_open_reports_the_repair_and_writes_nothing(lib, server):
         'rule_name': 'target_resolves',
     }]
     assert second['repairs'] == first['repairs']           # a second open reports it again
-    assert second['report_id'] != first['report_id']
+    assert second['report_id'] == first['report_id']       # same bytes, same report (002 R8.5)
 
 
 def test_a_converted_open_reports_the_conversion(lib, server):
@@ -272,6 +272,8 @@ def test_after_acknowledge_the_original_is_in_trash_and_the_repair_is_saved(lib,
 
 
 def test_another_sessions_acknowledgment_does_not_unlock_this_save(lib, server):
+    # Since 002 the report is the project's (R8.5): both sessions see one
+    # report_id, and each acknowledges for itself (001 FR-021, 002 FR-006).
     _write_variant(lib.script, 'repairable')
     before = _sha256(lib.script)
     mine, theirs = _session(server), _session(server)
@@ -279,9 +281,10 @@ def test_another_sessions_acknowledgment_does_not_unlock_this_save(lib, server):
     theirs_id = _open(server, theirs)[1]['value']['report_id']
 
     _ack(server, theirs, theirs_id)
-    refused = _ack(server, mine, theirs_id)                 # someone else's report id
+    refused = _ack(server, mine, str(new_uuid()))           # a report id that is not outstanding
     frames = _save(server, mine)
 
+    assert theirs_id == mine_id
     assert refused[0]['type'] == 'repair_save_refused'
     assert frames[0]['type'] == 'repair_save_refused'
     assert frames[0]['value']['report_id'] == mine_id

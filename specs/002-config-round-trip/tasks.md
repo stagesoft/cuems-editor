@@ -115,7 +115,7 @@ object over the same library.
 
 ### Tests for User Story 1 (red first)
 
-- [ ] T009 [US1] (red first, FR-005) Create `tests/test_repair_gate_durable.py`, reusing `tests/test_document_load_report.py`'s `lib`, `server`, `_session`, `_run`, `_drain` and `_write_variant` helpers. Import them, or copy them with a comment naming their source. Write `test_a_reconnect_with_the_same_session_id_keeps_the_gate`:
+- [X] T009 [US1] (red first, FR-005) Create `tests/test_repair_gate_durable.py`, reusing `tests/test_document_load_report.py`'s `lib`, `server`, `_session`, `_run`, `_drain` and `_write_variant` helpers. Import them, or copy them with a comment naming their source. Write `test_a_reconnect_with_the_same_session_id_keeps_the_gate`:
   - write the `repaired` variant;
   - open it with session A;
   - build a **new** `CuemsWsUser` with A's `session_id` (the reconnect);
@@ -123,34 +123,34 @@ object over the same library.
   - expect `repair_save_refused` with reason `unacknowledged`, the file's sha256 unchanged, and no trash copy.
 
   Run it against the current source and save the failing output in `specs/002-config-round-trip/evidence/repair-gate-failing-first.txt`.
-- [ ] T010 [P] [US1] In `tests/test_repair_gate_durable.py`, add `test_a_reacknowledge_after_reconnect_is_echoed_then_the_save_preserves`. After the reconnect from T009, `repair_acknowledge` with the original `report_id` answers `repair_acknowledge` (not the error frame). The next save moves the original into `trash/projects` and writes. A second save makes no second trash copy.
-- [ ] T011 [P] [US1] In `tests/test_repair_gate_durable.py`, add `test_a_session_that_never_loaded_the_project_is_refused` (spec US1 #3).
-- [ ] T012 [P] [US1] In `tests/test_repair_gate_durable.py`, add `test_after_an_editor_restart_the_gate_is_rederived_from_the_file` (FR-009). Use a fresh `server` with empty `repair_gates` over the same library, and a session that sends `project_save` without loading. Expect a refusal and the file unchanged.
-- [ ] T013 [P] [US1] In `tests/test_repair_gate_durable.py`, add `test_a_file_changed_after_acknowledgment_gets_a_new_report` (FR-009a):
+- [X] T010 [P] [US1] In `tests/test_repair_gate_durable.py`, add `test_a_reacknowledge_after_reconnect_is_echoed_then_the_save_preserves`. After the reconnect from T009, `repair_acknowledge` with the original `report_id` answers `repair_acknowledge` (not the error frame). The next save moves the original into `trash/projects` and writes. A second save makes no second trash copy.
+- [X] T011 [P] [US1] In `tests/test_repair_gate_durable.py`, add `test_a_session_that_never_loaded_the_project_is_refused` (spec US1 #3).
+- [X] T012 [P] [US1] In `tests/test_repair_gate_durable.py`, add `test_after_an_editor_restart_the_gate_is_rederived_from_the_file` (FR-009). Use a fresh `server` with empty `repair_gates` over the same library, and a session that sends `project_save` without loading. Expect a refusal and the file unchanged.
+- [X] T013 [P] [US1] In `tests/test_repair_gate_durable.py`, add `test_a_file_changed_after_acknowledgment_gets_a_new_report` (FR-009a):
   - open, acknowledge, then overwrite the script file with another `repaired` variant whose bytes differ;
   - save;
   - expect a refusal naming a **new** `report_id`.
-- [ ] T014 [P] [US1] In `tests/test_repair_gate_durable.py`, add `test_a_clean_project_save_adds_no_load` (Q4). Spy on `CuemsDBProject.inspect` and `bytes_md5` and assert that neither is called on a save after a clean open.
-- [ ] T015 [P] [US1] In `tests/test_repair_gate_durable.py`, add these two tests:
+- [X] T014 [P] [US1] In `tests/test_repair_gate_durable.py`, add `test_a_clean_project_save_adds_no_load` (Q4). Spy on `CuemsDBProject.inspect` and `bytes_md5` and assert that neither is called on a save after a clean open.
+- [X] T015 [P] [US1] In `tests/test_repair_gate_durable.py`, add these two tests:
   - `test_unload_drops_this_sessions_acknowledgment` (FR-010): after `project_unload` (patch `comunicate_with_engine`), a save from that session is refused;
   - `test_project_load_by_another_session_keeps_the_report_id`: R8.5, the file is unchanged.
-- [ ] T016 [P] [US1] In `tests/test_public_surface.py` (or a new `tests/test_no_repair_state.py` if that file's structure forbids it), add a test asserting that the name `repair_state` no longer occurs in `src/cuemseditor/` (constitution IV.4).
+- [X] T016 [P] [US1] In `tests/test_public_surface.py` (or a new `tests/test_no_repair_state.py` if that file's structure forbids it), add a test asserting that the name `repair_state` no longer occurs in `src/cuemseditor/` (constitution IV.4).
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] In `src/cuemseditor/CuemsWsUser.py`, add module functions over `server.repair_gates` (data-model.md GateState):
+- [X] T017 [US1] In `src/cuemseditor/CuemsWsUser.py`, add module functions over `server.repair_gates` (data-model.md GateState):
   - `derive_gate(project_uuid, report, script_md5, prior)`. It builds the state dict with the fields `project_uuid`, `report_id`, `outcome`, `file_differs_from_loaded`, `script_md5`, `preserved`, `acknowledged_by` (a `set`) and `report`. It re-uses `prior['report_id']` and keeps `prior['acknowledged_by']` when `prior` exists and `prior['script_md5'] == script_md5`; otherwise it mints a new uuid4 and an empty set.
   - `gate_requires_ack(state)`, which returns `state['outcome'] != 'clean'`. US6's T067 extends it to `acknowledgment_required`.
-- [ ] T018 [US1] Rewrite `send_project` in `src/cuemseditor/CuemsWsUser.py` (`:791-850`):
+- [X] T018 [US1] Rewrite `send_project` in `src/cuemseditor/CuemsWsUser.py` (`:791-850`):
   - delete every `self.repair_state` use;
   - after `open` returns `(value, report, script_md5)`, set `self.server.repair_gates[project_uuid] = derive_gate(..., prior=self.server.repair_gates.get(project_uuid))`, on the loop thread;
   - send `document_load_report` with the state's `report_id`.
-- [ ] T019 [US1] Rewrite `repair_acknowledge` in `src/cuemseditor/CuemsWsUser.py` (`:843-862`):
+- [X] T019 [US1] Rewrite `repair_acknowledge` in `src/cuemseditor/CuemsWsUser.py` (`:843-862`):
   - look the state up in `self.server.repair_gates.get(value['project_uuid'])`;
   - if it is missing, or `report_id` differs, answer `refuse_save(state_or_stub, 'unacknowledged')` as today;
   - if it matches, add `self.session_id` to `acknowledged_by` and echo.
   - Delete the error frame "no load report to acknowledge on this session" (FR-008).
-- [ ] T020 [US1] Rewrite `received_project` in `src/cuemseditor/CuemsWsUser.py` (`:893-950`) per research R8.4. All of it holds `async with file_lock(self.server, self.server.db.project.script_path(unix_name))`; resolve `unix_name` in the executor with `get_project_unix_name`.
+- [X] T020 [US1] Rewrite `received_project` in `src/cuemseditor/CuemsWsUser.py` (`:893-950`) per research R8.4. All of it holds `async with file_lock(self.server, self.server.db.project.script_path(unix_name))`; resolve `unix_name` in the executor with `get_project_unix_name`.
   - **No state**: `inspect` in the executor, then `derive_gate`.
   - **State that requires acknowledgment**: `bytes_md5` in the executor. A mismatch runs `inspect` and `derive_gate(prior=None)`, which mints a new id and clears the acknowledgments.
   - **Refuse** with `unacknowledged` when the state requires acknowledgment and `self.session_id not in acknowledged_by`.
@@ -159,9 +159,9 @@ object over the same library.
   - **On `OriginalNotPreserved`**, set `preserved = False` and refuse with `preserve_failed`, as today.
 
   Delete `self.repair_state` from `__init__` (`:191-197`).
-- [ ] T021 [US1] In `project_unload` (`src/cuemseditor/CuemsWsUser.py:499-523`), discard `self.session_id` from the loaded project's `acknowledged_by`. Then drop `repair_gates[uuid]` when no `server.sessions[*]['loaded_project']` equals it. In `request_delete_project` (`:954`), drop `repair_gates[project_uuid]` after a successful delete.
-- [ ] T022 [US1] Run `tests/test_repair_gate_durable.py`, `tests/test_document_load_report.py` and `tests/test_db_project_inspect.py`. All of them pass. `test_another_sessions_acknowledgment_does_not_unlock_this_save` (`tests/test_document_load_report.py:272`) passes unedited, which is 001 FR-021 kept.
-- [ ] T023 [US1] Replace `tests/ws-command-responses.txt:169-175` ("project_save of a project this session opened…") with the text of contracts/ws-messages.md's "Repair gate frames" section:
+- [X] T021 [US1] In `project_unload` (`src/cuemseditor/CuemsWsUser.py:499-523`), discard `self.session_id` from the loaded project's `acknowledged_by`. Then drop `repair_gates[uuid]` when no `server.sessions[*]['loaded_project']` equals it. In `request_delete_project` (`:954`), drop `repair_gates[project_uuid]` after a successful delete.
+- [X] T022 [US1] Run `tests/test_repair_gate_durable.py`, `tests/test_document_load_report.py` and `tests/test_db_project_inspect.py`. All of them pass. `test_another_sessions_acknowledgment_does_not_unlock_this_save` (`tests/test_document_load_report.py:272`) passes unedited, which is 001 FR-021 kept.
+- [X] T023 [US1] Replace `tests/ws-command-responses.txt:169-175` ("project_save of a project this session opened…") with the text of contracts/ws-messages.md's "Repair gate frames" section:
   - the gate is per project, and each session acknowledges for itself;
   - it survives a reconnect and an editor restart;
   - a changed file gets a new `report_id`;
