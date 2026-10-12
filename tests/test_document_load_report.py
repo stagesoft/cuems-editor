@@ -86,9 +86,13 @@ def lib(tmp_path):
     database.create_tables([Project, Media, ProjectMedia], safe=True)
     Project.create(uuid=SCRIPT_ID, name='Test Script', unix_name='minimal',
                    created=new_datetime(), modified=new_datetime(), in_trash=False)
+    # Rows that agree with the fixture's media (durations 00:00:00.000, no
+    # stored values): these tests are about the script's report, and a
+    # differing row would add media_repairs (002 FR-043; that is
+    # tests/test_media_staleness.py).
     for name in ('file.ext', 'file_video.ext'):
         Media.create(uuid=str(new_uuid()), name=name, unix_name=name, created=new_datetime(),
-                     modified=new_datetime(), duration='00:01:00.000', media_type='AUDIO',
+                     modified=new_datetime(), duration='00:00:00.000', media_type='AUDIO',
                      in_trash=False)
     settings = get_settings()
     settings['library_path'] = root

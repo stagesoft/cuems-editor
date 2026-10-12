@@ -17,7 +17,7 @@ Commands 													 ->	Responses
 
 {"action" : "project_list"}  									->  {"type": "project_list", "value": "project_list_json"}
 {"action" : "project_load", "value" : "project_uuid"}   		->  {"type": "project", "value": "project_json"}
-																->  {"type": "document_load_report", "value": {"report_id": "uuid", "project_uuid": "uuid", "document": "path", "outcome": "clean|converted|repaired", "file_differs_from_loaded": false, "conversions": [...], "repairs": [...]}}
+																->  {"type": "document_load_report", "value": {"report_id": "uuid", "project_uuid": "uuid", "document": "path", "outcome": "clean|converted|repaired", "file_differs_from_loaded": false, "conversions": [...], "repairs": [...], "media_repairs": [{"cue_id": "uuid", "file_name": "name", "field": "duration|pixel_size|file_size|file_md5", "stored": "text", "current": "text|null"}], "acknowledgment_required": false}}
 																or, instead of both:
 																->  {"type": "document_load_failed", "value": {"project_uuid": "uuid", "document": "path", "cue_id": "uuid|null", "field": "name|null", "message": "library text", "next_steps": ["restore_from_conversion_backup", "correct_field_by_hand", "remove_document"]}}
 {"action" : "repair_acknowledge", "value" : {"project_uuid": "uuid", "report_id": "uuid"}}	->  {"type": "repair_acknowledge", "value": {"project_uuid": "uuid", "report_id": "uuid"}}
@@ -229,6 +229,25 @@ are {from_version, to_version, description, dropped_elements[]}.
 file_differs_from_loaded is a JSON boolean: editor state about the file, not
 a cms:BoolType field.
 
+media_repairs (002; always present, [] when nothing is stale) lists the media
+values PRESENT in the file that differ from the media library's row, which
+the next save will write: field "duration", "pixel_size" ("WxH"; also a pixel
+size on an audio cue, which may not carry one), "file_size" or "file_md5";
+"stored" as the file has it, "current" the library's value, or null when the
+save will remove it. A value the file merely lacks (a project written before
+these values existed) is not listed: the save adds it without a report. A
+cue whose file has no library row is never listed. outcome, repairs[] and
+conversions[] stay the library's verdict, verbatim: a script can be "clean"
+with media_repairs. acknowledgment_required is true when outcome is not
+"clean" OR media_repairs is not empty, and file_differs_from_loaded is true
+when either part differs. Gate the save UI on acknowledgment_required, not
+on outcome. New optional keys, so not a payload-version bump.
+
+A later media check (re-probing the files, for instance) adds its findings
+to media_repairs of this same report, under this report_id and this
+acknowledgment. It never sends a frame of its own that gates a save (002
+FR-046).
+
 document_load_failed replaces both frames when the library refuses the
 document: an unrepairable value (e.g. an action_target naming no cue) or a
 document newer than the library (cue_id and field null). message is the
@@ -237,9 +256,9 @@ the project stays in project_list. A malformed file still answers with the
 generic error frame.
 
 The save gate is per project (002), not per connection. While a project's
-outstanding report is converted / repaired, project_save is refused (reason
-"unacknowledged") until the saving session sends repair_acknowledge with
-that report_id. Each session acknowledges for itself: another session's
+outstanding report has acknowledgment_required (converted / repaired, or
+media_repairs), project_save is refused (reason "unacknowledged") until the
+saving session sends repair_acknowledge with that report_id. Each session acknowledges for itself: another session's
 acknowledgment does not count. The report_id is the project's: every session
 that loads the unchanged file gets the same one, and loading it again does
 not revoke anyone's acknowledgment.
@@ -251,7 +270,8 @@ session, a stale tab and an editor restart: a save for a project the editor
 holds no report for is checked against the file on disk first, and refused
 while that file is not clean. The refusal's report_id is the one project_load
 returns. A file changed on disk since its report (another hand edit, a
-copy) gets a new report_id, and every acknowledgment is dropped.
+copy), or a media library row changed since it (a re-upload, the repair
+tool), gets a new report_id, and every acknowledgment is dropped.
 project_unload drops that session's acknowledgment. A clean project's save
 adds no check.
 

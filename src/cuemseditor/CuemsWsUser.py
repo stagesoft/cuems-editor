@@ -59,28 +59,35 @@ def _json_safe(value):
     return str(value)
 
 
-def derive_gate(project_uuid, report, script_md5, prior=None):
-    """The repair gate of *project_uuid* for a load *report* of the bytes hashed as *script_md5*.
+def derive_gate(project_uuid, report, script_md5, media_repairs=(), media_rows_digest=None, prior=None):
+    """The repair gate of *project_uuid* for a load of the bytes hashed as *script_md5*.
 
-    A ``GateState`` (specs/002-config-round-trip/data-model.md). When *prior*
-    describes the same bytes, it is updated in place and returned: its
-    ``report_id``, ``acknowledged_by`` and ``preserved`` stand, so a second
-    session loading the project does not revoke the first one's
-    acknowledgment (research R8.5). Otherwise a new ``report_id`` is minted
-    and no session has acknowledged it. Event-loop thread only.
+    A ``GateState`` (specs/002-config-round-trip/data-model.md): the library's
+    *report* and the stale media values of the same load (*media_repairs*,
+    read from the library rows that hash to *media_rows_digest*). When
+    *prior* describes the same bytes and the same rows, it is updated in
+    place and returned: its ``report_id``, ``acknowledged_by`` and
+    ``preserved`` stand, so a second session loading the project does not
+    revoke the first one's acknowledgment (research R8.5, FR-045).
+    Otherwise a new ``report_id`` is minted and no session has acknowledged
+    it. Event-loop thread only.
     """
-    if prior is not None and prior['script_md5'] == script_md5:
+    if (prior is not None and prior['script_md5'] == script_md5
+            and prior['media_rows_digest'] == media_rows_digest):
         state = prior
     else:
         state = {
             'project_uuid': project_uuid,
             'report_id': str(new_uuid()),
             'script_md5': script_md5,
+            'media_rows_digest': media_rows_digest,
             'preserved': False,
             'acknowledged_by': set(),
         }
     state['outcome'] = report.outcome.value
-    state['file_differs_from_loaded'] = bool(report.file_differs_from_loaded)
+    state['media_repairs'] = list(media_repairs)
+    state['acknowledgment_required'] = state['outcome'] != 'clean' or bool(media_repairs)
+    state['file_differs_from_loaded'] = bool(report.file_differs_from_loaded) or bool(media_repairs)
     state['report'] = report
     return state
 
@@ -91,8 +98,11 @@ def clean_gate(project_uuid, script_md5):
         'project_uuid': project_uuid,
         'report_id': str(new_uuid()),
         'outcome': 'clean',
+        'media_repairs': [],
+        'acknowledgment_required': False,
         'file_differs_from_loaded': False,
         'script_md5': script_md5,
+        'media_rows_digest': None,
         'preserved': False,
         'acknowledged_by': set(),
         'report': None,
@@ -101,17 +111,25 @@ def clean_gate(project_uuid, script_md5):
 
 def gate_requires_ack(state):
     """Whether a save of the project waits for the saving session's acknowledgment."""
-    return state['outcome'] != 'clean'
+    return state['acknowledgment_required']
 
 
-def load_report_value(report_id, project_uuid, report):
-    """The ``value`` of ``document_load_report`` for a library ``LoadReport``."""
+def load_report_value(report_id, project_uuid, report, media_repairs=()):
+    """The ``value`` of ``document_load_report`` for a library ``LoadReport``.
+
+    ``outcome``, ``conversions`` and ``repairs`` are the library's, verbatim.
+    ``media_repairs`` (always a list) are the stale media values the editor
+    found at load (002 FR-043, FR-044); ``acknowledgment_required`` says
+    whether a save waits for an acknowledgment, and ``file_differs_from_loaded``
+    covers both parts.
+    """
+    media_repairs = list(media_repairs)
     return {
         'report_id': report_id,
         'project_uuid': project_uuid,
         'document': report.document,
         'outcome': report.outcome.value,
-        'file_differs_from_loaded': bool(report.file_differs_from_loaded),
+        'file_differs_from_loaded': bool(report.file_differs_from_loaded) or bool(media_repairs),
         'conversions': [
             {
                 'from_version': step.from_version,
@@ -130,6 +148,8 @@ def load_report_value(report_id, project_uuid, report):
             }
             for repair in report.repairs
         ],
+        'media_repairs': media_repairs,
+        'acknowledgment_required': report.outcome.value != 'clean' or bool(media_repairs),
     }
 
 
@@ -1194,18 +1214,19 @@ class CuemsWsUser():
         """
         try:
             Logger.info("user {} loading project {}".format(id(self.websocket), project_uuid))
-            project, report, script_md5 = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.open, project_uuid)
+            project, report, script_md5, media_repairs, rows_digest = await self.server.event_loop.run_in_executor(
+                self.server.executor, self.server.db.project.open, project_uuid)
             msg = json.dumps({"type": "project", "value": project})
             await self.outgoing.put(msg)
             self.server.users[self] = project_uuid
             self.server.sessions[self.session_id]['loaded_project'] = project_uuid
 
-            state = derive_gate(project_uuid, report, script_md5,
+            state = derive_gate(project_uuid, report, script_md5, media_repairs, rows_digest,
                                 prior=self.server.repair_gates.get(project_uuid))
             self.server.repair_gates[project_uuid] = state
             await self.outgoing.put(json.dumps({
                 "type": "document_load_report",
-                "value": load_report_value(state['report_id'], project_uuid, report),
+                "value": load_report_value(state['report_id'], project_uuid, report, state['media_repairs']),
             }))
         except DocumentLoadFailed as e:
             Logger.warning(f"project {project_uuid} not opened: {e}")
@@ -1308,6 +1329,11 @@ class CuemsWsUser():
                     on_disk = await self.server.event_loop.run_in_executor(self.server.executor, bytes_md5, path)
                     if on_disk != state['script_md5']:
                         state = await self.rederive_gate(project_uuid)
+                    else:
+                        rows = await self.server.event_loop.run_in_executor(
+                            self.server.executor, self.server.db.project.media_rows_digest, project_uuid)
+                        if rows != state['media_rows_digest']:
+                            state = await self.rederive_gate(project_uuid)
                 if state is not None and gate_requires_ack(state) and self.session_id not in state['acknowledged_by']:
                     await self.refuse_save(state, 'unacknowledged')
                     return
@@ -1347,11 +1373,11 @@ class CuemsWsUser():
         script file: there is no original to protect.
         """
         try:
-            report, script_md5 = await self.server.event_loop.run_in_executor(
+            report, script_md5, media_repairs, rows_digest = await self.server.event_loop.run_in_executor(
                 self.server.executor, self.server.db.project.inspect, project_uuid)
         except FileNotFoundError:
             return None
-        state = derive_gate(project_uuid, report, script_md5,
+        state = derive_gate(project_uuid, report, script_md5, media_repairs, rows_digest,
                             prior=self.server.repair_gates.get(project_uuid))
         self.server.repair_gates[project_uuid] = state
         return state

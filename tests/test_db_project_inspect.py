@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""``CuemsDBProject.open`` and ``inspect`` return the md5 of the script's bytes (002 T007, T008).
+"""``CuemsDBProject.open`` and ``inspect`` return the md5 of the script's bytes (002 T007, T008, T066).
 
 The repair gate keys its re-derivation on that md5 (FR-009a). ``inspect`` is
-the gate's view of the file on disk and must write nothing.
+the gate's view of the file on disk and must write nothing. Both also return
+the media comparison (``media_repairs``, ``media_rows_digest``).
 """
 
 import hashlib
@@ -24,9 +25,10 @@ def _md5(path):
 def test_open_returns_the_md5_of_the_files_bytes(lib, kind):
     _write_variant(lib.script, kind)
 
-    value, report, script_md5 = lib.project.open(SCRIPT_ID)
+    value, report, script_md5, media_repairs, rows_digest = lib.project.open(SCRIPT_ID)
 
     assert script_md5 == _md5(lib.script)
+    assert media_repairs == [] and len(rows_digest) == 32
     assert value['CuemsScript']['id'] == SCRIPT_ID
     assert report.outcome.value == ('clean' if kind == 'clean' else 'repaired')
 
@@ -36,9 +38,10 @@ def test_inspect_returns_the_report_and_md5_and_writes_nothing(lib, kind):
     _write_variant(lib.script, kind)
     before = _sha256(lib.script)
 
-    report, script_md5 = lib.project.inspect(SCRIPT_ID)
+    report, script_md5, media_repairs, rows_digest = lib.project.inspect(SCRIPT_ID)
 
     assert script_md5 == _md5(lib.script)
+    assert media_repairs == [] and rows_digest == lib.project.open(SCRIPT_ID)[4]
     assert report.outcome.value == ('clean' if kind == 'clean' else 'repaired')
     assert _sha256(lib.script) == before
 

@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import traceback
 import shutil
@@ -235,6 +236,85 @@ def _walk_media_durations(contents, resolver, dimensions_resolver, stats):
         _fix_one_media(cue, media, resolver, dimensions_resolver, stats)
 
 
+def _media_cues(contents):
+    """Every media cue of *contents*, nested ``CueList`` objects walked."""
+    for cue in contents or ():
+        if isinstance(cue, CueList):
+            yield from _media_cues(cue.contents)
+        elif isinstance(cue, MEDIA_CUES):
+            yield cue
+
+
+def _stale_entries(cue, media, row):
+    """The values PRESENT in *media* that the fill would change (002 FR-043).
+
+    The decisions of ``0b291d1`` ``stale_changes``, on the object: the same
+    as :func:`_fix_one_media`'s. A value that is only missing (a project
+    written before rc15) is not stale: the next save adds it. An orphan (no
+    *row*) is compared with nothing; only a value its cue may not carry is
+    stale there. ``stored`` and ``current`` are strings, ``current`` ``None``
+    when the save will remove the value.
+    """
+    file_name = media.get('file_name')
+    allowed = _allowed_keys(cue)
+    present = {key: media.get(key) for key in STORED_KEYS if key in media}
+    known = row is not None
+    expected = ({key: value for key, value in (dimensions_of_row(row) or {}).items() if key in allowed}
+                if known else {})
+    wrong = {key for key, value in present.items()
+             if key not in allowed or _valid(key, value) is None
+             or (known and _valid(key, value) != expected.get(key))}
+    entry = lambda field, stored, current: {
+        'cue_id': str(cue.get('id')), 'file_name': file_name, 'field': field,
+        'stored': stored, 'current': current}
+    entries = []
+    if known and row.duration and media.get('duration') is not None:
+        current = CTimecode(str(row.duration))
+        if media.get('duration') != current:
+            entries.append(entry('duration', str(media.get('duration')), str(current)))
+    if wrong & set(PIXEL_KEYS):
+        stored = f"{present.get('pixel_width', '?')}x{present.get('pixel_height', '?')}"
+        current = (f"{expected['pixel_width']}x{expected['pixel_height']}"
+                   if 'pixel_width' in expected else None)
+        entries.append(entry('pixel_size', stored, current))
+    for key in ('file_size', 'file_md5'):
+        if key in wrong:
+            current = expected.get(key)
+            entries.append(entry(key, str(present[key]), None if current is None else str(current)))
+    return entries
+
+
+def _rows_digest(rows):
+    """md5 of the canonical JSON of the rows a comparison read (FR-045)."""
+    tuples = sorted(
+        (row.unix_name, None if row.duration is None else str(row.duration),
+         row.pixel_width, row.pixel_height, row.file_size, row.file_md5)
+        for row in rows if row is not None)
+    return hashlib.md5(json.dumps(tuples, separators=(',', ':')).encode()).hexdigest()
+
+
+def media_staleness(script):
+    """``(media_repairs, media_rows_digest)`` of a loaded *script* (002 FR-043, FR-045).
+
+    Compares each media cue's present stored values with its file's library
+    row, on the object: no probe, no second reader of the file.
+    ``media_repairs`` lists ``{cue_id, file_name, field, stored, current}``
+    (see :func:`_stale_entries`); ``media_rows_digest`` changes whenever a
+    row the comparison read changes, or a row appears for a file that had
+    none. Reads the database: call it in the executor.
+    """
+    rows, repairs = {}, []
+    for cue in _media_cues(script.cuelist.contents):
+        media = cue.get('Media')
+        file_name = media.get('file_name') if media else None
+        if not file_name:
+            continue
+        if file_name not in rows:
+            rows[file_name] = Media.get_or_none(Media.unix_name == file_name)
+        repairs.extend(_stale_entries(cue, media, rows[file_name]))
+    return repairs, _rows_digest(rows.values())
+
+
 def _fade_duration_ms(duration):
     """Best-effort milliseconds for a FadeCue ``duration`` JSON value.
 
@@ -395,13 +475,16 @@ class CuemsDBProject(StringSanitizer):
         return script.to_wire()
 
     def open(self, uuid):
-        """Open a live project for a session: its wire value, the load report, the script's md5.
+        """Open a live project for a session: its wire value and what the gate needs.
 
-        One library load, one ``to_wire()``. The file is not written.
+        One library load, one ``to_wire()``, and the media comparison on the
+        loaded object (002 FR-043). The file is not written.
 
         Returns:
-            ``(value, LoadReport, script_md5)`` — *value* is what :meth:`load`
-            returns; *script_md5* is the md5 of the bytes read for the report.
+            ``(value, LoadReport, script_md5, media_repairs, media_rows_digest)``
+            — *value* is what :meth:`load` returns; *script_md5* is the md5 of
+            the bytes read for the report; the last two are
+            :func:`media_staleness`'s.
 
         Raises:
             NonExistentItemError: no live project with *uuid*.
@@ -411,7 +494,8 @@ class CuemsDBProject(StringSanitizer):
                 unwrapped.
         """
         script, report, script_md5 = self._load_for_gate(uuid)
-        return script.to_wire(), report, script_md5
+        media_repairs, media_rows_digest = media_staleness(script)
+        return script.to_wire(), report, script_md5, media_repairs, media_rows_digest
 
     def inspect(self, uuid):
         """What :meth:`open` reports, without building the wire value.
@@ -420,13 +504,17 @@ class CuemsDBProject(StringSanitizer):
         file is not written.
 
         Returns:
-            ``(LoadReport, script_md5)``.
+            ``(LoadReport, script_md5, media_repairs, media_rows_digest)``.
 
         Raises:
             As :meth:`open`.
         """
-        _script, report, script_md5 = self._load_for_gate(uuid)
-        return report, script_md5
+        script, report, script_md5 = self._load_for_gate(uuid)
+        return (report, script_md5) + media_staleness(script)
+
+    def media_rows_digest(self, uuid):
+        """The rows digest of the script on disk now (FR-045): has a row changed since the report?"""
+        return self.inspect(uuid)[3]
 
     def _load_for_gate(self, uuid):
         """Hash the script's bytes once, then load it with the library's report.

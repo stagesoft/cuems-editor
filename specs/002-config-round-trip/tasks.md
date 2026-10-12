@@ -396,7 +396,7 @@ file size, `cd37792` for size and md5, `b29d40e` for the relink guard (FR-048).
   - `_fix_media_durations` passes `db_dimensions_resolver`, with no probe (Q5).
   - The existing whole-walk `except Exception` in `_fix_media_durations` (`:463-469`) must not hide a per-block failure: per-block failures are counted in `stats.errors`, and a non-empty `stats.errors` is logged at WARNING with the file names.
 - [X] T064 [US6] Run `tests/test_media_values.py` and `tests/test_media_migration.py`. FR-042's six pass, the item-assignment grep is clean, and the migration tests pass.
-- [ ] T065 [P] [US6] (red first) Create `tests/test_media_staleness.py`, reusing the `lib` / `server` / `_session` helpers from `tests/test_repair_gate_durable.py`:
+- [X] T065 [P] [US6] (red first) Create `tests/test_media_staleness.py`, reusing the `lib` / `server` / `_session` helpers from `tests/test_repair_gate_durable.py`:
   - `test_a_stale_duration_is_a_media_repair_and_requires_acknowledgment`: the script's `Media.duration` differs from the row. Expect `document_load_report.value.media_repairs == [{cue_id, file_name, field: "duration", stored, current}]`, `acknowledgment_required` true, `outcome` `"clean"` (verbatim), and `file_differs_from_loaded` true. The save is refused until acknowledged, then the original is preserved and written;
   - `test_pixel_size_on_an_audio_cue_is_a_media_repair_with_current_null`;
   - `test_missing_values_are_not_stale`: a pre-rc15 script with no stored sizes gives `media_repairs == []`, `acknowledgment_required` false, and the save adds the values;
@@ -407,20 +407,20 @@ file size, `cd37792` for size and md5, `b29d40e` for the relink guard (FR-048).
   - `test_media_repairs_is_always_present`: `[]` on a clean load.
 
   Save the failing run in `specs/002-config-round-trip/evidence/media-staleness-failing-first.txt`.
-- [ ] T066 [US6] In `src/cuemseditor/CuemsDBProject.py`, add `media_staleness(script) -> (media_repairs, media_rows_digest)` (FR-043). Walk `script.cuelist.contents` with the same `isinstance(cue, MEDIA_CUES)` walk. For each media cue with a `file_name` and a row, compare the **present** values with the decisions of `0b291d1:CuemsDBProject.py:396-427` `stale_changes`, re-expressed on the object:
+- [X] T066 [US6] In `src/cuemseditor/CuemsDBProject.py`, add `media_staleness(script) -> (media_repairs, media_rows_digest)` (FR-043). Walk `script.cuelist.contents` with the same `isinstance(cue, MEDIA_CUES)` walk. For each media cue with a `file_name` and a row, compare the **present** values with the decisions of `0b291d1:CuemsDBProject.py:396-427` `stale_changes`, re-expressed on the object:
   - `duration` (`CTimecode` equality with the row's);
   - `pixel_size`, rendered `"WxH"`, stale when not allowed on the cue or different;
   - `file_size`;
   - `file_md5`.
 
   `media_rows_digest` is `hashlib.md5(json.dumps(sorted(rows), separators=(',',':')).encode()).hexdigest()`, over the `(file_name, duration, pixel_width, pixel_height, file_size, file_md5)` tuples read. Extend `open` to return `(value, report, script_md5, media_repairs, media_rows_digest)` and `inspect` to return `(report, script_md5, media_repairs, media_rows_digest)`. Update their callers.
-- [ ] T067 [US6] In `src/cuemseditor/CuemsWsUser.py`, extend the gate:
+- [X] T067 [US6] In `src/cuemseditor/CuemsWsUser.py`, extend the gate:
   - `derive_gate` takes `media_repairs` and `media_rows_digest`. It stores both, sets `acknowledgment_required = outcome != 'clean' or bool(media_repairs)`, and sets `file_differs_from_loaded = report.file_differs_from_loaded or bool(media_repairs)`. It re-uses the `report_id` only when `script_md5` **and** `media_rows_digest` match (FR-045).
   - `gate_requires_ack(state)` returns `state['acknowledgment_required']`.
   - `received_project` also recomputes the rows digest. It calls a new `CuemsDBProject.media_rows_digest(uuid)`, which reads the rows for the file names in the **on-disk** script via `inspect`'s walk, in the executor, when the state requires acknowledgment. A mismatch re-derives.
-- [ ] T068 [US6] In `src/cuemseditor/CuemsWsUser.py` `load_report_value` (and its use by `request_duplicate_project`), add `media_repairs` (always a list) and `acknowledgment_required`, and OR `file_differs_from_loaded` (FR-044). `outcome`, `repairs` and `conversions` stay verbatim.
-- [ ] T069 [US6] In `tests/ws-command-responses.txt`, extend the `document_load_report` row (`:20`) and the "Load reports and the save gate" text with `media_repairs` and `acknowledgment_required` (contracts/ws-messages.md). Add one paragraph: a later media check adds its findings to `media_repairs` and never sends a frame that gates a save (FR-046).
-- [ ] T070 [US6] Run `tests/test_media_staleness.py`, `tests/test_repair_gate_durable.py`, `tests/test_document_load_report.py` and `tests/test_media_values.py`. All pass.
+- [X] T068 [US6] In `src/cuemseditor/CuemsWsUser.py` `load_report_value` (and its use by `request_duplicate_project`), add `media_repairs` (always a list) and `acknowledgment_required`, and OR `file_differs_from_loaded` (FR-044). `outcome`, `repairs` and `conversions` stay verbatim.
+- [X] T069 [US6] In `tests/ws-command-responses.txt`, extend the `document_load_report` row (`:20`) and the "Load reports and the save gate" text with `media_repairs` and `acknowledgment_required` (contracts/ws-messages.md). Add one paragraph: a later media check adds its findings to `media_repairs` and never sends a frame that gates a save (FR-046).
+- [X] T070 [US6] Run `tests/test_media_staleness.py`, `tests/test_repair_gate_durable.py`, `tests/test_document_load_report.py` and `tests/test_media_values.py`. All pass.
 
 **Checkpoint**: US6 is complete. Commit per the porting rule, naming the source commits.
 
