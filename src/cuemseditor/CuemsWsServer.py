@@ -87,6 +87,14 @@ class CuemsWsServer():
         self.engine_messages = list()
         self.users = dict()
         self.sessions = dict()
+        # Project uuid -> GateState dict (specs/002-config-round-trip/data-model.md):
+        # the outstanding load report of each project and which sessions
+        # acknowledged it. Read and written only on the event-loop thread.
+        self.repair_gates = dict()
+        # os.path.realpath(path) -> asyncio.Lock, one per config document or
+        # script file a save writes. Created lazily on the loop thread
+        # (CuemsWsUser.file_lock) and never evicted.
+        self.file_locks = dict()
         self.settings_dict = settings_dict
         # Projected once, here. json.dumps of the library's mappings object
         # re-projects it through the mappings schema on every message and drops

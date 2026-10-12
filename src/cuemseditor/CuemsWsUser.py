@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import functools
+import hashlib
 import json
 import asyncio
+import os
 from datetime import datetime, timedelta
 from cuemsutils.helpers import new_uuid, new_datetime, Unset
 from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
@@ -22,6 +24,24 @@ functionNameAsString = lambda n=0: sys._getframe(n + 1).f_code.co_name
 # document_load_failed always offers all three: the editor cannot know which
 # one the operator can carry out.
 LOAD_FAILED_NEXT_STEPS = ['restore_from_conversion_backup', 'correct_field_by_hand', 'remove_document']
+
+
+def file_lock(server, path):
+    """The ``asyncio.Lock`` that serialises saves of *path* (research R6).
+
+    Keyed by the resolved path, so two spellings of one file share a lock.
+    Event-loop thread only: ``server.file_locks`` is shared state.
+    """
+    return server.file_locks.setdefault(os.path.realpath(path), asyncio.Lock())
+
+
+def bytes_md5(path):
+    """md5 hex digest of *path*'s bytes, or ``None`` when it does not exist. Runs in the executor."""
+    try:
+        with open(path, 'rb') as fh:
+            return hashlib.md5(fh.read()).hexdigest()
+    except FileNotFoundError:
+        return None
 
 
 def _json_safe(value):
@@ -809,7 +829,7 @@ class CuemsWsUser():
         self.repair_state = None   # a new load replaces whatever this session held
         try:
             Logger.info("user {} loading project {}".format(id(self.websocket), project_uuid))
-            project, report = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.open, project_uuid)
+            project, report, _script_md5 = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.open, project_uuid)
             msg = json.dumps({"type": "project", "value": project})
             await self.outgoing.put(msg)
             self.server.users[self] = project_uuid

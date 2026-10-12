@@ -1,3 +1,4 @@
+import hashlib
 import os
 import traceback
 import shutil
@@ -268,12 +269,13 @@ class CuemsDBProject(StringSanitizer):
         return script.to_wire()
 
     def open(self, uuid):
-        """Open a live project for a session: its wire value and the load report.
+        """Open a live project for a session: its wire value, the load report, the script's md5.
 
         One library load, one ``to_wire()``. The file is not written.
 
         Returns:
-            ``(value, LoadReport)`` — *value* is what :meth:`load` returns.
+            ``(value, LoadReport, script_md5)`` — *value* is what :meth:`load`
+            returns; *script_md5* is the md5 of the bytes read for the report.
 
         Raises:
             NonExistentItemError: no live project with *uuid*.
@@ -282,18 +284,45 @@ class CuemsDBProject(StringSanitizer):
                 than the library). ``SchemaError`` and ``OSError`` propagate
                 unwrapped.
         """
+        script, report, script_md5 = self._load_for_gate(uuid)
+        return script.to_wire(), report, script_md5
+
+    def inspect(self, uuid):
+        """What :meth:`open` reports, without building the wire value.
+
+        The repair gate's view of the file on disk (FR-009, FR-009a). The
+        file is not written.
+
+        Returns:
+            ``(LoadReport, script_md5)``.
+
+        Raises:
+            As :meth:`open`.
+        """
+        _script, report, script_md5 = self._load_for_gate(uuid)
+        return report, script_md5
+
+    def _load_for_gate(self, uuid):
+        """Hash the script's bytes once, then load it with the library's report.
+
+        The library reads the path again, so a write between the two reads
+        binds the report to the earlier bytes. The next save re-hashes and
+        re-derives the gate on a mismatch, so that race fails safe.
+        """
         try:
             project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
         path = self.script_path(project.unix_name)
+        with open(path, 'rb') as fh:
+            script_md5 = hashlib.md5(fh.read()).hexdigest()
         try:
             script, report = CuemsScript.load_with_report(path)
         except SchemaError:
             raise
         except ValidationError as e:
             raise DocumentLoadFailed(path, e) from e
-        return script.to_wire(), report
+        return script, report, script_md5
 
     def load_with_report(self, uuid, include_trash=False):
         """Load a project's script object and the library's report of what the load did.

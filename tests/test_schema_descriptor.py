@@ -47,6 +47,8 @@ def conf(tmp_path, monkeypatch):
 def user(conf):
     server = MagicMock()
     server.users = {}
+    server.repair_gates = {}
+    server.file_locks = {}
     server.event_loop = asyncio.new_event_loop()
     server.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     session = CuemsWsUser(server, MagicMock())

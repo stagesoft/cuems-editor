@@ -85,17 +85,17 @@ the script's md5. US1, US2 and US6 all build on these.
 
 **⚠️ CRITICAL**: no user-story implementation begins until this phase is done.
 
-- [ ] T004 In `src/cuemseditor/CuemsWsServer.py` `CuemsWsServer.__init__`, add `self.repair_gates = {}` and `self.file_locks = {}`, with a comment for each:
+- [X] T004 In `src/cuemseditor/CuemsWsServer.py` `CuemsWsServer.__init__`, add `self.repair_gates = {}` and `self.file_locks = {}`, with a comment for each:
   - `repair_gates`: project uuid → `GateState` dict (data-model.md). Read and written only on the event-loop thread.
   - `file_locks`: `os.path.realpath(path)` → `asyncio.Lock`. Created lazily on the loop thread and never evicted.
-- [ ] T005 In `src/cuemseditor/CuemsWsUser.py`, add the module function `file_lock(server, path)`. It returns `server.file_locks.setdefault(os.path.realpath(path), asyncio.Lock())`, and it is called only on the loop thread (research R6). Add the module function `bytes_md5(path)`, which returns `hashlib.md5(open(path,'rb').read()).hexdigest()`, or `None` when the file does not exist. `bytes_md5` runs in the executor.
-- [ ] T006 Update the `server` fixtures in `tests/test_document_load_report.py` and `tests/test_schema_descriptor.py` (and the `user` fixture in `tests/test_nodelist_actions.py`, only if a later task needs it there) to set `server.repair_gates = {}` and `server.file_locks = {}`. Re-run the suite: still 160 passed, 3 skipped.
-- [ ] T007 In `src/cuemseditor/CuemsDBProject.py`:
+- [X] T005 In `src/cuemseditor/CuemsWsUser.py`, add the module function `file_lock(server, path)`. It returns `server.file_locks.setdefault(os.path.realpath(path), asyncio.Lock())`, and it is called only on the loop thread (research R6). Add the module function `bytes_md5(path)`, which returns `hashlib.md5(open(path,'rb').read()).hexdigest()`, or `None` when the file does not exist. `bytes_md5` runs in the executor.
+- [X] T006 Update the `server` fixtures in `tests/test_document_load_report.py` and `tests/test_schema_descriptor.py` (and the `user` fixture in `tests/test_nodelist_actions.py`, only if a later task needs it there) to set `server.repair_gates = {}` and `server.file_locks = {}`. Re-run the suite: still 160 passed, 3 skipped.
+- [X] T007 In `src/cuemseditor/CuemsDBProject.py`:
   - change `open(uuid)` to read the script's bytes once, compute their md5, then call `CuemsScript.load_with_report(path)`, and return `(value, report, script_md5)`;
   - add `inspect(uuid) -> (LoadReport, script_md5)`, which does the same read and load without building the wire value.
 
   Both raise exactly what `open` raises today (research R8.1, R8.2). The md5 is taken from one read and the library loads the path again, so a write between the two reads binds the report to the earlier bytes. That race is accepted: the next save re-hashes the file (FR-009a) and re-derives the gate on a mismatch. Update the one caller, `CuemsWsUser.send_project` (`src/cuemseditor/CuemsWsUser.py:809`), to unpack three values and ignore the md5 for now. US6's T066 later extends both return values with the media comparison.
-- [ ] T008 Add `tests/test_db_project_inspect.py`, which asserts on a temporary library (the `lib` fixture pattern from `tests/test_document_load_report.py:79-99`):
+- [X] T008 Add `tests/test_db_project_inspect.py`, which asserts on a temporary library (the `lib` fixture pattern from `tests/test_document_load_report.py:79-99`):
   - `open` and `inspect` return the md5 of the file's exact bytes;
   - `inspect` writes nothing (sha256 is unchanged);
   - an unrepairable file raises `DocumentLoadFailed` from both.
