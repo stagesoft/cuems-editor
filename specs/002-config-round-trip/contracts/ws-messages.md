@@ -113,7 +113,7 @@ returns them, by design.
 |---|---|
 | Inbound | `{"action": "node_set", "value": {"node_uuid": "<uuid>", "alias": "<text>" \| null}}`. `null` removes the alias |
 | Reply (success) | `{"type": "node_set", "value": {"node_uuid", "alias"}}` to the caller, then `node_list` to **all** sessions (as after `nodelist_modify`) |
-| Refusal | `{"type": "node_set_refused", "value": {"node_uuid", "reason", "message"}}`, caller only. `reason` is one of: `unavailable` (no nodeconf socket on this host; answered at once, no IPC), `timeout`, `nodeconf_error` (`message` is nodeconf's `error`, verbatim, not retried), `not_operator_field` (the request carried a field the operator does not own) |
+| Refusal | `{"type": "node_set_refused", "value": {"node_uuid", "reason", "message"}}`, caller only. `reason` is one of: `unavailable` (no nodeconf socket on this host; answered at once, no IPC), `timeout`, `nodeconf_error` (`message` is nodeconf's `error`, verbatim, not retried), `not_operator_field` (the request carried a field the operator does not own), `invalid_value` (an alias that is not a non-empty string or null, or a `node_uuid` that `coerce_identity` does not return as a uuid; added at implementation, T050) |
 | Never | written to `network_map.xml` by the editor, on any path |
 | IPC | [nodeconf-node_set.md](nodeconf-node_set.md) |
 

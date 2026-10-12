@@ -299,7 +299,7 @@ nodeconf error relayed verbatim; a `node_list` refresh (spec FR-024 to FR-027; Q
 **Independent Test**: with a fake `Communicator`, assert the request, the reply and the refresh.
 With no socket, assert `unavailable` and no `Communicator` built.
 
-- [ ] T050 [US4] Create `tests/test_node_set.py`, with a `user` fixture modelled on `tests/test_nodelist_actions.py:34-60`. `server.nodeconf_available` is a `MagicMock(return_value=True)`, and `server.notify_all_node_list_update` is an `AsyncMock`. Patch `cuemseditor.CuemsWsUser.Communicator` with a fake whose `send_request` returns `{"OK": True}`. Add:
+- [X] T050 [US4] Create `tests/test_node_set.py`, with a `user` fixture modelled on `tests/test_nodelist_actions.py:34-60`. `server.nodeconf_available` is a `MagicMock(return_value=True)`, and `server.notify_all_node_list_update` is an `AsyncMock`. Patch `cuemseditor.CuemsWsUser.Communicator` with a fake whose `send_request` returns `{"OK": True}`. Add:
   - `test_node_set_sends_the_alias_and_refreshes_everyone`: the request equals `{"action":"node_set","node_uuid":NODE,"alias":"Stage left"}`, the reply is `{"type":"node_set","value":{"node_uuid":NODE,"alias":"Stage left"}}`, and the refresh is awaited once;
   - `test_unavailable_answers_at_once_and_builds_no_communicator` (`nodeconf_available` returns `False`; the patched class is never instantiated);
   - `test_nodeconf_error_is_relayed_verbatim_without_retry` (`{"OK": False, "error": "Node x not found"}`: `node_set_refused`, reason `nodeconf_error`, `send_request` called once);
@@ -308,7 +308,7 @@ With no socket, assert `unavailable` and no `Communicator` built.
   - `test_non_operator_fields_are_refused_before_ipc`: each of `uuid`, `name`, `node_role`, `ip`, `online`, `adopted`, `role_id`, `hostname` and `mac` gives `node_set_refused` with reason `not_operator_field`, and no instantiation (spec US4 #4);
   - `test_an_invalid_node_uuid_is_refused_before_ipc`: a `node_uuid` that `coerce_identity` rejects gives the refusal and no instantiation (FR-024);
   - `test_the_action_is_registered`.
-- [ ] T051 [US4] Implement `async def node_set(self, value, action)` in `src/cuemseditor/CuemsWsUser.py` per research R7. Import `Communicator` from `cuemsutils.tools.CommunicatorServices`. Add `NODECONF_IPC = '/tmp/nodeconf.ipc'` reading `CuemsWsServer.NODECONF_IPC` (do not duplicate the string). The order is:
+- [X] T051 [US4] Implement `async def node_set(self, value, action)` in `src/cuemseditor/CuemsWsUser.py` per research R7. Import `Communicator` from `cuemsutils.tools.CommunicatorServices`. Add `NODECONF_IPC = '/tmp/nodeconf.ipc'` reading `CuemsWsServer.NODECONF_IPC` (do not duplicate the string). The order is:
   1. validate the keys: only `node_uuid` and `alias`;
   2. validate `alias`: a non-empty string or `None`;
   3. `coerce_identity(node_uuid)`, sent as a string;
@@ -318,9 +318,9 @@ With no socket, assert `unavailable` and no `Communicator` built.
   7. on `OK`, reply, then `notify_all_node_list_update()`.
 
   Register the action in the map.
-- [ ] T052 [US4] Add the `node_set` and `node_set_refused` rows to `tests/ws-command-responses.txt` (contracts/ws-messages.md), and one line in the "Nodes: adoption" section saying that the alias is set with `node_set` and never through `config_save`.
-- [ ] T053 [US4] Write `specs/002-config-round-trip/upstream-reports/UR-8-node-set-ipc-command.md`, addressed to `cuems-nodeconf`. Quote `specs/002-config-round-trip/contracts/nodeconf-node_set.md` in full, give today's measured reply (`unknown action: node_set`, research R7), state its dependency on `cuems-utils` `NodeIndex.set_alias` (spec M8), and name the flipping test.
-- [ ] T054 [US4] Add `test_nodeconf_engine_callback_accepts_node_set` to `tests/test_upstream_gates.py` (gate G4, research R7):
+- [X] T052 [US4] Add the `node_set` and `node_set_refused` rows to `tests/ws-command-responses.txt` (contracts/ws-messages.md), and one line in the "Nodes: adoption" section saying that the alias is set with `node_set` and never through `config_save`.
+- [X] T053 [US4] Write `specs/002-config-round-trip/upstream-reports/UR-8-node-set-ipc-command.md`, addressed to `cuems-nodeconf`. Quote `specs/002-config-round-trip/contracts/nodeconf-node_set.md` in full, give today's measured reply (`unknown action: node_set`, research R7), state its dependency on `cuems-utils` `NodeIndex.set_alias` (spec M8), and name the flipping test.
+- [X] T054 [US4] Add `test_nodeconf_engine_callback_accepts_node_set` to `tests/test_upstream_gates.py` (gate G4, research R7):
   - skip only if `../cuems-nodeconf` does not exist;
   - insert it into `sys.path`;
   - stub `netifaces`, `systemd`, `systemd.daemon`, `dbus` and `zeroconf` in `sys.modules` with `MagicMock`, via `monkeypatch.setitem`;

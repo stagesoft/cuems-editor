@@ -9,6 +9,9 @@ import os
 from datetime import datetime, timedelta
 from cuemsutils.helpers import new_uuid, new_datetime, Unset
 from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
+from cuemsutils.tools.CommunicatorServices import Communicator
+from cuemsutils.tools import coerce_identity
+from cuemsutils.tools.Uuid import Uuid
 from cuemsutils.errors import IngestError, ValidationError
 import websockets as ws
 import sys
@@ -341,6 +344,18 @@ def refusal_value(schema, project_uuid, error):
     }
 
 
+# node_set carries the one node field the operator owns (002 M7,
+# cuems-common docs/node-identity-contract.md). Discovery owns uuid, name,
+# node_role, ip and online; nodeconf owns adopted, role_id and hostname.
+NODE_SET_FIELDS = ('node_uuid', 'alias')
+
+
+def node_set_refused(node_uuid, reason, message):
+    """``node_set_refused``: unavailable, timeout, nodeconf_error, not_operator_field or invalid_value."""
+    return json.dumps({"type": "node_set_refused", "value": {
+        "node_uuid": node_uuid, "reason": reason, "message": message}})
+
+
 def load_failed_value(project_uuid, error):
     """The ``value`` of ``document_load_failed`` for a :class:`DocumentLoadFailed`."""
     violation = getattr(error.cause, 'violation', None)
@@ -477,6 +492,7 @@ class CuemsWsUser():
                     "nodeconf": lambda: self.nodeconf(action),
                     "nodelist_modify": lambda: self.nodelist_modify(value, action, data.get("modify_action")),
                     "nodelist_get": lambda: self.nodelist_get(action),
+                    "node_set": lambda: self.node_set(value, action),
                     "node_status": lambda: self.node_status(action),
                     "project_status": lambda: self.project_status(action),
                     "project_unload": lambda: self.project_unload(action),
@@ -778,6 +794,80 @@ class CuemsWsUser():
         except Exception as e:
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), action=action)
+
+    async def node_set(self, value, action):
+        """Set or remove a node's alias through cuems-nodeconf (FR-024 to FR-026).
+
+        Sent straight to nodeconf on ``server.NODECONF_IPC``, not through the
+        engine (Q2), as ``{"action": "node_set", "node_uuid", "alias"}``. The
+        editor writes no file: nodeconf owns ``network_map.xml`` and persists
+        the alias itself. On ``{"OK": true}`` the caller gets ``node_set`` and
+        every session a fresh ``node_list``; nodeconf's ``error`` is relayed
+        verbatim and not retried.
+
+        Refused (``node_set_refused``) before any IPC: a field other than
+        ``node_uuid`` and ``alias`` (``not_operator_field``); an alias that is
+        not a non-empty string or null, or a ``node_uuid`` that
+        ``coerce_identity`` does not turn into a uuid (``invalid_value``); no
+        nodeconf socket on this host (``unavailable``, at once).
+
+        Args:
+            value: ``{"node_uuid": "<uuid>", "alias": "<text>" | null}``;
+                null removes the alias.
+            action: Action name from the WebSocket frame.
+        """
+        value = value if isinstance(value, dict) else {}
+        node_uuid = value.get('node_uuid')
+        others = sorted(str(key) for key in value if key not in NODE_SET_FIELDS)
+        if others:
+            await self.outgoing.put(node_set_refused(node_uuid, 'not_operator_field',
+                f"node_set sets the alias only; not an operator field: {', '.join(others)}"))
+            return
+        alias = value.get('alias', Unset)
+        if not (alias is None or (isinstance(alias, str) and alias.strip())):
+            await self.outgoing.put(node_set_refused(node_uuid, 'invalid_value',
+                'alias must be a non-empty string, or null to remove it'))
+            return
+        identity = coerce_identity(node_uuid) if isinstance(node_uuid, str) else None
+        if not isinstance(identity, Uuid):
+            await self.outgoing.put(node_set_refused(node_uuid, 'invalid_value',
+                f"node_uuid {node_uuid!r} is not a node identity"))
+            return
+        if not self.server.nodeconf_available():
+            await self.outgoing.put(node_set_refused(node_uuid, 'unavailable',
+                'cuems-nodeconf is not running on this controller; a node alias cannot be set here'))
+            return
+        request = {"action": "node_set", "node_uuid": str(identity), "alias": alias}
+        Logger.info(f"user {id(self.websocket)} requesting node_set {request}")
+        try:
+            # Communicator calls sys.exit(1) on an unreadable socket path;
+            # that must never stop the editor.
+            nodeconf = Communicator(self.server.NODECONF_IPC)
+        except (SystemExit, PermissionError) as e:
+            Logger.error(f"node_set: cannot open {self.server.NODECONF_IPC}: {e!r}")
+            await self.outgoing.put(node_set_refused(node_uuid, 'unavailable',
+                f"cannot reach cuems-nodeconf on {self.server.NODECONF_IPC}"))
+            return
+        try:
+            async with asyncio.timeout(TIMEOUT):
+                reply = await nodeconf.send_request(request)
+        except TimeoutError:
+            await self.outgoing.put(node_set_refused(node_uuid, 'timeout',
+                f"cuems-nodeconf did not answer in {TIMEOUT}s"))
+            return
+        if not isinstance(reply, dict):
+            await self.outgoing.put(node_set_refused(node_uuid, 'unavailable',
+                'no reply from cuems-nodeconf'))
+            return
+        if reply.get('OK') is not True:
+            await self.outgoing.put(node_set_refused(node_uuid, 'nodeconf_error', str(reply.get('error'))))
+            return
+        await self.outgoing.put(json.dumps({"type": "node_set", "value": {
+            "node_uuid": node_uuid, "alias": alias}}))
+        try:
+            await self.server.notify_all_node_list_update()
+        except Exception as e:
+            Logger.warning(f'Failed to reload and broadcast node list update after node_set: {e}')
 
     async def nodelist_get(self, action):
         """Re-read network_map.xml and send this client the current node list.
