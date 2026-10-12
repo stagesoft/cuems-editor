@@ -80,7 +80,7 @@ Baseline before this feature: 160 passed, 3 skipped.
 ## 5. Evidence for the tip capture (FR-030)
 
 ```bash
-$E/bin/python -I specs/001-cuems-utils-migration/evidence/project-capture/capture_load_tip.py \
+PYTHONPATH=src $E/bin/python -P specs/001-cuems-utils-migration/evidence/project-capture/capture_load_tip.py \
   > specs/002-config-round-trip/evidence/project-frame-tip.json
 ```
 

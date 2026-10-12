@@ -27,7 +27,7 @@ Commands 													 ->	Responses
 {"action" : "project_unload", "value" : "project_uuid"}   		->  {"type": "project_unload", "value": "project_uuid"}
 
 {"action" : "project_new", "value" : "project_json", "unix_name" : "unix_name_string"}   		->  {"type": "project_save", "value": "project_uuid"}
-{"action" : "project_save", "value" : "project_json"}   		->  {"type": "project_save", "value": "project_uuid"}
+{"action" : "project_save", "value" : "project_json"}   		->  {"type": "project_save", "value": "project_uuid"}		(value is {"CuemsScript": …} and nothing beside it; CuemsScript.from_json refuses any other top-level key)
 																->  {"type": "repair_save_refused", "value": {"project_uuid": "uuid", "report_id": "uuid", "reason": "unacknowledged|preserve_failed"}}
 {"action" : "project_delete", "value" : "project_uuid"} 		->  {"type": "project_delete", "value": "project_uuid"}
 {"action" : "project_trash_list"}  							 	->  {"type": "project_trash_list", "value": "project_trash_list_json"}
@@ -78,7 +78,9 @@ restatement is the definition: every boolean on the wire is a JSON true /
 false. A client built for version 1 needs no string-boolean handling.
 
 Contents: project deltas (a) (b) (c) (d) (e); initial_template not sent
-(clients build from schema_descriptor's per-type instance); node_list
+(clients build from schema_descriptor's per-type instance, which is not
+directly usable until cuems-frontend UR-1 is fixed in cuems-utils; see the
+schema_descriptor section); node_list
 carries the node arrays and nodeconf_available, and initial_mappings no
 longer does; adopted / online on node_list nodes and autoload / enabled /
 timecode on project are JSON booleans (8f8b46e, folded in, not bumped);
@@ -91,6 +93,18 @@ schema_descriptor answers with ConfigManager.get_schema_descriptor for the
 named schema, rendered as JSON: enums as their values, a default that is a
 factory or absent as null (as "instance" renders it). An unknown name is the
 error frame.
+
+A type's "instance" is NOT directly usable as a document until cuems-frontend
+UR-1 is fixed in cuems-utils: it is not in to_wire() shape, and required
+fields have null defaults, so a document built from it unedited is refused
+on save. That holds for the script's types and for the config schemas' root
+types too (specs/002-config-round-trip/evidence/descriptor-instance-config.txt:
+all four refused by from_json + save). Gate G3 pins it.
+
+network_map's node "uuid" is rendered as a one-value enumeration, the NOT
+PROVISIONED sentinel (00000000-0000-0000-0000-000000000000): the descriptor
+flattens the uuid union type (a known cuems-utils gap, its requirements doc
+§5). A form must render that field as free text, not as a choice.
 
 The four config domains and their files: "settings" (settings.xml) and
 "network_map" (network_map.xml) are the controller's; "project_mappings"
@@ -160,7 +174,8 @@ MUST take the new revision from the config_save reply, never compute it.
 initial_template (retired at payload version 1)
 
 No longer sent. Clients build a new script from schema_descriptor("script")'s
-per-type "instance". Until 001 milestone 2 it was sent on connect, before
+per-type "instance" (not directly usable until cuems-frontend UR-1 is fixed
+in cuems-utils; see the schema_descriptor section). Until 001 milestone 2 it was sent on connect, before
 initial_mappings. The value is
 {"CuemsScript": <ConfigManager.generate_example(SchemaName.SCRIPT)>}. Until
 001 it was cuemsutils' create_script(), deleted upstream. Against that
