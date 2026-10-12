@@ -1,0 +1,21 @@
+# 002 T048: tests/test_protocol_doc.py before the version-1 restatement (T049).
+# editor 1c48be7 with the test file added; cuems-utils cdb3bef; measured 2026-10-12T20:59:57+02:00
+
+$ $E/bin/python -m pytest -q -p no:cacheprovider --tb=short tests/test_protocol_doc.py
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+_______________ test_no_live_frame_section_says_string_booleans ________________
+tests/test_protocol_doc.py:64: in test_no_live_frame_section_says_string_booleans
+    assert offenders == []
+E   assert [('project (r...JSON true /')] == []
+E     
+E     Left contains 2 more items, first extra item: ('project (reply to project_load)', 'Key order otherwise, and "True" / "False" strings, are unchanged. doc_version')
+E     Use -v to get more diff
+________________ test_version_1_is_restated_with_json_booleans _________________
+tests/test_protocol_doc.py:69: in test_version_1_is_restated_with_json_booleans
+    assert 'restated' in row
+E   AssertionError: assert 'restated' in 'payload_version 1: the 001 coordinated-tag wire. project deltas (a) (b) (c); initial_template no longer sent (clients... node arrays and nodeconf_available move from initial_mappings to node_list, which initial_mappings no longer carries.'
+=========================== short test summary info ============================
+FAILED tests/test_protocol_doc.py::test_no_live_frame_section_says_string_booleans
+FAILED tests/test_protocol_doc.py::test_version_1_is_restated_with_json_booleans
+2 failed, 1 passed in 0.03s

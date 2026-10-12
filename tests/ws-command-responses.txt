@@ -70,10 +70,18 @@ booleans included) or changes audience. Do not bump for a new message type
 or a new optional key. Every bump is a row here; tests/test_payload_version.py
 fails if the advertised integer has none.
 
-payload_version 1: the 001 coordinated-tag wire. project deltas (a) (b) (c);
-initial_template no longer sent (clients build from schema_descriptor's
-per-type instance); the node arrays and nodeconf_available move from
-initial_mappings to node_list, which initial_mappings no longer carries.
+payload_version 1: the coordinated xml-refactor-merge-candidate wire. It has
+not shipped, so it was restated on 2026-10-12 rather than bumped, and the
+restatement is the definition: every boolean on the wire is a JSON true /
+false. A client built for version 1 needs no string-boolean handling.
+
+Contents: project deltas (a) (b) (c) (d) (e); initial_template not sent
+(clients build from schema_descriptor's per-type instance); node_list
+carries the node arrays and nodeconf_available, and initial_mappings no
+longer does; adopted / online on node_list nodes and autoload / enabled /
+timecode on project are JSON booleans (8f8b46e, folded in, not bumped);
+config_save's reply is an object {schema, project_uuid, revision, restart},
+not "OK" (002, folded in, not bumped).
 
 schema_descriptor / config_load / config_save (caller only, except config_changed)
 
@@ -156,7 +164,7 @@ initial_mappings. The value is
 001 it was cuemsutils' create_script(), deleted upstream. Against that
 baseline (v0.1.0rc14, specs/001-cuems-utils-migration/evidence/
 create-script-baseline.json) the value differs by exactly these deltas,
-pinned by tests/test_initial_template.py:
+pinned by tests/test_initial_template.py. History, retired frame:
 
   (a) every boolean is the string "True" / "False", not JSON true / false
       (the same form the "project" frame already uses)
@@ -194,12 +202,14 @@ these, (d) sanctioned 2026-10-02:
       cue output's key is "CueOutput" with "class". ActionCue, FadeCue and
       CueList keep their keys. "AudioCue" is not written back
 
-Key order otherwise, and "True" / "False" strings, are unchanged. doc_version
-is never a key. Pinned by tests/test_project_payload.py. A pre-05 UI
-mis-reads (c), which is why the milestone 1 checkpoint is not deployed.
+Key order is otherwise unchanged. doc_version is never a key. Pinned by
+tests/test_project_payload.py. A pre-05 UI mis-reads (c), which is why the
+milestone 1 checkpoint is not deployed.
 
   (d) a video cue whose document has no <opacity> carries "opacity": 100
       (the VideoCue default; opacity is a script.xsd field), before "class"
+  (e) autoload, enabled and timecode are JSON booleans, not strings
+      (8f8b46e; folded into version 1, not a bump)
 
 Consumer: cuems-frontend src/app/services/projects/projects.service.ts:120
 declares schemaLocation: string as required.
@@ -284,8 +294,8 @@ status). The mixers that read it from localStorage need the 05 eviction.
 
 Each node carries uuid, mac, name, ip, node_role, adopted, online and the
 optional identity fields role_id / alias / hostname, in the library's wire
-form: uuid a string, adopted / online "True" / "False" (not JSON true /
-false), node_role "controller" / "node" / .... There is no node_type. A node
+form: uuid a string, adopted / online JSON true / false, node_role
+"controller" / "node" / .... There is no node_type. A node
 that has a mapping node keeps that mapping node's keys, output blocks
 (devices / device / class) included, in place. `online` is nodeconf's
 discovery view (refreshed within ~30 s), NOT runtime liveness.

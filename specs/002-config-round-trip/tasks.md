@@ -278,8 +278,8 @@ string booleans in the protocol document (spec FR-001 to FR-004).
 **Independent Test**: `tests/test_payload_version.py` passes with 1, and `tests/test_protocol_doc.py`
 finds no `"True"` / `"False"` in a live-frame section.
 
-- [ ] T048 [US3] (red first) Create `tests/test_protocol_doc.py`. It splits `tests/ws-command-responses.txt` into sections at its unindented heading lines. It asserts that no section except `initial_template (retired at payload version 1)` contains `"True"`, `"False"`, `'True'` or `'False'`, and that the `payload_version 1:` paragraph contains the words "restated" and "JSON true / false". Save its failing run in `specs/002-config-round-trip/evidence/protocol-doc-failing-first.txt`.
-- [ ] T049 [US3] Edit `tests/ws-command-responses.txt`:
+- [X] T048 [US3] (red first) Create `tests/test_protocol_doc.py`. It splits `tests/ws-command-responses.txt` into sections at its unindented heading lines. It asserts that no section except `initial_template (retired at payload version 1)` contains `"True"`, `"False"`, `'True'` or `'False'`, and that the `payload_version 1:` paragraph contains the words "restated" and "JSON true / false". Save its failing run in `specs/002-config-round-trip/evidence/protocol-doc-failing-first.txt`.
+- [X] T049 [US3] Edit `tests/ws-command-responses.txt`:
   - replace `:68-71` with the restated row in contracts/ws-messages.md;
   - in the `project` section (`:124-147`), delete "and "True" / "False" strings," (`:139`) and add delta (e): `autoload`, `enabled` and `timecode` are JSON booleans, as pinned by `tests/test_project_payload.py`;
   - in the node section (`:206-209`), change "adopted / online "True" / "False" (not JSON true / false)" to "adopted / online JSON true / false";
