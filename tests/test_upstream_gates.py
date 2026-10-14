@@ -98,7 +98,8 @@ def test_a_cue_built_from_the_descriptor_instance_saves_through_project_save(lib
     assert frames[:1] == [{'type': 'project_save', 'value': SCRIPT_ID}]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=G3)
+# Gate G3 (b) flipped when cuems-utils feature 015 made every root instance
+# saveable; the marker is off and the assertion stays (tag-readiness S6).
 @pytest.mark.parametrize('schema', ['settings', 'project_mappings', 'project_settings'])
 def test_a_config_root_instance_saves_through_config_save(env, user, schema):
     """Gate G3 (b): a config root-type instance, saved over an existing file.
