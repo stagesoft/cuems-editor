@@ -30,7 +30,7 @@ assertion stays (S6).
 | **G3** | as above | `cuems-utils` | `tests/test_upstream_gates.py::test_a_config_root_instance_saves_through_config_save[settings]` | the `CuemsSettings` root instance saveable (today `{"Settings": null}`, refused) |
 | **G3** | as above | `cuems-utils` | `tests/test_upstream_gates.py::test_a_config_root_instance_saves_through_config_save[project_mappings]` | the `CuemsProjectMappings` root instance saveable (today refused at `number_of_nodes`) |
 | **G3** | as above | `cuems-utils` | `tests/test_upstream_gates.py::test_a_config_root_instance_saves_through_config_save[project_settings]` | the `CuemsProjectSettings` root instance saveable (today refused at `setting/name`) |
-| **G4** | `cuems-editor` UR-8 (`upstream-reports/UR-8-node-set-ipc-command.md`) | `cuems-utils` (`NodeIndex.set_alias`, requirements doc §0a G4), then `cuems-nodeconf` (the handler) | `tests/test_upstream_gates.py::test_nodeconf_engine_callback_accepts_node_set` | nodeconf's `engine_callback` answering `{"OK": true}` to `node_set` on the checked-out `../cuems-nodeconf` branch. Today: `unknown action: node_set` |
+| **G4** | `cuems-editor` UR-8 (`upstream-reports/UR-8-node-set-ipc-command.md`) | `cuems-utils` (`NodeIndex.set_alias`, requirements doc §0a G4), then `cuems-nodeconf` (the handler) | `tests/test_upstream_gates.py::test_nodeconf_engine_callback_accepts_node_set` | **Closed 2026-10-14**: cuems-nodeconf `3d3601d` on cuems-utils `38d2ede`. The marker is off, and the test seeds a map that holds the node and checks the alias on disk |
 
 ## G5: no editor test
 

@@ -5,6 +5,17 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # UR-8 — `node_set`: the operator's node alias, over `/tmp/nodeconf.ipc`
 
+**Status: CLOSED 2026-10-14.** cuems-nodeconf `feat/xml-refactor` `3d3601d` implements the
+handler on cuems-utils `feat/xml-refactor` `38d2ede` (`NodeIndex.set_alias`). nodeconf's brief is
+its `specs/planning/12-node-set-alias.md` §3. It was checked against this contract and FR-024 to
+FR-027 and they match: the same request, `{"OK": bool, "error"?}` replies, `alias` the only field,
+`null` clears it, and a direct route with no engine. The editor needed no code change. The G4
+test now seeds a map that holds the node, checks the alias in the written file, and passes without
+its marker. Against nodeconf `155fe6c` it still fails with "unknown action: node_set". It ships in
+cuems-nodeconf `0.1.1-1`, which is not published yet. A deployed daemon older than that still gives
+the "unknown action" answer. The hardware check is still owed (cuems-nodeconf
+`specs/002-public-network-map-path/checklists/hardware-verification.md` §7a).
+
 **From** cuems-editor 002 (T053), 2026-10-12. **To** `cuems-nodeconf`. Measured against
 `cuems-nodeconf` `feat/xml-refactor` @ `65605de` (`engine_callback` unchanged since research's
 `2045897`) and cuemsutils `0.1.0rc16` from `../cuems-utils` @ `cdb3bef`. This is gate **G4** of the

@@ -145,16 +145,14 @@ class _Replies:
         self.event_loop.close()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="cuems-editor UR-8: cuems-nodeconf has no node_set (gate G4); "
-                          "needs cuems-utils NodeIndex.set_alias")
-def test_nodeconf_engine_callback_accepts_node_set(monkeypatch):
-    """Gate G4: nodeconf's real handler, given the exact request the editor sends.
+def test_nodeconf_engine_callback_accepts_node_set(monkeypatch, tmp_path):
+    """Gate G4 (closed): nodeconf's real handler, given the exact request the editor sends.
 
     Imports ``cuemsnodeconf.CuemsNodeConf`` from the sibling ``../cuems-nodeconf``
-    working tree (a branch carrying ``engine_callback``: ``feat/xml-refactor``),
-    with its OS-facing modules stubbed. An import failure errors; it is not
-    an xfail.
+    working tree (``feat/xml-refactor`` at ``3d3601d`` or later, on cuems-utils
+    ``38d2ede`` or later), with its OS-facing modules stubbed. The map holds
+    ``NODE`` and is written for real to ``tmp_path``, so the alias is checked
+    on disk. An import failure errors; it is not a skip.
     """
     if not NODECONF.is_dir():
         pytest.skip('../cuems-nodeconf is not checked out here (a deployed host)')
@@ -164,9 +162,19 @@ def test_nodeconf_engine_callback_accepts_node_set(monkeypatch):
     for module in [m for m in sys.modules if m == 'cuemsnodeconf' or m.startswith('cuemsnodeconf.')]:
         monkeypatch.delitem(sys.modules, module)
     from cuemsnodeconf.CuemsNodeConf import CuemsNodeConf
+    from cuemsutils.config.network_map import CuemsNetworkMapType
+    from cuemsutils.tools.NodeList import NodeIndex, NodeRole, node as Node
 
-    nodeconf = CuemsNodeConf.__new__(CuemsNodeConf)
+    nodeconf = CuemsNodeConf()
     nodeconf._ready = True
+    nodeconf._document = CuemsNetworkMapType()
+    nodeconf.network_map = NodeIndex()
+    nodeconf.map_path = str(tmp_path / 'network_map.xml')
+    nodeconf.network_map['aabbccddee01'] = Node(
+        uuid=NODE, mac='aabbccddee01', name='aabbccddee01._cuems_nodeconf._tcp.local.',
+        node_role=NodeRole.node, ip='169.254.0.9', adopted=True, online=True,
+    )
+    nodeconf._save_network_map()
     nodeconf.communications_thread = replies = _Replies()
     try:
         nodeconf.engine_callback({'action': 'node_set', 'node_uuid': NODE, 'alias': 'Stage left'}, context=None)
@@ -175,3 +183,4 @@ def test_nodeconf_engine_callback_accepts_node_set(monkeypatch):
         replies.stop()
 
     assert replies.replies == [{'OK': True}]
+    assert '<alias>Stage left</alias>' in Path(nodeconf.map_path).read_text()
