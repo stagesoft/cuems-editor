@@ -11,6 +11,7 @@ Saving one of them through the editor's save path takes it off the list.
 """
 import hashlib
 import os
+import re
 
 import cuemseditor.repair_durations as rd
 
@@ -186,7 +187,9 @@ def test_saving_a_listed_project_in_the_editor_takes_it_off_the_list(library, ca
 def test_structured_duration_differing_from_the_database_is_reported(library, canned_probe, capsys):
     _write_v2_script(library)
     with open(_script_path(library), encoding='utf-8') as fh:
-        assert '<CTimecode>00:00:00.000</CTimecode></duration>' in fh.read().replace('\n', '')
+        # cuems-utils indents what it writes (feature 015, S3): drop the
+        # whitespace between elements, not only the newlines.
+        assert '<CTimecode>00:00:00.000</CTimecode></duration>' in re.sub(r'>\s+<', '><', fh.read())
 
     rd.main(['--library-path', library.root])
 
