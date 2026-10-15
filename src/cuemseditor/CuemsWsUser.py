@@ -197,8 +197,8 @@ def schema_descriptor_value(schema, types):
 # is system-wide (ConfigManager.conf_path) or per-project
 # (ConfigManager.project_path, which needs the unix_name a "project_uuid"
 # resolves to). Both raise FileNotFoundError for a file not created yet: on
-# the read side that is the "exists: false" signal; on the write side it is
-# cuems-editor UR-6 (gate G1), so a project's first config_save still fails.
+# the read side that is the "exists: false" signal; the write side asks with
+# must_exist=False for a first save (gate G1).
 CONFIG_FILES = {
     'settings': ('conf', 'settings.xml'),
     'network_map': ('conf', 'network_map.xml'),
@@ -255,10 +255,18 @@ class ConfigChanged(Exception):
     """The file changed between the revision check and the backup, under the lock."""
 
 
-def _config_path(manager, name, project_uname):
-    """The document's path. ``FileNotFoundError`` when it does not exist (UR-6)."""
+def _config_path(manager, name, project_uname, *, must_exist=True):
+    """The document's path.
+
+    With ``must_exist`` (the read side) a file not created yet raises
+    ``FileNotFoundError``, which ``config_load`` answers as ``exists: false``.
+    ``config_save`` passes ``must_exist=False`` for a first save (gate G1,
+    cuems-editor UR-6): the path of the file it is about to create.
+    """
     kind, file_name = CONFIG_FILES[name.value]
-    return manager.conf_path(file_name) if kind == 'conf' else manager.project_path(project_uname, file_name)
+    if kind == 'conf':
+        return manager.conf_path(file_name, must_exist=must_exist)
+    return manager.project_path(project_uname, file_name, must_exist=must_exist)
 
 
 def _root_instance(manager, name):
@@ -311,12 +319,23 @@ def _save_config_document(name, document, path, scope, revision):
     a payload the library refuses leaves no backup; a refusal at ``.save()``
     (T1) removes the backup it made, since the file is unchanged. If the
     backup cannot be written, nothing is saved (FR-015a).
+
+    A *revision* of ``None`` is a first save (gate G1): there is nothing to
+    back up, and a file that appeared since the check is a ``ConfigChanged``,
+    exactly as a changed one is.
     """
+    manager = ConfigManager(load_all=False)
+    if revision is None:
+        if os.path.exists(path):
+            raise ConfigChanged(path)
+        built = manager.from_json(name, document)
+        built.save(path)
+        Logger.info(f'config_save of {name.value}: {path} created')
+        return bytes_md5(path)
     with open(path, 'rb') as fh:
         original = fh.read()
     if hashlib.md5(original).hexdigest() != revision:
         raise ConfigChanged(path)
-    manager = ConfigManager(load_all=False)
     built = manager.from_json(name, document)
     backup = _write_config_backup(manager.library_path, scope, path, original)
     try:
@@ -1040,9 +1059,10 @@ class CuemsWsUser():
         ``default_mappings.xml`` included. A document the library refuses is
         ``config_save_refused`` with the violation's location.
 
-        Pending cuems-editor UR-6 (gate G1), a project's first config_save
-        still fails: ``ConfigManager.project_path`` raises
-        ``FileNotFoundError`` for a file not created yet.
+        A first save (``base_revision`` null, no file yet) creates the file,
+        with no backup since there is nothing to keep (gate G1, cuems-editor
+        UR-6). If the file appears in the meantime, the reply is
+        ``config_conflict``.
 
         Args:
             value: ``{"schema", "document", "base_revision"}``, plus
@@ -1068,12 +1088,12 @@ class CuemsWsUser():
                 if base_revision is not None:
                     await self.send_config_conflict(name, project_uuid, project_uname)
                     return
-                # A first save. project_path / conf_path refuse a file not
-                # created yet (cuems-editor UR-6, gate G1): this raises unless
-                # the file appeared meanwhile, which the check below then
-                # answers as a conflict.
+                # A first save (gate G1): the path of the file about to be
+                # created. If it appears meanwhile, the revision check below,
+                # or _save_config_document under the lock, answers a conflict.
                 path = await self.server.event_loop.run_in_executor(
-                    self.server.executor, lambda: _config_path(ConfigManager(load_all=False), name, project_uname))
+                    self.server.executor,
+                    lambda: _config_path(ConfigManager(load_all=False), name, project_uname, must_exist=False))
             async with file_lock(self.server, path):
                 current = await self.server.event_loop.run_in_executor(self.server.executor, bytes_md5, path)
                 if current != base_revision:

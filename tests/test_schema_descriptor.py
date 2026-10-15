@@ -161,18 +161,14 @@ def test_config_save_of_a_project_schema_refuses_an_unknown_project(user, conf, 
     assert frames[0]['type'] == 'error' and frames[0]['action'] == 'config_save'
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="cuems-editor UR-6: ConfigManager.project_path refuses a file not yet created (gate G1)")
 def test_first_config_save_of_project_settings_round_trips(user, conf, project_dir):
-    """Gate G1: a project's first ``config_save`` (no file, ``base_revision`` null).
+    """Gate G1 (closed): a project's first ``config_save`` (no file, ``base_revision`` null).
 
-    Today ``project_path``'s existence check refuses it, and the reply is the
-    error frame. The value is checked in the written file rather than with
-    ``config_load``, which is refused for ``project_settings`` until gate G2
-    closes: each gate flips on its own fix. UR-6's wanted shape is a
-    ``must_exist=False`` parameter, so when it lands the editor's
-    ``_config_path`` has to pass it; then this test XPASSes and the marker
-    comes off.
+    cuems-utils 015 gave ``project_path``/``conf_path`` a keyword-only
+    ``must_exist``; the write site passes ``must_exist=False`` and creates the
+    file with no backup. The value is checked in the written file, so this
+    gate stays independent of G2's ``config_load``. The marker is off and the
+    assertion stays (S6).
     """
     user.server.db.project.get_project_unix_name.return_value = 'test_project'
     document = {'setting': [{'name': 'example', 'value': '1'}]}

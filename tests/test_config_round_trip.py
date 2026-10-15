@@ -322,6 +322,35 @@ def test_null_base_revision_with_an_existing_file_conflicts(env, user):
     assert _sha256(env.settings) == before
 
 
+# ─── config_save: a first save (gate G1) ─────────────────────────────────
+
+FIRST_PROJECT_SETTINGS = {'setting': [{'name': 'example', 'value': '1'}]}
+
+
+def test_a_first_save_creates_the_file_and_backs_nothing_up(env):
+    path = env.library / 'projects' / 'test_project' / 'settings.xml'
+
+    revision = ws_user._save_config_document(
+        SchemaName('project_settings'), FIRST_PROJECT_SETTINGS, str(path), 'test_project', None)
+
+    assert revision == _md5(path)
+    assert '<name>example</name>' in path.read_text(encoding='utf-8')
+    assert not (env.library / 'trash' / 'config').exists()
+
+
+def test_a_file_that_appears_before_a_first_save_is_a_conflict(env):
+    """The race the handler's revision check cannot see: another writer
+    creates the file between that check and this call, under the lock."""
+    path = env.library / 'projects' / 'test_project' / 'settings.xml'
+    path.write_text('written by someone else', encoding='utf-8')
+
+    with pytest.raises(ws_user.ConfigChanged):
+        ws_user._save_config_document(
+            SchemaName('project_settings'), FIRST_PROJECT_SETTINGS, str(path), 'test_project', None)
+
+    assert path.read_text(encoding='utf-8') == 'written by someone else'
+
+
 def test_network_map_save_is_refused_and_names_node_set(env, user):
     loaded = _load(user, 'network_map')[0]['value']
     path = env.conf / 'network_map.xml'
