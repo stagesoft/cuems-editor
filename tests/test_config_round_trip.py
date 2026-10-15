@@ -207,10 +207,18 @@ def test_config_load_of_a_non_domain_is_the_error_frame(env, user, schema):
     assert frames[0]['type'] == 'error' and frames[0]['action'] == 'config_load'
 
 
-def test_config_load_of_project_settings_is_refused_naming_ur7(env, user):
+def test_config_load_of_project_settings_without_a_file_is_the_root_instance(env, user):
+    """Gate G2 closed: ``project_settings`` is no longer refused. With no file
+    it answers like every other domain — ``exists`` false and the descriptor's
+    root instance. The load from an existing file is the gate's own test,
+    ``test_upstream_gates.py::test_config_load_project_settings_round_trips``."""
     frames = _load(user, 'project_settings', PROJECT)
-    assert frames[0]['type'] == 'error' and frames[0]['action'] == 'config_load'
-    assert 'cuems-editor UR-7' in frames[0]['value']
+
+    assert [f['type'] for f in frames] == ['config_load']
+    value = frames[0]['value']
+    assert value['exists'] is False and value['revision'] is None
+    assert value['document'] == ws_user._root_instance(
+        ConfigManager(load_all=False), SchemaName('project_settings'))
 
 
 def test_a_pre_013_settings_is_config_load_failed(env, user):

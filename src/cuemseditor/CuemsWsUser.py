@@ -231,8 +231,6 @@ CONFIG_RESTART = {
 CONFIG_LOAD_REFUSED = {
     'script': 'a script is loaded with project_load, not config_load',
     'hardware_outputs': 'hardware_outputs is reserved and has no model bindings',
-    'project_settings': ('project_settings has no public read projection in cuemsutils '
-                         '(cuems-editor UR-7); it cannot be loaded yet'),
 }
 
 # What a fresh ConfigManager(load_all=False) must load before
@@ -243,6 +241,8 @@ CONFIG_LOAD_STEPS = {
     'network_map': (lambda manager, uname: manager.load_network_map(),),
     'project_mappings': (lambda manager, uname: manager.load_net_and_node_mappings(),
                          lambda manager, uname: manager.load_project_mappings(uname)),
+    # Gate G2 (cuems-editor UR-7): cuems-utils 015 projects project_settings.
+    'project_settings': (lambda manager, uname: manager.load_project_settings(uname),),
 }
 
 # Errors by which the library refuses a document: config_save_refused /
@@ -294,8 +294,6 @@ def _load_config_document(name, project_uname=None):
     except FileNotFoundError:
         return False, None, _root_instance(manager, name)
     revision = bytes_md5(path)
-    if name.value not in CONFIG_LOAD_STEPS:
-        return True, revision, None   # project_settings: no read projection (UR-7)
     for step in CONFIG_LOAD_STEPS[name.value]:
         step(manager, project_uname)
     document = json.loads(json.dumps(manager.to_wire(name.value), default=_json_safe))
@@ -1011,13 +1009,12 @@ class CuemsWsUser():
         With no file, ``exists`` is false, ``revision`` null, and the document
         the descriptor's root ``instance``, a form's starting point that is
         not saveable as it is. ``network_map`` is served read only.
-        ``project_settings`` is refused until cuemsutils projects it
-        (cuems-editor UR-7, gate G2). A document the library cannot load is
-        ``config_load_failed``; anything else the error frame.
+        A document the library cannot load is ``config_load_failed``;
+        anything else the error frame.
 
         Args:
             value: ``{"schema": <name>}``, plus ``"project_uuid"`` for
-                ``project_mappings``.
+                ``project_mappings`` and ``project_settings``.
             action: Action name from the WebSocket frame.
         """
         domain = await self.config_domain(value, action, CONFIG_LOAD_REFUSED, CONFIG_FILES)

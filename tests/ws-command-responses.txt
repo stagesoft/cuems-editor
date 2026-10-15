@@ -121,9 +121,9 @@ the startup copy), "revision" is the md5 of the file's bytes. Scalars come as
 the library projects them. With no file, "exists" is false, "revision" null
 and "document" the descriptor "instance" of the domain's root type: a form's
 starting point, NOT saveable as it is (its required leaves are null, gate G3).
-"network_map" is read only. "project_settings" is refused (the error frame,
-naming cuems-editor UR-7) until cuemsutils gives it a public projection (gate
-G2). A file the library cannot load (e.g. a settings.xml still in the pre-013
+"network_map" is read only. "project_settings" is served like
+"project_mappings", with a "project_uuid" (gate G2, closed). A file the
+library cannot load (e.g. a settings.xml still in the pre-013
 device shape) is config_load_failed, with the library's message.
 
 config_save writes a WHOLE document. "base_revision" is required: the

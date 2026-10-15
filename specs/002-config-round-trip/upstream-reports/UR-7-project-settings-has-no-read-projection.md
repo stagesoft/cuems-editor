@@ -5,6 +5,14 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # UR-7 — `project_settings` has no public read projection
 
+**Status: CLOSED 2026-10-15.** cuems-utils 015 (G2) publishes `ConfigManager.project_settings` and
+`to_wire('project_settings')`. The editor no longer refuses `project_settings` on `config_load`; it
+loads it through `load_project_settings` and serves the projection. ⚠ **The measured shape differs
+from this report's expectation**: each repeated item is keyed by its bound type,
+`{"setting": [{"SettingType": {"name": …, "value": …}}]}`, not bare. That is the library's single
+projection, which its contract C2 forbids duplicating, and it round-trips: the loaded document saves
+back through `config_save` unchanged, as the G2 test now also asserts.
+
 **From** cuems-editor 002 (T045), 2026-10-12. **To** `cuems-utils`. cuemsutils `0.1.0rc16` from
 `../cuems-utils` @ `cdb3bef` on `014-xs-boolean-and-media-elements` (`src/` unchanged since
 `b2ea09a`). This is gate **G2** of the `xml-refactor-merge-candidate` tag; the requirement is

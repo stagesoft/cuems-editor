@@ -45,17 +45,31 @@ PROJECT_SETTINGS = (
 # ─── G2: cuems-editor UR-7 ───────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="cuems-editor UR-7: project_settings has no public read projection (gate G2)")
 def test_config_load_project_settings_round_trips(env, user):
-    (env.project / 'settings.xml').write_text(PROJECT_SETTINGS, encoding='utf-8')
+    """Gate G2 (closed): ``config_load`` serves ``project_settings``, and what it
+    serves saves back unchanged.
+
+    The document is the library's own projection, the one every section uses
+    (cuems-utils 015 contract C2: "a second projection is forbidden"). Each
+    repeated ``setting`` is keyed by its bound type, ``SettingType``, as the
+    descriptor's instance is. The expectation written before the library half
+    existed predicted bare items; this is the measured shape. The marker is
+    off and the assertion stays (S6).
+    """
+    path = env.project / 'settings.xml'
+    path.write_text(PROJECT_SETTINGS, encoding='utf-8')
 
     frames = _load(user, 'project_settings', PROJECT)
 
     assert [f['type'] for f in frames] == ['config_load']
     value = frames[0]['value']
     assert value['exists'] is True
-    assert value['document'] == {'setting': [{'name': 'previous', 'value': '0'}]}
+    assert value['document'] == {'setting': [{'SettingType': {'name': 'previous', 'value': '0'}}]}
+
+    # C2's round trip, through the editor: load -> save the same document back.
+    saved = _save(user, 'project_settings', value['document'], value['revision'], PROJECT)
+    assert [f['type'] for f in saved] == ['config_save']
+    assert _load(user, 'project_settings', PROJECT)[0]['value']['document'] == value['document']
 
 
 # ─── G3: cuems-frontend UR-1 ─────────────────────────────────────────────

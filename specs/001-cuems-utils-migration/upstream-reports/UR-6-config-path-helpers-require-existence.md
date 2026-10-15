@@ -5,6 +5,12 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # UR-6 — `conf_path`/`project_path` refuse the file a first save would create
 
+**Status: CLOSED 2026-10-15.** cuems-utils 015 (G1) gave both helpers a keyword-only
+`must_exist`. The editor's `config_save` passes `must_exist=False` for a first save and creates the
+file with no backup; a file that appears in between is a conflict (`6de91fb`). The G1 test
+`tests/test_schema_descriptor.py::test_first_config_save_of_project_settings_round_trips` passes
+without its marker.
+
 **From** cuems-editor 001 (T059 follow-up), 2026-10-05. cuemsutils `0.1.0rc16` @ `014-xs-boolean-and-media-elements` (`b8b44e7`), which includes `429f8d2` (UR-5's fix).
 
 **Observed.** `ConfigManager.conf_path(file_name)` and `ConfigManager.project_path(project_uname, file_name)`
