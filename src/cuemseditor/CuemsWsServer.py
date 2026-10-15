@@ -21,13 +21,13 @@ from cuemseditor.CuemsProjectManager import CuemsDBManager
 from cuemseditor.CuemsWsUser import CuemsWsUser
 from cuemseditor.CuemsUpload import CuemsUpload
 from cuemseditor.CuemsErrors import *
-from cuemseditor.node_reads import IdentityCollision, NodeLists, collided_identity
+from cuemseditor.node_reads import IdentityCollision, NodeLists
 
 from cuemsutils.tools.CommunicatorServices import Communicator
 from cuemsutils.tools.ConfigManager import ConfigManager
 from cuemsutils.tools.NodeList import partition_by_adoption
 from cuemsutils.tools import coerce_identity
-from cuemsutils.errors import node_identity_collision_message
+from cuemsutils.errors import NodeIdentityCollisionError
 from cuemsutils.helpers import new_uuid
 
 
@@ -535,11 +535,8 @@ class CuemsWsServer():
 
                 try:
                     cf_manager.load_network_map()
-                except Exception as e:
-                    collision = node_identity_collision_message(network_map_file, e)
-                    if collision is not None:
-                        return IdentityCollision(collided_identity(e), network_map_file, collision)
-                    raise
+                except NodeIdentityCollisionError as e:
+                    return IdentityCollision.from_error(e)
                 adopted, unadopted = partition_by_adoption(cf_manager.network_map)
 
                 # Merge with the mapping document's nodes to carry their outputs.

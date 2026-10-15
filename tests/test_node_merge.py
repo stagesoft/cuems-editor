@@ -271,3 +271,37 @@ def test_a_duplicate_identity_is_not_retried_and_is_broadcast(server, tmp_path, 
             assert frames[0]['value'] is None
     finally:
         server.event_loop.close()
+
+
+# ─── S1: the collision is read from the exception, never from its text ───
+
+
+def test_a_collision_is_built_from_the_structured_error():
+    """cuems-utils 015 S1 (cuems-editor UR-4): two distinct collisions in one
+    document stay distinguishable, with their hardware addresses, and the
+    identity is the one the library's violation locates, not the first one a
+    sentence happens to name."""
+    from types import SimpleNamespace
+
+    from cuemsutils.errors import NodeIdentityCollisionError
+    from cuemseditor.node_reads import IdentityCollision
+
+    error = NodeIdentityCollisionError(
+        'any wording at all', file='/etc/cuems/network_map.xml',
+        collisions={CONTROLLER: ('aa', 'bb'), NEW_NODE: ('cc', 'dd')},
+        violation=SimpleNamespace(location=(NEW_NODE, 'uuid')))
+
+    collision = IdentityCollision.from_error(error)
+
+    assert collision.identity == NEW_NODE
+    assert collision.file == '/etc/cuems/network_map.xml'
+    assert collision.collisions == {CONTROLLER: ('aa', 'bb'), NEW_NODE: ('cc', 'dd')}
+    assert collision.message == '/etc/cuems/network_map.xml: any wording at all'
+
+
+def test_node_reads_parses_no_library_prose():
+    """The regular expression over the library's sentence and its empty-string
+    fallback are gone (SC-009, whose only measurable form is this removal)."""
+    source = open(os.path.join(os.path.dirname(server_module.__file__), 'node_reads.py')).read()
+    assert 'import re' not in source and 're.compile' not in source
+    assert 'not unique' not in source

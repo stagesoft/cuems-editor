@@ -5,6 +5,11 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # UR-4 — A duplicate node identity carries no structured identity
 
+**Status: CLOSED 2026-10-15.** cuems-utils 015 (S1) raises `NodeIdentityCollisionError` with
+`collisions` (`{identity: (mac, ...)}`), `file` and a located `violation`. The editor catches it by
+name and builds `IdentityCollision.from_error`; the regular expression over the library's sentence
+and its empty-string fallback are deleted from `node_reads.py`, and a test keeps them out.
+
 **From** cuems-editor 001 (T040), 2026-10-02. cuemsutils `0.1.0rc16` @ `6213b16`.
 
 **Observed.** `ConfigManager.load_network_map()` on a map with one identity on two rows raises

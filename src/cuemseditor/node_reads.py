@@ -8,8 +8,9 @@ assigns. A plain module so ``CuemsWsServer`` and ``CuemsWsUser`` can both name
 the types without importing each other.
 """
 
-import re
 from typing import NamedTuple
+
+from cuemsutils.errors import NodeIdentityCollisionError
 
 
 class NodeLists(NamedTuple):
@@ -23,22 +24,23 @@ class IdentityCollision(NamedTuple):
     """The map names one node identity on two rows.
 
     Deterministic: re-reading the same file fails the same way, so it is not
-    retried. ``message`` is the library's text from
-    ``cuemsutils.errors.node_identity_collision_message``.
+    retried. Built from the library's structured
+    :class:`cuemsutils.errors.NodeIdentityCollisionError` (cuems-editor UR-4,
+    cuems-utils 015 S1), never from its message text.
     """
 
     identity: str
     file: str
     message: str
+    #: ``{identity: (mac, ...)}``, every colliding identity with the hardware
+    #: addresses carrying it, as the library reports it.
+    collisions: dict
 
-
-# Recognition is the library's (node_identity_collision_message). This only
-# lifts the identity out of the sentence the library wrote, because the
-# exception carries no structured field for it (upstream report UR-4).
-_COLLIDED_IDENTITY = re.compile(r'node identities are not unique: (\S+) is carried by')
-
-
-def collided_identity(exc):
-    """The first colliding identity named in *exc*, as a string ('' if none)."""
-    match = _COLLIDED_IDENTITY.search(str(exc))
-    return match.group(1) if match else ''
+    @classmethod
+    def from_error(cls, exc: NodeIdentityCollisionError) -> 'IdentityCollision':
+        """The collision *exc* describes. ``identity`` is the first colliding
+        one, the identity the library's own ``violation`` locates."""
+        location = getattr(exc.violation, 'location', None)
+        identity = location[0] if location else next(iter(exc.collisions))
+        return cls(str(identity), exc.file, f'{exc.file}: {exc}',
+                   {str(k): tuple(v) for k, v in exc.collisions.items()})
