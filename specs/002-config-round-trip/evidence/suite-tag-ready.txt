@@ -1,0 +1,16 @@
+# The suite run that moves tag-readiness.md to READY; supersedes evidence/suite-final.txt.
+# measured 2026-10-15T13:02:09+02:00 at editor 2360936 (src/ and tests/ as committed).
+# cuemsutils.__file__: /disk/Projects/StageLab/cuems-utils/src/cuemsutils/__init__.py
+# cuems-utils SHA: 0b3690e417ee3838b06b17835eb2290662afddaf (G5 = b43bc50 is an ancestor)
+# cuems-nodeconf: feat/xml-refactor @ 82b0a69a41c9fe69075c32fc47aa6ea6bac33c47 (includes 3d3601d, node_set)
+# interpreter: /home/adria/.local/share/hatch/env/virtual/cuemsutils/KPtCKENL/test.py3.11/bin/python (3.11.9)
+#
+# Expected: everything passes, no xfailed, no XPASS. The seven gate tests of suite-final.txt pass without markers.
+
+$ $E/bin/python -m pytest -q -p no:cacheprovider -W ignore::DeprecationWarning -rxX
+.......................................s................................ [ 78%]
+..........................................................               [100%]
+271 passed, 3 skipped in 6.67s
+
+$ $E/bin/python -m pytest -q -p no:cacheprovider -W ignore::DeprecationWarning <the seven gate node ids>
+============================== 7 passed in 0.84s ===============================
