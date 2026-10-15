@@ -120,7 +120,8 @@ ConfigManager.to_wire(<schema>) on a manager loaded for this request (never
 the startup copy), "revision" is the md5 of the file's bytes. Scalars come as
 the library projects them. With no file, "exists" is false, "revision" null
 and "document" the descriptor "instance" of the domain's root type: a form's
-starting point, NOT saveable as it is (its required leaves are null, gate G3).
+starting point, which config_save also accepts as it is: every required leaf is
+seeded with a placeholder its type accepts (gate G3, closed).
 "network_map" is read only. "project_settings" is served like
 "project_mappings", with a "project_uuid" (gate G2, closed). A file the
 library cannot load (e.g. a settings.xml still in the pre-013

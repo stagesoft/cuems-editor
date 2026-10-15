@@ -272,8 +272,13 @@ def _config_path(manager, name, project_uname, *, must_exist=True):
 def _root_instance(manager, name):
     """The descriptor ``instance`` of the domain's root type (FR-013, research R4).
 
-    A starting point for a form, not a saveable document: its required
-    leaves are null (cuems-frontend UR-1, gate G3).
+    A form's starting point that is also a saveable document: since cuems-utils
+    015 (gate G3) every required leaf is seeded with a value its type accepts,
+    and the instance is in ``to_wire()`` shape, so ``config_save`` accepts it
+    unmodified (``test_a_config_root_instance_saves_through_config_save``). The
+    seeds are placeholders, not an operator's values. Each call gets its own
+    copy from the library, so the JSON round trip below is only for
+    ``_json_safe``, not for isolation.
     """
     types = manager.get_schema_descriptor(name)
     root = next(t for t in types if t.key.is_path and '/' not in t.key.name)
@@ -1007,8 +1012,9 @@ class CuemsWsUser():
         manager loaded for this request, and ``revision`` the md5 of the
         file's bytes, to send back as ``config_save``'s ``base_revision``.
         With no file, ``exists`` is false, ``revision`` null, and the document
-        the descriptor's root ``instance``, a form's starting point that is
-        not saveable as it is. ``network_map`` is served read only.
+        the descriptor's root ``instance``: a form's starting point, which
+        ``config_save`` also accepts as it is (gate G3). ``network_map`` is
+        served read only.
         A document the library cannot load is ``config_load_failed``;
         anything else the error frame.
 

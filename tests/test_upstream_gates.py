@@ -10,6 +10,9 @@ fails the suite, and its marker comes off. Every reason names the gate as
 
 Gate G1 lives in ``tests/test_schema_descriptor.py``
 (``test_first_config_save_of_project_settings_round_trips``).
+
+**All gates are closed as of 2026-10-15**: every marker is off and every
+assertion stays (S6). The tests remain as the regression guard for each gate.
 """
 
 import asyncio
@@ -74,20 +77,22 @@ def test_config_load_project_settings_round_trips(env, user):
 
 # ─── G3: cuems-frontend UR-1 ─────────────────────────────────────────────
 
-G3 = "cuems-frontend UR-1: the descriptor instance is not in to_wire() shape and has null required defaults (gate G3)"
-
-
 def _script_instance(name):
     types = ConfigManager(load_all=False).get_schema_descriptor(SchemaName('script'))
     return json.loads(json.dumps(next(t for t in types if t.key.name == name).instance, default=str))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=G3)
 def test_a_cue_built_from_the_descriptor_instance_saves_through_project_save(lib, monkeypatch):
-    """Gate G3 (a): a client builds a new audio cue from the descriptor's instances.
+    """Gate G3 (a, closed): a client builds a new audio cue from the descriptor's instances.
 
     Only what an operator chooses is filled in: the cue's id, its media file
     and its output's name. Everything else is the instance as served.
+
+    The output instance is already wire-shaped (cuems-utils 015 FR-021): one
+    ``{"CueOutput": {…, "class"}}`` wrapper, which goes into ``outputs`` as one
+    item of the list, exactly as the wire carries it. This test used to wrap
+    it a second time, built for the old unwrapped instance; that, not the
+    library, kept it failing after 015 landed. The marker is off (S6).
     """
     monkeypatch.setenv('CUEMS_CONF_PATH', str(Path(__file__).resolve().parent / 'fixtures' / 'conf'))
     _write_variant(lib.script, 'clean')
@@ -96,8 +101,8 @@ def test_a_cue_built_from_the_descriptor_instance_saves_through_project_save(lib
     cue['Media']['file_name'] = 'file.ext'
     cue['Media']['id'] = str(new_uuid())
     output = _script_instance('AudioCueOutputsType')
-    output['output_name'] = 'system:playback_1'
-    cue['outputs'] = {'CueOutput': [output]}
+    output['CueOutput']['output_name'] = 'system:playback_1'
+    cue['outputs'] = [output]
     payload = json.loads(json.dumps(lib.project.load(SCRIPT_ID)))
     payload['CuemsScript']['CueList']['contents'] = [{'Cue': cue}]
 
