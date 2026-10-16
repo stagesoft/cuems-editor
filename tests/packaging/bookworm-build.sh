@@ -13,7 +13,7 @@
 #   the calling user, thrown away afterwards (target /dev/null). Same approach
 #   as ../cuems-nodeconf/tests/packaging/release-gate-demo.sh.
 #
-# cuemsutils >= 0.1.0rc16 is not on PyPI (it stops at 0.1.0rc14), so a wheel is
+# cuemsutils >= 0.1.1 is not on PyPI (its rc line stops below it), so a wheel is
 # built from the sibling checkout and offered to dh-virtualenv's pip through
 # PIP_FIND_LINKS (dh-virtualenv passes os.environ to pip unchanged; see the
 # nodeconf script for the measurement). debian/rules is not edited.

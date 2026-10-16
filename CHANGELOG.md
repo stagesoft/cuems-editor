@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 — Unreleased
+
+Coordinated `xml-refactor` landing (cuems-utils feature 016): every CUEMS repository moves to its own next stable minor. The editor is on the public `cuemsutils` surface (feature 001), round-trips configuration documents through it (002), and closes the library's consumer gates (feature 015). It now bounds `cuemsutils>=0.1.1,<0.1.2` and `cuems-common (>= 1.3.1~)`. **Not yet reconciled** with the `debian/bookworm` release line (`0.1.0rc1-5` … `-7`); do not publish until it is.
+
 ## 0.1.0rc1 — 2026-05-26
 
 CTimecode hardening migration (closes ClickUp 869cyndtv PR #9). Pins `cuemsutils` to the PR #6 release (`0.1.0rc6`+) to consume the `.milliseconds_rounded` / `.milliseconds_exact` precision-split.
