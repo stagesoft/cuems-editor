@@ -21,7 +21,8 @@ the UI shows (D22). The next save writes them.
    within :data:`~cuemseditor.CuemsDBProject.REFRESH_DEADLINE_S`;
 3. rebuild the ``.idx`` of a changed video (an asyncio subprocess: no executor
    worker is held), so the nodes receive a valid one in the same load; a busy
-   indexer is never waited for;
+   indexer is never waited for; then write the missing loop period sidecars
+   (``indexes/<name>.period``, 869ejxng3 D14) within the same deadline;
 4. build the report (``media_report``), marked incomplete when part of the
    check did not run; one WARNING when the project holds stale values.
 
@@ -116,7 +117,8 @@ async def check_media_on_open(db_project, project_uuid, *, executor):
 def _new_report():
     return {'engine_asked': False, 'skipped': None, 'media_report': None,
             'changed': 0, 'legacy': 0, 'failed': 0, 'not_reached': 0,
-            'indexed': 0, 'index_failed': 0, 'index_busy': 0, 'index_not_started': 0}
+            'indexed': 0, 'index_failed': 0, 'index_busy': 0, 'index_not_started': 0,
+            'periods': 0, 'period_failed': 0, 'period_not_reached': 0}
 
 
 def _incomplete_reason(verified):
@@ -155,6 +157,11 @@ async def _refresh(db, uuid, executor, engine_running, clock):
                 to_index = [c.path for c in plan.to_index
                             if c.state == 'unchanged' or c.file_name in done]
                 report.update(await _index_videos(to_index, deadline, clock))
+                to_period = [c.path for c in plan.to_period
+                             if c.state == 'unchanged' or c.file_name in done]
+                if to_period:
+                    report.update(await loop.run_in_executor(
+                        executor, _project.write_loop_periods, to_period, deadline, clock))
         media_report = await loop.run_in_executor(executor, db.media_report, uuid, 'ready', reason)
         report['media_report'] = media_report
         if media_report.get('files'):
@@ -169,6 +176,7 @@ async def _refresh(db, uuid, executor, engine_running, clock):
                 f'{report["changed"]} changed, {report["legacy"]} verified for the first time, '
                 f'{report["failed"]} failed, {report["not_reached"]} left for the next load; '
                 f'{report["indexed"]} index(es) rebuilt, {report["index_failed"]} failed; '
+                f'{report["periods"]} loop period(s) written, {report["period_failed"]} failed; '
                 f'{media_report["total_files"]} file(s) stale in the project '
                 f'({int((time.monotonic() - started) * 1000)} ms)')
         else:

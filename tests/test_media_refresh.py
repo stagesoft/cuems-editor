@@ -949,12 +949,15 @@ class TestVideoIndexer:
         assert report['indexed'] == 1
         assert video_index_state(clip) == INDEX_VALID
 
-    def test_a_video_the_sync_does_not_carry_is_never_work(self, library):
+    def test_a_video_the_sync_does_not_carry_is_never_index_work(self, library):
         _in_line(library)
         _add_row(library, 'clip.webm', 'MOVIE', duration=tc(90.0), file_size=10)
         _set_xml_media(library, 'file_video.ext', rename='clip.webm')
         _write(library, 'clip.webm', 10)               # no .idx at all
-        assert not _mgr(library).plan_media_refresh(_uuid(library)).has_work
+        plan = _mgr(library).plan_media_refresh(_uuid(library))
+        assert plan.to_index == []
+        # its loop period is carried for every media file (869ejxng3 D14)
+        assert [c.file_name for c in plan.to_period] == ['clip.webm']
 
     def test_an_index_failure_leaves_the_rows_and_is_not_retried(self, library, tmp_path, monkeypatch):
         _fake_indexer(tmp_path, monkeypatch, 'fail')
