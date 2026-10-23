@@ -30,7 +30,6 @@ deployed frontend may still send them. The update tests save a version-2
 """
 
 import os
-import shutil
 from unittest import mock
 
 import pytest

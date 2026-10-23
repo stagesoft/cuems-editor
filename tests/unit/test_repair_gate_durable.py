@@ -13,17 +13,25 @@ The library, the fixture variants and the helpers come from
 
 import asyncio
 import concurrent.futures
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from test_document_load_report import (  # noqa: F401  (lib is a fixture)
+    SCRIPT_ID,
+    _ack,
+    _drain,
+    _open,
+    _run,
+    _save,
+    _session,
+    _sha256,
+    _trash_copies,
+    _write_variant,
+    lib,
+)
 
 import cuemseditor.CuemsWsUser as ws_user
 from cuemseditor.CuemsWsUser import CuemsWsUser
-
-from test_document_load_report import (  # noqa: F401  (lib is a fixture)
-    SCRIPT_ID, _ack, _drain, _open, _run, _save, _session, _sha256, _trash_copies,
-    _write_variant, lib)
 
 
 def _make_server(lib):

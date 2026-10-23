@@ -31,7 +31,6 @@ media database, for ``class`` ``audio``, ``video`` and one the editor has no
 name for.
 """
 
-from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import copy
 import hashlib
 import json
@@ -39,12 +38,13 @@ import os
 import shutil
 
 import pytest
+from cuemsutils.cues import CuemsScript
+from cuemsutils.helpers import new_datetime, new_uuid
 
 from cuemseditor.cli import get_settings
 from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia, database
 from cuemseditor.CuemsDBProject import CuemsDBProject
-from cuemsutils.cues import CuemsScript
-from cuemsutils.helpers import new_datetime, new_uuid
+from support.paths import DATA_DIR, SPECS_DIR
 
 FIXTURE_013 = str(DATA_DIR / 'script_minimal_013.xml')
 CAPTURE = os.path.join(

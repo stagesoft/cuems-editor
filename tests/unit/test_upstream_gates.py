@@ -15,7 +15,6 @@ Gate G1 lives in ``tests/test_schema_descriptor.py``
 assertion stays (S6). The tests remain as the regression guard for each gate.
 """
 
-from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import asyncio
 import hashlib
 import json
@@ -26,13 +25,13 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from cuemsutils.helpers import new_uuid
 from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
-
 from test_config_round_trip import PROJECT, _load, _root_instance, _save, env, user  # noqa: F401  (fixtures)
 from test_document_load_report import SCRIPT_ID, _drain, _run, _session, _write_variant, lib  # noqa: F401
 from test_repair_gate_durable import _close, _make_server
+
+from support.paths import DATA_DIR, SIBLINGS_DIR
 
 NODECONF = SIBLINGS_DIR / 'cuems-nodeconf'
 NODE = '4b9b5a1e-0000-4000-8000-0123456789ab'
@@ -183,7 +182,8 @@ def test_nodeconf_engine_callback_accepts_node_set(monkeypatch, tmp_path):
         monkeypatch.delitem(sys.modules, module)
     from cuemsnodeconf.CuemsNodeConf import CuemsNodeConf
     from cuemsutils.config.network_map import CuemsNetworkMapType
-    from cuemsutils.tools.NodeList import NodeIndex, NodeRole, node as Node
+    from cuemsutils.tools.NodeList import NodeIndex, NodeRole
+    from cuemsutils.tools.NodeList import node as Node
 
     nodeconf = CuemsNodeConf()
     nodeconf._ready = True

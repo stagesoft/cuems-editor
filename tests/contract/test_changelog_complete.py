@@ -10,12 +10,12 @@ each, ``debian/changelog`` (one header per build) and ``CHANGELOG.md`` (named in
 release tags exist locally (CI fetches them), that each entry is byte-identical to
 the one at its tag.
 """
-from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
-import pathlib
 import re
 import subprocess
 
 import pytest
+
+from support.paths import DATA_DIR, ROOT
 
 MANIFEST = DATA_DIR / 'released-builds.txt'
 HEADER = re.compile(r'^cuems-editor \((?P<version>[^)]+)\) ', re.MULTILINE)

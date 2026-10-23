@@ -3,27 +3,23 @@
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import asyncio
 import json
-import os
 import math
+import os
 import shutil
-import subprocess
 import struct
-from cuemsutils.helpers import new_uuid
-
+import subprocess
 from enum import Enum, auto
-from peewee import *
 
-
-from cuemsutils.tools.StringSanitizer import StringSanitizer
+from cuemsutils.helpers import new_datetime, new_uuid
+from cuemsutils.log import Logger, logged
 from cuemsutils.tools.CopyMoveVersioned import CopyMoveVersioned
 from cuemsutils.tools.CTimecode import CTimecode
-from cuemsutils.log import logged, Logger
-from cuemsutils.helpers import new_datetime
+from cuemsutils.tools.StringSanitizer import StringSanitizer
+from peewee import *
 
-from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia
-from cuemseditor.media_values import _md5
+from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia
 from cuemseditor.CuemsErrors import *
-
+from cuemseditor.media_values import _md5
 
 FFPROBE_TIMEOUT = 30  # seconds; local-disk probes finish in <1s, NFS/USB headroom
 # The engine's own timeout for the same query: a save waits on this probe.
@@ -903,7 +899,7 @@ class CuemsDBMedia(StringSanitizer):
                 result = subprocess.run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'warning', '-i', file_path, '-vf', f'scale={str(self.thumbnail_size[0])}:-1', '-frames:v', '1', '-update', 'true', thumbnail_file_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
             else:
                 time_option = "-ss"
-                timecode = f'200ms'
+                timecode = '200ms'
                 result = subprocess.run(['ffmpeg', time_option, timecode, '-y', '-hide_banner', '-loglevel', 'warning', '-i', file_path, '-vf', f'scale={str(self.thumbnail_size[0])}:-1', '-vframes', '1', '-update', 'true', thumbnail_file_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
         except subprocess.TimeoutExpired:
             Logger.warning(f'ffmpeg thumbnail timed out for {filename}')

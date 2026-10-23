@@ -14,7 +14,6 @@ holds ``projects/test_project/``. ``get_project_unix_name`` is mocked to
 ``test_project``. Nothing under ``/opt/cuems_library`` is touched.
 """
 
-from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import asyncio
 import concurrent.futures
 import copy
@@ -27,11 +26,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
 
 import cuemseditor.CuemsWsUser as ws_user
 from cuemseditor.CuemsErrors import NonExistentItemError
 from cuemseditor.CuemsWsUser import CuemsWsUser
-from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
+from support.paths import DATA_DIR, PACKAGE_DIR, SIBLINGS_DIR
 
 CONF = DATA_DIR / 'conf'
 PACKAGE = PACKAGE_DIR

@@ -9,7 +9,6 @@ view (~30 s). Nothing in the editor copies one onto the other.
 nodeconf's readiness-window ``Node <uuid> not found``, and does not retry.
 """
 
-from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import ast
 import asyncio
 import concurrent.futures
@@ -21,6 +20,7 @@ import pytest
 
 from cuemseditor.CuemsErrors import EngineError
 from cuemseditor.CuemsWsUser import CuemsWsUser
+from support.paths import PACKAGE_DIR
 
 SRC = str(PACKAGE_DIR)
 NODE = '4b9b5a1e-0000-4000-8000-0123456789ab'

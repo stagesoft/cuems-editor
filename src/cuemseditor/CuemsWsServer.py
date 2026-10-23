@@ -6,29 +6,24 @@ import concurrent.futures
 import functools
 import json
 import os
-import time
-import websockets as ws
-from websockets.asyncio.server import serve
-from multiprocessing import Process
-import signal
-from random import randint  #TODO: clean unused
-from hashlib import md5
 import re
+import signal
+import time
 
-from cuemsutils.log import logged, Logger
-
-from cuemseditor.CuemsProjectManager import CuemsDBManager
-from cuemseditor.CuemsWsUser import CuemsWsUser
-from cuemseditor.CuemsUpload import CuemsUpload
-from cuemseditor.CuemsErrors import *
-from cuemseditor.node_reads import IdentityCollision, NodeLists
-
+from cuemsutils.errors import NodeIdentityCollisionError
+from cuemsutils.helpers import new_uuid
+from cuemsutils.log import Logger
+from cuemsutils.tools import coerce_identity
 from cuemsutils.tools.CommunicatorServices import Communicator
 from cuemsutils.tools.ConfigManager import ConfigManager
 from cuemsutils.tools.NodeList import partition_by_adoption
-from cuemsutils.tools import coerce_identity
-from cuemsutils.errors import NodeIdentityCollisionError
-from cuemsutils.helpers import new_uuid
+from websockets.asyncio.server import serve
+
+from cuemseditor.CuemsErrors import *
+from cuemseditor.CuemsProjectManager import CuemsDBManager
+from cuemseditor.CuemsUpload import CuemsUpload
+from cuemseditor.CuemsWsUser import CuemsWsUser
+from cuemseditor.node_reads import IdentityCollision, NodeLists
 
 
 class CuemsWsServer():

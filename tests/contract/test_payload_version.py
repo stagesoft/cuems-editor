@@ -8,10 +8,8 @@ wire before 001. The integer is a contract: it may only move together with a
 bump row in ``tests/data/ws-command-responses.txt``. It is not ``doc_version``.
 """
 
-from support.paths import DATA_DIR
 import asyncio
 import json
-import os
 import re
 from unittest.mock import MagicMock
 
@@ -20,6 +18,7 @@ import pytest
 import cuemseditor.CuemsWsServer as server_module
 from cuemseditor.cli import get_mappings, get_settings
 from cuemseditor.CuemsWsServer import CuemsWsServer
+from support.paths import DATA_DIR
 
 CONF = str(DATA_DIR / 'conf')
 RESPONSES = str(DATA_DIR / 'ws-command-responses.txt')

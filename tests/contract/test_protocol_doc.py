@@ -12,9 +12,9 @@ Sections are split at headings: an unindented line with a blank line (or the
 start of the file) before it and a blank line after it.
 """
 
-from support.paths import DATA_DIR
-import os
 import re
+
+from support.paths import DATA_DIR
 
 RESPONSES = str(DATA_DIR / 'ws-command-responses.txt')
 RETIRED = 'initial_template (retired at payload version 1)'

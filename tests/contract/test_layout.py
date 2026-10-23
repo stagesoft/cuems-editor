@@ -18,8 +18,6 @@ A test cannot be mislabelled by forgetting a decorator: the mark comes from the 
 """
 import pathlib
 
-import pytest
-
 TESTS = pathlib.Path(__file__).resolve().parent.parent
 MARKED = ('unit', 'integration', 'contract')
 ALLOWED_AT_ROOT = {'conftest.py', 'README.md', '__pycache__', '.pytest_cache'}

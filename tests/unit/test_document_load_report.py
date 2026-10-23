@@ -17,7 +17,6 @@ then edited as text:
 * ``too_new`` — ``doc_version="99"``.
 """
 
-from support.paths import DATA_DIR
 import asyncio
 import concurrent.futures
 import hashlib
@@ -27,13 +26,14 @@ import shutil
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from cuemsutils.cues import CuemsScript
+from cuemsutils.helpers import new_datetime, new_uuid
 
 from cuemseditor.cli import get_settings
 from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia, database
 from cuemseditor.CuemsDBProject import CuemsDBProject
 from cuemseditor.CuemsWsUser import CuemsWsUser
-from cuemsutils.cues import CuemsScript
-from cuemsutils.helpers import new_datetime, new_uuid
+from support.paths import DATA_DIR
 
 FIXTURE_013 = str(DATA_DIR / 'script_minimal_013.xml')
 SCRIPT_ID = 'ddba3000-7894-4a60-a6c1-e73b9bbed8c0'

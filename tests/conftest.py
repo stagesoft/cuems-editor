@@ -70,8 +70,9 @@ def library(tmp_path):
 
     Leaves the DB connection CLOSED so the repair script's main() can open it.
     """
-    from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia, database
-    from cuemsutils.helpers import new_uuid, new_datetime
+    from cuemsutils.helpers import new_datetime, new_uuid
+
+    from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia, database
 
     root = str(tmp_path)
     for sub in ('media', 'trash/media', 'projects/proj1', 'trash/projects'):
@@ -135,6 +136,7 @@ def canned_probe(monkeypatch):
     """Patch repair_durations.probe_duration with the CANNED_SECONDS map, and
     repair_durations.probe_dimensions with CANNED_DIMS."""
     from cuemsutils.tools.CTimecode import CTimecode
+
     import cuemseditor.repair_durations as rd
 
     def _fake(path):

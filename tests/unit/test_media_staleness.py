@@ -18,18 +18,14 @@ pre-rc15 project), then edited per test. The session stub:
 
 import json
 import os
-import shutil
 
 import pytest
+from cuemsutils.tools.CTimecode import CTimecode
+from test_document_load_report import _drain, _run, _session, _sha256
+from test_media_values import AUDIO_CUE, OTHER_CUE, ROWS, SCRIPT_ID, VIDEO_CUE, cues, load, make_media_lib, stored
+from test_repair_gate_durable import _close, _make_server
 
 from cuemseditor.CuemsDBModel import Media, database
-from cuemsutils.cues import CuemsScript
-from cuemsutils.tools.CTimecode import CTimecode
-
-from test_document_load_report import _drain, _run, _session, _sha256
-from test_media_values import (
-    AUDIO_CUE, OTHER_CUE, ROWS, SCRIPT_ID, VIDEO_CUE, cues, load, make_media_lib, stored, wire)
-from test_repair_gate_durable import _close, _make_server
 
 ROW_DURATION = '00:01:00.000'
 
@@ -171,8 +167,7 @@ def test_an_orphan_keeps_its_values_on_save(mlib):
     orphan is refused before the fill matters (an existing constraint, not
     this feature's).
     """
-    from cuemseditor.CuemsDBProject import (
-        db_dimensions_resolver, db_duration_resolver, fix_media_durations_in_contents)
+    from cuemseditor.CuemsDBProject import db_dimensions_resolver, db_duration_resolver, fix_media_durations_in_contents
 
     script = load(mlib)
     media = cues(script)[VIDEO_CUE]['Media']

@@ -1,19 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
-from peewee import *
 import os
-from random import randint
 
-
-import traceback
-
-
-from cuemsutils.log import logged, Logger
+from cuemsutils.log import Logger
+from peewee import *
 
 from cuemseditor.CuemsDBMedia import CuemsDBMedia
+from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia, database, ensure_media_columns
 from cuemseditor.CuemsDBProject import CuemsDBProject
-from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia, database, ensure_media_columns
 from cuemseditor.CuemsErrors import *
 
 

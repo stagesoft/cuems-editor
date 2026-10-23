@@ -12,13 +12,13 @@ This file and retired-test records are the only places under ``tests/`` that
 spell the banned names.
 """
 
-from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import ast
 import importlib
 import re
-from pathlib import Path
 
 import pytest
+
+from support.paths import PACKAGE_DIR
 
 PACKAGE = PACKAGE_DIR
 SERVER = PACKAGE / "CuemsWsServer.py"

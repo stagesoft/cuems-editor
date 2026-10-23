@@ -27,7 +27,6 @@ import pytest
 
 from cuemseditor.CuemsWsUser import CuemsWsUser
 
-
 NODE = '4b9b5a1e-0000-4000-8000-0123456789ab'
 
 

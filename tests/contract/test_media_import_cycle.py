@@ -9,12 +9,12 @@ modules failed at collection). The shared normalisers live in
 ``cuemseditor.media_values``, which imports neither module, and each module
 imports on its own in a fresh interpreter.
 """
-from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
-import os
 import subprocess
 import sys
 
 import pytest
+
+from support.paths import ROOT
 
 SRC = str(ROOT / 'src')
 

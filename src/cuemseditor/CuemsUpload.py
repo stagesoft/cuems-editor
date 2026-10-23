@@ -1,15 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
-import os
 import json
-import aiofiles
+import os
 from hashlib import md5
 from random import randint
+
+import aiofiles
 import websockets as ws
-
-
-from cuemsutils.log import logged, Logger
+from cuemsutils.log import Logger
 from cuemsutils.tools.StringSanitizer import StringSanitizer
 
 from cuemseditor.CuemsErrors import *
@@ -272,7 +271,7 @@ class CuemsUpload(StringSanitizer):
         Returns:
             Absolute path string, or ``None`` if no upload is in progress.
         """
-        if not self.tmp_filename is None:
+        if self.tmp_filename is not None:
             return os.path.join(self.tmp_path, self.tmp_filename)
 
     def __del__(self):

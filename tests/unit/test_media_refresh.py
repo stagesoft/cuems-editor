@@ -27,29 +27,31 @@ import json
 import os
 import shutil
 import stat
-import struct
-import sys
 import time
-import xml.etree.ElementTree as ET  # test helper only: edits the fixture script on disk
 from unittest import mock
 
 import pytest
+from cuemsutils.helpers import new_datetime, new_uuid
+from cuemsutils.tools.CTimecode import CTimecode
 
 import cuemseditor.CuemsDBProject as p
 import cuemseditor.CuemsMediaRefresh as r
 from cuemseditor import CuemsDBMedia as m
-from cuemseditor.cli import get_settings
 from cuemseditor.CuemsDBMedia import (
-    INDEX_MISSING, INDEX_STALE, INDEX_VALID, PROBE_FAILED, PROBE_NO_STREAM,
-    PROBE_OK, MediaProbe, video_index_path, video_index_state)
-from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia, database
-from cuemsutils.helpers import new_datetime, new_uuid
-from cuemsutils.tools.CTimecode import CTimecode
-from cuemsutils.cues import CueList, CuemsScript
+    INDEX_MISSING,
+    INDEX_STALE,
+    INDEX_VALID,
+    PROBE_FAILED,
+    PROBE_NO_STREAM,
+    PROBE_OK,
+    video_index_path,
+    video_index_state,
+)
+from cuemseditor.CuemsDBModel import Project, ProjectMedia
 from support.refresh_helpers import (  # noqa: F401  (fixtures are used by name)
-    FakeProbe,
     MD5,
     STORED,
+    FakeProbe,
     _add_row,
     _backups,
     _blocks,
@@ -74,9 +76,8 @@ from support.refresh_helpers import (  # noqa: F401  (fixtures are used by name)
     _write_idx,
     lib,
     probe,
-    tc)
-
-
+    tc,
+)
 
 # ---------------------------------------------------------------------------
 # probe_media and the .idx header

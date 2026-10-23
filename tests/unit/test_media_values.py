@@ -16,20 +16,20 @@ Values a setter refuses are put in the payload dict ``update`` receives, which
 is where a client's arrive: ``CuemsScript.from_json`` stores them raw.
 """
 
-from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import json
 import os
 import re
 from pathlib import Path
 
 import pytest
+from cuemsutils.cues import CueList, CuemsScript
+from cuemsutils.cues.MediaCue import MediaCue
+from cuemsutils.helpers import new_datetime, new_uuid
 
 from cuemseditor.cli import get_settings
 from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia, database
 from cuemseditor.CuemsDBProject import CuemsDBProject
-from cuemsutils.cues import CuemsScript, CueList
-from cuemsutils.cues.MediaCue import MediaCue
-from cuemsutils.helpers import new_datetime, new_uuid
+from support.paths import DATA_DIR, PACKAGE_DIR
 
 FIXTURE_013 = DATA_DIR / 'script_minimal_013.xml'
 PACKAGE = PACKAGE_DIR

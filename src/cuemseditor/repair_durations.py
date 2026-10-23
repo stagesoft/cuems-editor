@@ -44,19 +44,24 @@ import sys
 import tempfile
 from datetime import datetime
 
+from cuemsutils.cues import CuemsScript
+from cuemsutils.tools.CTimecode import CTimecode
+
 from cuemseditor.cli import get_settings
-from cuemseditor.CuemsDBModel import (
-    Project, Media, database, ensure_media_columns, missing_media_columns,
-)
 from cuemseditor.CuemsDBMedia import media_file_size, probe_dimensions, probe_duration
+from cuemseditor.CuemsDBModel import (
+    Media,
+    Project,
+    database,
+    ensure_media_columns,
+    missing_media_columns,
+)
 from cuemseditor.CuemsDBProject import (
-    fix_media_durations_in_contents,
     db_duration_resolver,
+    fix_media_durations_in_contents,
     media_staleness,
 )
 from cuemseditor.CuemsErrors import NotTimeCodeError
-from cuemsutils.cues import CuemsScript
-from cuemsutils.tools.CTimecode import CTimecode
 
 HELP_EPILOG = (
     'Script files are never written by this tool. They change only when an '

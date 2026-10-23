@@ -3,11 +3,24 @@ import json
 import os
 from unittest import mock
 
-import cuemseditor.CuemsDBProject as p
-import cuemseditor.CuemsMediaRefresh as r
 from test_media_refresh import (  # noqa: F401  (fixtures and helpers of the released test file)
-    FakeProbe, MD5, _fresh_marks, _in_line, _mgr, _refresh, _report, _set_row, _set_xml_media, _uuid, _write, probe, tc,
-    asyncio)
+    MD5,
+    FakeProbe,
+    _fresh_marks,
+    _in_line,
+    _mgr,
+    _refresh,
+    _report,
+    _set_row,
+    _set_xml_media,
+    _uuid,
+    _write,
+    asyncio,
+    probe,
+    tc,
+)
+
+import cuemseditor.CuemsDBProject as p
 
 OUT = os.environ['GOLDEN_OUT']
 

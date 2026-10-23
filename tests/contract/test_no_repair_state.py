@@ -6,8 +6,7 @@ The gate lives in ``server.repair_gates``, keyed by project. A caller left on
 ``self.repair_state`` would read state nobody writes any more.
 """
 
-from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
-from pathlib import Path
+from support.paths import PACKAGE_DIR
 
 PACKAGE = PACKAGE_DIR
 

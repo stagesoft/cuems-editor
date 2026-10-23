@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
-from peewee import *
-
 from cuemsutils.helpers import new_datetime
 from cuemsutils.log import Logger
+from peewee import *
 
 database = SqliteDatabase(None, pragmas={
     'foreign_keys': 1,

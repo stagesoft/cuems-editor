@@ -20,20 +20,19 @@ with an object, not ``"OK"`` (M3), and ``network_map`` is refused (FR-019).
 The config round trip itself is ``tests/test_config_round_trip.py``.
 """
 
-from support.paths import DATA_DIR
 import asyncio
 import concurrent.futures
 import hashlib
 import json
-import os
 import shutil
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
 
 from cuemseditor.CuemsErrors import NonExistentItemError
 from cuemseditor.CuemsWsUser import CuemsWsUser
-from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
+from support.paths import DATA_DIR
 
 CONF = str(DATA_DIR / 'conf')
 FIELD_KEYS = ['name', 'xsd_type', 'required', 'repeated', 'order', 'kind',

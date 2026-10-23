@@ -7,30 +7,27 @@ The fixtures ``lib`` (the 013 library) and ``_fresh_marks`` (the in-memory marks
 imported by name into each test module so pytest finds them there.
 """
 import asyncio
-import json
 import os
-import shutil
-import stat
 import struct
 import sys
 import time
 import xml.etree.ElementTree as ET  # test helper only: edits the fixture script on disk
-from unittest import mock
 
 import pytest
+from cuemsutils.cues import CueList, CuemsScript
+from cuemsutils.helpers import new_datetime, new_uuid
+from cuemsutils.tools.CTimecode import CTimecode
 
 import cuemseditor.CuemsDBProject as p
 import cuemseditor.CuemsMediaRefresh as r
-from cuemseditor import CuemsDBMedia as m
 from cuemseditor.cli import get_settings
 from cuemseditor.CuemsDBMedia import (
-    INDEX_MISSING, INDEX_STALE, INDEX_VALID, PROBE_FAILED, PROBE_NO_STREAM,
-    PROBE_OK, MediaProbe, video_index_path, video_index_state)
-from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia, database
-from cuemsutils.helpers import new_datetime, new_uuid
-from cuemsutils.tools.CTimecode import CTimecode
-from cuemsutils.cues import CueList, CuemsScript
-
+    PROBE_NO_STREAM,
+    PROBE_OK,
+    MediaProbe,
+    video_index_path,
+)
+from cuemseditor.CuemsDBModel import Media, Project, database
 
 STORED = ('pixel_width', 'pixel_height', 'file_size', 'file_md5')
 MD5 = 'd41d8cd98f00b204e9800998ecf8427e'

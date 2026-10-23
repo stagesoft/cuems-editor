@@ -12,7 +12,6 @@ Nodes come from ``tests/data/conf`` through ``ConfigManager`` and
 ``partition_by_adoption``, the same public path the server uses.
 """
 
-from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import asyncio
 import copy
 import json
@@ -21,11 +20,12 @@ import shutil
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cuemsutils.tools.ConfigManager import ConfigManager
 
 import cuemseditor.CuemsWsServer as server_module
 from cuemseditor.cli import get_mappings, get_settings
 from cuemseditor.CuemsWsServer import CuemsWsServer
-from cuemsutils.tools.ConfigManager import ConfigManager
+from support.paths import DATA_DIR, SPECS_DIR
 
 CONF = str(DATA_DIR / 'conf')
 CAPTURE = os.path.join(
@@ -284,6 +284,7 @@ def test_a_collision_is_built_from_the_structured_error():
     from types import SimpleNamespace
 
     from cuemsutils.errors import NodeIdentityCollisionError
+
     from cuemseditor.node_reads import IdentityCollision
 
     error = NodeIdentityCollisionError(

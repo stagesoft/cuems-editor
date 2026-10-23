@@ -10,10 +10,9 @@ the media comparison (``media_repairs``, ``media_rows_digest``).
 import hashlib
 
 import pytest
+from test_document_load_report import SCRIPT_ID, _sha256, _write_variant, lib  # noqa: F401  (fixture)
 
 from cuemseditor.CuemsErrors import DocumentLoadFailed
-
-from test_document_load_report import SCRIPT_ID, _sha256, _write_variant, lib  # noqa: F401  (fixture)
 
 
 def _md5(path):

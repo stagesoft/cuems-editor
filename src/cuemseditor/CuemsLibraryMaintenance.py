@@ -1,5 +1,6 @@
 import os
-from cuemsutils.log import logged, Logger
+
+from cuemsutils.log import logged
 
 
 class CuemsLibraryMaintenance():

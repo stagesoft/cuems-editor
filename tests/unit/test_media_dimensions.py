@@ -28,7 +28,6 @@ hashes a file; the repair tool fills and checks the MD5.
 
 Design: cuems-RELATIONS Plans/2026-10-01-engine-late-go-media-probe.md §3.2.
 """
-from support.paths import DATA_DIR
 import hashlib
 import os
 import sqlite3
@@ -36,11 +35,12 @@ import subprocess
 from unittest import mock
 
 import pytest
+from cuemsutils.cues import CueList, CuemsScript
 
 import cuemseditor.repair_durations as rd
 from cuemseditor.cli import get_settings
 from cuemseditor.CuemsDBModel import Media, Project, database
-from cuemsutils.cues import CueList, CuemsScript
+from support.paths import DATA_DIR
 
 DIMS = ('pixel_width', 'pixel_height', 'file_size')
 PIXEL = ('pixel_width', 'pixel_height')
@@ -298,6 +298,7 @@ class TestUpload:
 
     def test_the_upload_session_passes_the_verified_md5(self):
         import inspect
+
         from cuemseditor.CuemsUpload import CuemsUpload
         src = inspect.getsource(CuemsUpload.upload_done)
         assert 'self.server.db.media.new, self.tmp_file_path(), self.filename, received_md5' in src
@@ -496,9 +497,10 @@ class TestSavePaths:
         # A row with no stored size is verified by the one probe that reads
         # the duration and the pixel size together (D20, plan §7.9.4).
         library = library013
-        from cuemseditor import CuemsDBProject as p
-        from cuemseditor.CuemsDBMedia import MediaProbe, PROBE_OK
         from cuemsutils.tools.CTimecode import CTimecode
+
+        from cuemseditor import CuemsDBProject as p
+        from cuemseditor.CuemsDBMedia import PROBE_OK, MediaProbe
         with open(os.path.join(library.root, 'media', 'file_video.ext'), 'wb') as f:
             f.write(b'y' * 55)
         data = _script_json(library)

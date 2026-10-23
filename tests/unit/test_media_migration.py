@@ -15,6 +15,7 @@ import os
 from unittest.mock import patch
 
 import pytest
+from cuemsutils.helpers import new_datetime, new_uuid
 
 import cuemseditor.CuemsDBMedia as db_media
 import cuemseditor.CuemsProjectManager as project_manager
@@ -23,7 +24,6 @@ from cuemseditor.cli import get_settings
 from cuemseditor.CuemsDBMedia import CuemsDBMedia
 from cuemseditor.CuemsDBModel import MEDIA_ADDED_COLUMNS, Media, Project, ProjectMedia, database
 from cuemseditor.CuemsProjectManager import CuemsDBManager
-from cuemsutils.helpers import new_datetime, new_uuid
 
 
 def _sha256(path):

@@ -1,28 +1,33 @@
 import hashlib
 import json
 import os
-import traceback
 import shutil
 import time
 from datetime import datetime
-from peewee import DoesNotExist, IntegrityError, prefetch
 
-from cuemsutils.tools.StringSanitizer import StringSanitizer
-from cuemsutils.tools.CopyMoveVersioned import CopyMoveVersioned
-from cuemsutils.tools.CTimecode import CTimecode
 from cuemsutils.cues import AudioCue, CueList, CuemsScript, DmxCue, VideoCue
 from cuemsutils.cues.MediaCue import MediaCue
 from cuemsutils.errors import SchemaError, ValidationError
 from cuemsutils.helpers import new_datetime, new_uuid
-from cuemsutils.log import logged, Logger
+from cuemsutils.log import Logger
+from cuemsutils.tools.CopyMoveVersioned import CopyMoveVersioned
+from cuemsutils.tools.CTimecode import CTimecode
+from cuemsutils.tools.StringSanitizer import StringSanitizer
+from peewee import DoesNotExist, IntegrityError, prefetch
 
-
-from cuemseditor.CuemsErrors import *
-from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia
-from cuemseditor.media_values import _md5, _positive_int, _valid
 from cuemseditor.CuemsDBMedia import (
-    INDEX_STALE, INDEX_VALID, PROBE_FAILED, PROBE_OK, is_indexed_video,
-    probe_dimensions, probe_media, video_index_state)
+    INDEX_STALE,
+    INDEX_VALID,
+    PROBE_FAILED,
+    PROBE_OK,
+    is_indexed_video,
+    probe_dimensions,
+    probe_media,
+    video_index_state,
+)
+from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia
+from cuemseditor.CuemsErrors import *
+from cuemseditor.media_values import _md5, _positive_int, _valid
 
 
 class DurationFixStats:

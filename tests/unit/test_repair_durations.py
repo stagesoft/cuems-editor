@@ -9,12 +9,12 @@ after ``--apply`` every ``script.xml`` checksum is unchanged, and the projects
 whose durations differ from the corrected DB are listed as ``NEEDS_SAVE``.
 Saving one of them through the editor's save path takes it off the list.
 """
-from support.paths import DATA_DIR
 import hashlib
 import os
 import re
 
 import cuemseditor.repair_durations as rd
+from support.paths import DATA_DIR
 
 
 def _file_hash(path):
@@ -103,8 +103,9 @@ def test_trash_media_fixed_without_skip(library, canned_probe):
 
 def test_skipped_invalid_xml_does_not_abort(library, canned_probe, capsys):
     # add a second project whose script.xml is malformed
+    from cuemsutils.helpers import new_datetime, new_uuid
+
     from cuemseditor.CuemsDBModel import Project, database
-    from cuemsutils.helpers import new_uuid, new_datetime
     _write_v2_script(library)
     bad_dir = os.path.join(library.projects_dir, 'proj2')
     os.makedirs(bad_dir, exist_ok=True)

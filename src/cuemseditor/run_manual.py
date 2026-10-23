@@ -6,8 +6,8 @@ This is a convenience wrapper with startup messages.
 For production, use cli.py directly or systemd service.
 """
 
-import sys
 import os
+import sys
 
 # Add src directory to path for development (when not installed)
 if __name__ == '__main__' and __package__ is None:
@@ -21,7 +21,7 @@ from cuemseditor.cli import run_manual
 
 def main():
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Run CUEMS Editor in development mode')
     parser.add_argument(
         '--port',
@@ -29,13 +29,13 @@ def main():
         default=9092,
         help='WebSocket server port. Default: 9092'
     )
-    
+
     args = parser.parse_args()
-    
+
     print(f"Starting CUEMS Editor on port {args.port}")
     print("Press Ctrl+C to stop")
     print("-" * 60)
-    
+
     run_manual(port=args.port)
 
 
