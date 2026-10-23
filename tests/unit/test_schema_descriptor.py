@@ -20,6 +20,7 @@ with an object, not ``"OK"`` (M3), and ``network_map`` is refused (FR-019).
 The config round trip itself is ``tests/test_config_round_trip.py``.
 """
 
+from support.paths import DATA_DIR
 import asyncio
 import concurrent.futures
 import hashlib
@@ -34,8 +35,7 @@ from cuemseditor.CuemsErrors import NonExistentItemError
 from cuemseditor.CuemsWsUser import CuemsWsUser
 from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
 
-HERE = os.path.dirname(__file__)
-CONF = os.path.join(HERE, 'fixtures', 'conf')
+CONF = str(DATA_DIR / 'conf')
 FIELD_KEYS = ['name', 'xsd_type', 'required', 'repeated', 'order', 'kind',
               'enum_values', 'default', 'repairability']
 
@@ -131,7 +131,7 @@ def test_config_save_of_settings_persists_through_save_settings(user, conf):
 def project_dir(monkeypatch, tmp_path):
     """Redirects ``ConfigManager.library_path`` at a scratch directory, so the
     real, unmodified ``project_path`` resolves under it instead of under
-    ``/opt/cuems_library`` (``tests/fixtures/conf/settings.xml``'s value — a
+    ``/opt/cuems_library`` (``tests/data/conf/settings.xml``'s value — a
     real path this sandbox must not touch, and which happens to exist on some
     dev machines via a sibling repo's fixtures). ``project_path``'s existence
     check — the thing cuems-utils UR-6 is petitioning to relax — runs for

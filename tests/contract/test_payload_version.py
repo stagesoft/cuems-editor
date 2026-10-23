@@ -5,9 +5,10 @@
 ``{"type":"payload_version","value":1}`` precedes ``users``, ``session_id``
 and every ``initial_*`` frame. A peer that never sends it is version 0, the
 wire before 001. The integer is a contract: it may only move together with a
-bump row in ``tests/ws-command-responses.txt``. It is not ``doc_version``.
+bump row in ``tests/data/ws-command-responses.txt``. It is not ``doc_version``.
 """
 
+from support.paths import DATA_DIR
 import asyncio
 import json
 import os
@@ -20,9 +21,8 @@ import cuemseditor.CuemsWsServer as server_module
 from cuemseditor.cli import get_mappings, get_settings
 from cuemseditor.CuemsWsServer import CuemsWsServer
 
-HERE = os.path.dirname(__file__)
-CONF = os.path.join(HERE, 'fixtures', 'conf')
-RESPONSES = os.path.join(HERE, 'ws-command-responses.txt')
+CONF = str(DATA_DIR / 'conf')
+RESPONSES = str(DATA_DIR / 'ws-command-responses.txt')
 
 
 class _Socket:

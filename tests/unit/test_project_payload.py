@@ -4,7 +4,7 @@
 
 FR-011, FR-014, FR-040, contracts/project-payload.md. The capture is the
 ``{"type":"project"}`` frame the editor sent before 001, for
-``tests/fixtures/script_minimal.xml``
+``tests/data/script_minimal.xml``
 (``specs/001-cuems-utils-migration/evidence/project-capture/``). The library no
 longer loads that pre-013 shape, so the open path reads
 ``script_minimal_013.xml``, which is ``cuems-reshape-devices`` over a copy of it.
@@ -31,6 +31,7 @@ media database, for ``class`` ``audio``, ``video`` and one the editor has no
 name for.
 """
 
+from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import copy
 import hashlib
 import json
@@ -45,10 +46,9 @@ from cuemseditor.CuemsDBProject import CuemsDBProject
 from cuemsutils.cues import CuemsScript
 from cuemsutils.helpers import new_datetime, new_uuid
 
-HERE = os.path.dirname(__file__)
-FIXTURE_013 = os.path.join(HERE, 'fixtures', 'script_minimal_013.xml')
+FIXTURE_013 = str(DATA_DIR / 'script_minimal_013.xml')
 CAPTURE = os.path.join(
-    HERE, '..', 'specs', '001-cuems-utils-migration', 'evidence', 'project-capture',
+    str(SPECS_DIR), '001-cuems-utils-migration', 'evidence', 'project-capture',
     'script_minimal.frame.json')
 
 SCHEMA_LOCATION = '{http://www.w3.org/2001/XMLSchema-instance}schemaLocation'
@@ -215,7 +215,7 @@ def test_duplicate_saves_the_copy_and_leaves_the_source_bytes(lib):
 
 
 def test_duplicate_of_a_source_the_library_refuses_creates_nothing(lib):
-    shutil.copy(os.path.join(HERE, 'fixtures', 'script_minimal.xml'), lib.script)  # pre-013 shape
+    shutil.copy(str(DATA_DIR / 'script_minimal.xml'), lib.script)  # pre-013 shape
     projects_before = sorted(os.listdir(os.path.join(lib.root, 'projects')))
     rows_before = Project.select().count()
 

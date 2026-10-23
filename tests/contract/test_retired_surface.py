@@ -9,10 +9,11 @@ type list (CLAUDE.md: it nulled valid targets after cuems-utils 013), and a
 second reader of the script on ``xml.etree`` (002 M10: one reader, the
 library's object load). A merge that brings one back must fail here.
 """
+from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import pathlib
 import re
 
-SRC = pathlib.Path(__file__).resolve().parent.parent / 'src' / 'cuemseditor'
+SRC = PACKAGE_DIR
 
 FORBIDDEN = {
     'XmlReaderWriter': 'constitution V: cuemsutils.xml is internal; CuemsScript.save writes atomically',

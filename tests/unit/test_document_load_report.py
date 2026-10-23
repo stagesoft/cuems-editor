@@ -6,7 +6,7 @@ FR-019–FR-022, FR-021a, contracts/ws-messages.md, data-model.md. Runs the real
 session handlers (``CuemsWsUser``) against a temporary library through the
 real ``CuemsDBProject``; only the server around them is a stub.
 
-Fixtures are derived from ``tests/fixtures/script_minimal_013.xml``, saved by
+Fixtures are derived from ``tests/data/script_minimal_013.xml``, saved by
 the library as a current (``doc_version="2"``) document so it loads ``clean``,
 then edited as text:
 
@@ -17,6 +17,7 @@ then edited as text:
 * ``too_new`` — ``doc_version="99"``.
 """
 
+from support.paths import DATA_DIR
 import asyncio
 import concurrent.futures
 import hashlib
@@ -34,8 +35,7 @@ from cuemseditor.CuemsWsUser import CuemsWsUser
 from cuemsutils.cues import CuemsScript
 from cuemsutils.helpers import new_datetime, new_uuid
 
-HERE = os.path.dirname(__file__)
-FIXTURE_013 = os.path.join(HERE, 'fixtures', 'script_minimal_013.xml')
+FIXTURE_013 = str(DATA_DIR / 'script_minimal_013.xml')
 SCRIPT_ID = 'ddba3000-7894-4a60-a6c1-e73b9bbed8c0'
 ACTION_TARGET = '1f301cf8-dd03-4b40-ac17-ef0e5e7988be'
 NOWHERE = '0b0b0b0b-0000-4000-8000-000000000000'

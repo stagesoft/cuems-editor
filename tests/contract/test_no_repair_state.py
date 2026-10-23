@@ -6,9 +6,10 @@ The gate lives in ``server.repair_gates``, keyed by project. A caller left on
 ``self.repair_state`` would read state nobody writes any more.
 """
 
+from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 from pathlib import Path
 
-PACKAGE = Path(__file__).resolve().parent.parent / "src" / "cuemseditor"
+PACKAGE = PACKAGE_DIR
 
 
 def test_repair_state_no_longer_occurs_in_the_package():

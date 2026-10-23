@@ -9,6 +9,7 @@ after ``--apply`` every ``script.xml`` checksum is unchanged, and the projects
 whose durations differ from the corrected DB are listed as ``NEEDS_SAVE``.
 Saving one of them through the editor's save path takes it off the list.
 """
+from support.paths import DATA_DIR
 import hashlib
 import os
 import re
@@ -131,7 +132,7 @@ def test_missing_db_is_fatal(tmp_path):
 
 # ─── 001: structured durations and pre-013 documents ─────────────────────
 
-FIXTURE_013 = os.path.join(os.path.dirname(__file__), 'fixtures', 'script_minimal_013.xml')
+FIXTURE_013 = str(DATA_DIR / 'script_minimal_013.xml')
 
 
 def _write_v2_script(library):

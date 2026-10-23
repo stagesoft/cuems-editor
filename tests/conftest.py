@@ -32,7 +32,7 @@ import pytest
 # ports it to the object API (003 tasks T026; T025 ported test_media_refresh.py). Do not add other files here.
 collect_ignore = []
 
-FIXTURE_XML = os.path.join(_here, 'fixtures', 'script_minimal.xml')
+FIXTURE_XML = os.path.join(_here, 'data', 'script_minimal.xml')
 
 # Canned durations keyed by media unix_name (seconds). Used to monkeypatch
 # probe_duration so tests need no ffprobe / real media bytes.
@@ -113,7 +113,7 @@ def library(tmp_path):
         database.close()
 
 
-FIXTURE_013_XML = os.path.join(_here, 'fixtures', 'script_minimal_013.xml')
+FIXTURE_013_XML = os.path.join(_here, 'data', 'script_minimal_013.xml')
 
 
 @pytest.fixture
@@ -150,3 +150,23 @@ def canned_probe(monkeypatch):
         lambda path: CANNED_DIMS.get(os.path.basename(path), (None, None)),
         raising=False)
     return _fake
+
+
+# --- markers come from the directory (003, FR-035) --------------------------------------------
+
+_MARKED_DIRECTORIES = ('unit', 'integration', 'contract')
+
+
+def pytest_collection_modifyitems(config, items):
+    """Mark each test ``unit`` / ``integration`` / ``contract`` after the directory it lives in.
+
+    A test cannot be mislabelled by forgetting a decorator. A test outside the three directories gets no
+    mark, which ``tests/contract/test_layout.py`` reports.
+    """
+    for item in items:
+        try:
+            top = os.path.relpath(str(item.path), _here).split(os.sep)[0]
+        except ValueError:
+            continue
+        if top in _MARKED_DIRECTORIES:
+            item.add_marker(getattr(pytest.mark, top))

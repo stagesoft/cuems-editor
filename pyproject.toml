@@ -55,6 +55,12 @@ path = "src/cuemseditor/__init__.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "unit: pure logic; every socket, JACK and subprocess mocked; xdist-safe (applied from tests/unit)",
+    "integration: a real socket, subprocess, JACK/ALSA or a wall-clock wait (applied from tests/integration)",
+    "contract: repository and packaging invariants (applied from tests/contract)",
+]
 
 [tool.hatch.build.targets.sdist]
 packages = ["src/cuemseditor"]

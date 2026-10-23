@@ -4,7 +4,7 @@
 
 Version 1 never shipped, so it is restated, not bumped, as the merge-candidate
 wire: every boolean on it is a JSON true / false. A section of
-``tests/ws-command-responses.txt`` that describes a live frame must not say
+``tests/data/ws-command-responses.txt`` that describes a live frame must not say
 ``"True"`` / ``"False"``. The retired ``initial_template`` section keeps its
 delta list, as history.
 
@@ -12,10 +12,11 @@ Sections are split at headings: an unindented line with a blank line (or the
 start of the file) before it and a blank line after it.
 """
 
+from support.paths import DATA_DIR
 import os
 import re
 
-RESPONSES = os.path.join(os.path.dirname(__file__), 'ws-command-responses.txt')
+RESPONSES = str(DATA_DIR / 'ws-command-responses.txt')
 RETIRED = 'initial_template (retired at payload version 1)'
 STRING_BOOLEANS = ('"True"', '"False"', "'True'", "'False'")
 

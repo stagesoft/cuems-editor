@@ -28,6 +28,7 @@ hashes a file; the repair tool fills and checks the MD5.
 
 Design: cuems-RELATIONS Plans/2026-10-01-engine-late-go-media-probe.md §3.2.
 """
+from support.paths import DATA_DIR
 import hashlib
 import os
 import sqlite3
@@ -320,8 +321,7 @@ import copy
 
 from cuemsutils.helpers import new_uuid
 
-HERE = os.path.dirname(__file__)
-FIXTURE_013 = os.path.join(HERE, 'fixtures', 'script_minimal_013.xml')
+FIXTURE_013 = str(DATA_DIR / 'script_minimal_013.xml')
 VIDEO_1 = '1f301cf8-dd03-4b40-ac17-ef0e5e7988be'
 AUDIO_1 = 'bb391e70-e65e-47ca-8b29-5a7076bbd250'
 VIDEO_2 = '96d6e5de-c29b-4ab2-b828-297d84293304'

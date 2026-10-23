@@ -4,7 +4,7 @@
 
 The six tests FR-042 names, which close cuems-utils T039, plus the
 item-assignment grep (FR-040, M11). Each builds a ``CuemsScript`` from
-``tests/fixtures/script_minimal_013.xml`` and saves it with the real
+``tests/data/script_minimal_013.xml`` and saves it with the real
 ``CuemsDBProject.update`` against a temporary library whose ``Media`` rows
 carry known values:
 
@@ -16,6 +16,7 @@ Values a setter refuses are put in the payload dict ``update`` receives, which
 is where a client's arrive: ``CuemsScript.from_json`` stores them raw.
 """
 
+from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import json
 import os
 import re
@@ -30,9 +31,8 @@ from cuemsutils.cues import CuemsScript, CueList
 from cuemsutils.cues.MediaCue import MediaCue
 from cuemsutils.helpers import new_datetime, new_uuid
 
-HERE = Path(__file__).resolve().parent
-FIXTURE_013 = HERE / 'fixtures' / 'script_minimal_013.xml'
-PACKAGE = HERE.parent / 'src' / 'cuemseditor'
+FIXTURE_013 = DATA_DIR / 'script_minimal_013.xml'
+PACKAGE = PACKAGE_DIR
 SCRIPT_ID = 'ddba3000-7894-4a60-a6c1-e73b9bbed8c0'
 VIDEO_CUE = '1f301cf8-dd03-4b40-ac17-ef0e5e7988be'
 AUDIO_CUE = 'bb391e70-e65e-47ca-8b29-5a7076bbd250'

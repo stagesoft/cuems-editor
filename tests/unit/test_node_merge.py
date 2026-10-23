@@ -8,10 +8,11 @@ assigned, and what happens when the map has a duplicate identity. It does not
 test the node model itself (``NodeRole``, ``Uuid``): that is the library's
 (FR-030).
 
-Nodes come from ``tests/fixtures/conf`` through ``ConfigManager`` and
+Nodes come from ``tests/data/conf`` through ``ConfigManager`` and
 ``partition_by_adoption``, the same public path the server uses.
 """
 
+from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import asyncio
 import copy
 import json
@@ -26,10 +27,9 @@ from cuemseditor.cli import get_mappings, get_settings
 from cuemseditor.CuemsWsServer import CuemsWsServer
 from cuemsutils.tools.ConfigManager import ConfigManager
 
-HERE = os.path.dirname(__file__)
-CONF = os.path.join(HERE, 'fixtures', 'conf')
+CONF = str(DATA_DIR / 'conf')
 CAPTURE = os.path.join(
-    HERE, '..', 'specs', '001-cuems-utils-migration', 'evidence', 'initial-mappings.json')
+    str(SPECS_DIR), '001-cuems-utils-migration', 'evidence', 'initial-mappings.json')
 
 CONTROLLER = '0367f391-ebf4-48b2-9f26-000000000001'   # adopted; mapping node has devices
 NEW_NODE = '0367f391-ebf4-48b2-9f26-000000000003'     # not adopted; mapping node has none

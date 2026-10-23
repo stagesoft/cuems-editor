@@ -12,6 +12,7 @@ It is also the projection of the one comparison that feeds ``media_repairs``
 (002 FR-043): grouped by file, it names the same stale values, and it never touches
 the repair gate.
 """
+from support.paths import DATA_DIR
 import asyncio
 import json
 import os
@@ -23,11 +24,11 @@ import cuemseditor.CuemsDBProject as p
 import cuemseditor.CuemsMediaRefresh as r
 from cuemseditor.CuemsDBProject import media_staleness
 
-from test_media_refresh import (  # noqa: F401  (fixtures and helpers shared with the ported suite)
+from support.refresh_helpers import (  # noqa: F401  (fixtures and helpers shared with the ported suite)
     FakeProbe, MD5, _fresh_marks, _in_line, _mgr, _refresh, _report, _script, _set_row, _set_xml_media,
     _uuid, _write, lib, probe, tc)
 
-GOLDEN = os.path.join(os.path.dirname(__file__), 'data', 'golden')
+GOLDEN = str(DATA_DIR / 'golden')
 FRAME_KEYS = ['project_uuid', 'project_name', 'context', 'complete', 'reason', 'files', 'unverified', 'total_files']
 FILE_KEYS = ['file_name', 'cues', 'changes']
 CHANGE_KEYS = ['field', 'stored', 'current']

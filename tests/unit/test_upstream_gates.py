@@ -15,6 +15,7 @@ Gate G1 lives in ``tests/test_schema_descriptor.py``
 assertion stays (S6). The tests remain as the regression guard for each gate.
 """
 
+from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import asyncio
 import hashlib
 import json
@@ -33,7 +34,7 @@ from test_config_round_trip import PROJECT, _load, _root_instance, _save, env, u
 from test_document_load_report import SCRIPT_ID, _drain, _run, _session, _write_variant, lib  # noqa: F401
 from test_repair_gate_durable import _close, _make_server
 
-NODECONF = Path(__file__).resolve().parent.parent.parent / 'cuems-nodeconf'
+NODECONF = SIBLINGS_DIR / 'cuems-nodeconf'
 NODE = '4b9b5a1e-0000-4000-8000-0123456789ab'
 
 PROJECT_SETTINGS = (
@@ -94,7 +95,7 @@ def test_a_cue_built_from_the_descriptor_instance_saves_through_project_save(lib
     it a second time, built for the old unwrapped instance; that, not the
     library, kept it failing after 015 landed. The marker is off (S6).
     """
-    monkeypatch.setenv('CUEMS_CONF_PATH', str(Path(__file__).resolve().parent / 'fixtures' / 'conf'))
+    monkeypatch.setenv('CUEMS_CONF_PATH', str(DATA_DIR / 'conf'))
     _write_variant(lib.script, 'clean')
     cue = _script_instance('AudioCueType')
     cue['id'] = str(new_uuid())

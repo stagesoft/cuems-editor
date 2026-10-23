@@ -8,12 +8,13 @@ edits them, and saves the whole document with that revision as
 refuses is ``config_save_refused`` with the violation's location; the file
 replaced is backed up into ``<library>/trash/config/`` first.
 
-Fixtures: a copy of ``tests/fixtures/conf`` as ``CUEMS_CONF_PATH``, its
+Fixtures: a copy of ``tests/data/conf`` as ``CUEMS_CONF_PATH``, its
 ``settings.xml``'s ``<library_path>`` rewritten to a temporary library that
 holds ``projects/test_project/``. ``get_project_unix_name`` is mocked to
 ``test_project``. Nothing under ``/opt/cuems_library`` is touched.
 """
 
+from support.paths import DATA_DIR, PACKAGE_DIR, ROOT, SIBLINGS_DIR, SPECS_DIR
 import asyncio
 import concurrent.futures
 import copy
@@ -32,10 +33,9 @@ from cuemseditor.CuemsErrors import NonExistentItemError
 from cuemseditor.CuemsWsUser import CuemsWsUser
 from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
 
-HERE = Path(__file__).resolve().parent
-CONF = HERE / 'fixtures' / 'conf'
-PACKAGE = HERE.parent / 'src' / 'cuemseditor'
-PRE_013_SETTINGS = HERE.parent.parent / 'cuems-utils' / 'tests' / 'data' / 'corpus' / 'pre-013' / 'settings.xml'
+CONF = DATA_DIR / 'conf'
+PACKAGE = PACKAGE_DIR
+PRE_013_SETTINGS = SIBLINGS_DIR / 'cuems-utils' / 'tests' / 'data' / 'corpus' / 'pre-013' / 'settings.xml'
 PROJECT = 'c0ffee00-0000-4000-8000-000000000002'
 RESTART_SETTINGS = [{'service': 'cuems-controller-engine', 'where_active': False},
                     {'service': 'cuems-node-engine', 'where_active': True}]
