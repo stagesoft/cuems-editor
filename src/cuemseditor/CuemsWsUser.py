@@ -1,29 +1,31 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+import asyncio
 import functools
 import hashlib
 import json
-import asyncio
 import os
-from datetime import datetime, timedelta
-from cuemsutils.helpers import new_uuid, new_datetime, Unset
-from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
-from cuemsutils.tools.CommunicatorServices import Communicator
-from cuemsutils.tools import coerce_identity
-from cuemsutils.tools.Uuid import Uuid
-from cuemsutils.errors import IngestError, ValidationError
-import websockets as ws
 import sys
+from datetime import datetime
 
-from cuemsutils.log import logged, Logger
+import websockets as ws
+from cuemsutils.errors import IngestError, ValidationError
+from cuemsutils.helpers import Unset, new_uuid
+from cuemsutils.log import Logger
+from cuemsutils.tools import coerce_identity
+from cuemsutils.tools.CommunicatorServices import Communicator
+from cuemsutils.tools.ConfigManager import ConfigManager, SchemaName
+from cuemsutils.tools.Uuid import Uuid
 
 from cuemseditor.CuemsErrors import DocumentLoadFailed, EngineError, NonExistentItemError, OriginalNotPreserved
+from cuemseditor.CuemsMediaRefresh import check_media_on_open, refresh_media_before_load
 from cuemseditor.node_reads import IdentityCollision
 
 TIMEOUT = 25  # TODO: make it configurable, or get from settings
 
-functionNameAsString = lambda n=0: sys._getframe(n + 1).f_code.co_name
+def functionNameAsString(n=0):
+    return sys._getframe(n + 1).f_code.co_name
 
 # document_load_failed always offers all three: the editor cannot know which
 # one the operator can carry out.
@@ -674,8 +676,11 @@ class CuemsWsUser():
     async def project_ready(self, project_uuid, action):
         """Tell the engine to arm the project identified by *project_uuid*.
 
-        Resolves the ``unix_name`` from the DB, builds the ``project_ready``
-        engine command, and awaits the response.
+        Resolves the ``unix_name`` from the DB, checks the project's media
+        files first (869fat84r D20; never blocks the load), builds the
+        ``project_ready`` engine command, and awaits the response. After the
+        reply, the media check's ``media_check_report`` goes to this session
+        and to every other session on the project.
 
         Args:
             project_uuid: UUID string of the project to arm.
@@ -684,6 +689,7 @@ class CuemsWsUser():
         Logger.info(f"user {id(self.websocket)} requesting ready project {project_uuid}")
         try:
             unix_name = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.get_project_unix_name, project_uuid)
+            refresh = await self._refresh_media(project_uuid)
             action_uuid = str(new_uuid())
             engine_command = {"action": functionNameAsString(), "action_uuid": action_uuid, "value": unix_name}
 
@@ -691,10 +697,90 @@ class CuemsWsUser():
             Logger.debug(f"project {project_uuid} ready: {result}")
 
             await self.outgoing.put(json.dumps({"type": functionNameAsString(), "value": project_uuid}))
+            # After the reply, so a client waiting for it never reads this first.
+            await self._send_media_report(refresh.get('media_report') if refresh else None)
 
         except Exception as e:
             Logger.error(f"error: {type(e)} {e}")
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
+
+    async def _refresh_media(self, project_uuid):
+        """Check *project_uuid*'s media before it is loaded (see
+        :mod:`cuemseditor.CuemsMediaRefresh`). Returns its report, or ``None``.
+        Never raises: the load goes on with the stored values whatever
+        happens here."""
+        try:
+            return await refresh_media_before_load(self.server.db.project, project_uuid,
+                                                   executor=self.server.executor,
+                                                   engine_running=self._engine_running)
+        except Exception as e:
+            Logger.error(f'media check before loading {project_uuid} failed: '
+                         f'{type(e).__name__}: {e}; loading with the stored values')
+            return None
+
+    async def _send_media_report(self, value):
+        """Send a ``media_check_report`` (plan §8.3) to this session and, for
+        the ``ready`` and ``save`` contexts, to every other session on the
+        project. Nothing when *value* is ``None``. Never raises."""
+        if not value:
+            return
+        try:
+            frame = json.dumps({"type": "media_check_report", "value": value})
+            await self.outgoing.put(frame)
+            if value.get('context') in ('ready', 'save'):
+                await self.server.send_to_project_sessions(value['project_uuid'], frame, skip=self)
+        except Exception as e:
+            Logger.error(f'could not send the media report: {type(e).__name__}: {e}')
+
+    def _in_background(self, coroutine):
+        """Run *coroutine* after the current reply, keeping a reference so the
+        task is not collected; its errors are logged, never raised."""
+        task = asyncio.ensure_future(coroutine)
+        pending = getattr(self, '_background_tasks', None)
+        if pending is None:
+            pending = self._background_tasks = set()
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+        return task
+
+    async def _report_on_open(self, project_uuid):
+        """The read-only media check of a project being opened, then its report."""
+        value = await check_media_on_open(self.server.db.project, project_uuid,
+                                          executor=self.server.executor)
+        await self._send_media_report(value)
+
+    async def _report_after_save(self, project_uuid):
+        """The read-only media check after a save; its report clears (or keeps)
+        the warning of every session on the project."""
+        try:
+            value = await self.server.event_loop.run_in_executor(
+                self.server.executor, self.server.db.project.media_report, project_uuid, 'save')
+        except Exception as e:
+            Logger.error(f'project {project_uuid}: the media check after the save failed '
+                         f'({type(e).__name__}: {e})')
+            return
+        await self._send_media_report(value)
+
+    async def _engine_running(self):
+        """The engine's ``project_status`` as the media check reads it.
+
+        ``True`` while a show is running (re-probing is deferred), ``False``
+        when it is not: ``loaded`` (a project loaded and stopped) and ``none``
+        are both "not running", and ``None`` when the engine does not answer
+        or says something unknown. Since cuems-engine rc6-4 the status is
+        three-state; the released two-key mapping read ``loaded`` as silence
+        (003 FR-015).
+        """
+        action_uuid = str(new_uuid())
+        command = {"action": "project_status", "action_uuid": action_uuid}
+        try:
+            result = await self.comunicate_with_engine('project_status', action_uuid, command,
+                                                       query_mode=True)
+        except Exception as e:
+            Logger.info(f'project_status before the media check: {e}')
+            return None
+        status = result.get('status') if isinstance(result, dict) else None
+        return {'running': True, 'loaded': False, 'none': False}.get(status)
 
     async def hw_discovery(self, action):
         """Ask the engine to run a hardware discovery scan.
@@ -770,7 +856,7 @@ class CuemsWsUser():
             action_uuid = str(new_uuid())
             engine_command = {"action": functionNameAsString(), "action_uuid": action_uuid}
 
-            result = await self.comunicate_with_engine(action, action_uuid, engine_command)
+            await self.comunicate_with_engine(action, action_uuid, engine_command)
 
             self.server.users[self] = None
             loaded = None
@@ -1194,7 +1280,7 @@ class CuemsWsUser():
             action_uuid = str(new_uuid())
             engine_command = {"action": functionNameAsString(), "action_uuid": action_uuid, "value": unix_name}
 
-            result = await self.comunicate_with_engine(action, action_uuid, engine_command)
+            await self.comunicate_with_engine(action, action_uuid, engine_command)
 
             await self.outgoing.put(json.dumps({"type": functionNameAsString(), "value": project_uuid}))
 
@@ -1251,6 +1337,8 @@ class CuemsWsUser():
                 "type": "document_load_report",
                 "value": load_report_value(state['report_id'], project_uuid, report, state['media_repairs']),
             }))
+            # After the project frame, never before it (869fat84r D20).
+            self._in_background(self._report_on_open(project_uuid))
         except DocumentLoadFailed as e:
             Logger.warning(f"project {project_uuid} not opened: {e}")
             await self.outgoing.put(json.dumps({
@@ -1292,6 +1380,18 @@ class CuemsWsUser():
         await self.outgoing.put(json.dumps({"type": "repair_save_refused", "value": {
             "project_uuid": state['project_uuid'], "report_id": state['report_id'], "reason": reason}}))
 
+    @staticmethod
+    def _error_text(e):
+        """What the client shows for a failed save.
+
+        A ``ValueError`` is a save-time gate speaking to the operator (fade
+        duration, media cue without a file): forward its text as is. Anything
+        else keeps the ``<class '…'>`` prefix the UI has always shown.
+        """
+        if isinstance(e, ValueError):
+            return str(e)
+        return str(type(e)) + str(e)
+
     async def received_new_project(self, data, action, unix_name):
         """Create a new project and notify the client and other users.
 
@@ -1311,7 +1411,7 @@ class CuemsWsUser():
             await self.server.notify_others_same_project(self, "project_modified", project_uuid)
         except Exception as e:
             Logger.error("error: {} {}".format(type(e), e))
-            await self.notify_error_to_user((str(type(e)) + str(e)), action="project_new")
+            await self.notify_error_to_user(self._error_text(e), action="project_new")
 
     async def received_project(self, data, action):
         """Save an edited project and notify the client and other users.
@@ -1377,6 +1477,7 @@ class CuemsWsUser():
             await self.notify_user(uuid=project_uuid, action=action)
             await self.server.notify_others_list_changes(self, "project_list")
             await self.server.notify_others_same_project(self, "project_modified", project_uuid)
+            self._in_background(self._report_after_save(project_uuid))
         except OriginalNotPreserved as e:
             Logger.error(f"project {project_uuid} not saved: {e}")
             state['preserved'] = False
@@ -1385,7 +1486,7 @@ class CuemsWsUser():
             if preserve:
                 state['preserved'] = False
             Logger.error("error: {} {}".format(type(e), e))
-            await self.notify_error_to_user((str(type(e)) + str(e)), uuid=project_uuid, action=action)
+            await self.notify_error_to_user(self._error_text(e), uuid=project_uuid, action=action)
 
     async def rederive_gate(self, project_uuid):
         """Derive the project's gate from the script file on disk (FR-009, FR-009a).
@@ -1562,7 +1663,7 @@ class CuemsWsUser():
 
             Logger.info("user {} update file data {}".format(id(self.websocket), file_uuid))
 
-            return_message = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.media.save, file_uuid, data)
+            await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.media.save, file_uuid, data)
             await self.notify_user(uuid=file_uuid, action=action)
         except Exception as e:
             Logger.error("error: {} {}".format(type(e), e))

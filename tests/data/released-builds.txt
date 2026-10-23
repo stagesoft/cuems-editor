@@ -1,0 +1,13 @@
+# Debian builds of cuems-editor that shipped, one version per line (003 FR-027).
+# tests/test_changelog_complete.py checks every line against debian/changelog and CHANGELOG.md.
+# Add a line when a build is released; never remove one.
+0.1.0rc1-1
+0.1.0rc1-2
+0.1.0rc1-3
+0.1.0rc1-4
+0.1.0rc1-5
+0.1.0rc1-6
+0.1.0rc1-7
+
+# Builds that were never releases. They must NOT be headers of debian/changelog, each with its reason.
+excluded: 0.1.0rc1-5+nodeadopt2 | test-rig integration build (not a release); its content shipped in 0.1.0rc1-7

@@ -1,10 +1,22 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
-from peewee import *
-
 from cuemsutils.helpers import new_datetime
 from cuemsutils.log import Logger
+from peewee import (
+    JOIN,
+    BooleanField,
+    CharField,
+    DateTimeField,
+    ForeignKeyField,
+    IntegerField,
+    Model,
+    PrimaryKeyField,
+    SqliteDatabase,
+    TextField,
+    UUIDField,
+    fn,
+)
 
 database = SqliteDatabase(None, pragmas={
     'foreign_keys': 1,
@@ -165,7 +177,7 @@ class Media(CuemsBaseModel):
         return (Media
                 .select()
                 .join(ProjectMedia, JOIN.LEFT_OUTER)
-                .where(ProjectMedia.media == None)
+                .where(ProjectMedia.media.is_null())
                 .order_by(Media.created))
 
 
@@ -200,8 +212,8 @@ class ProjectMedia(CuemsBaseModel):
                 .join(Media, JOIN.LEFT_OUTER, on=(Media.uuid == ProjectMedia.media))
                 .join(Project, JOIN.LEFT_OUTER, on=(Project.uuid == ProjectMedia.project))
                 .where(
-                    (Media.uuid == None) |
-                    (Project.uuid == None))
+                    Media.uuid.is_null() |
+                    Project.uuid.is_null())
                 .order_by(Media.created))
 
 

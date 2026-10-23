@@ -37,24 +37,31 @@ Invoke as a console script (``cuems-editor-repair-durations``) or module
 (``python -m cuemseditor.repair_durations``).
 """
 import argparse
+import hashlib
 import os
 import shutil
 import sys
 import tempfile
 from datetime import datetime
 
-from cuemseditor.cli import get_settings
-from cuemseditor.CuemsDBModel import (
-    Project, Media, database, ensure_media_columns, missing_media_columns,
-)
-from cuemseditor.CuemsDBMedia import probe_duration
-from cuemseditor.CuemsDBProject import (
-    fix_media_durations_in_contents,
-    db_duration_resolver,
-)
-from cuemseditor.CuemsErrors import NotTimeCodeError
 from cuemsutils.cues import CuemsScript
 from cuemsutils.tools.CTimecode import CTimecode
+
+from cuemseditor.cli import get_settings
+from cuemseditor.CuemsDBMedia import media_file_size, probe_dimensions, probe_duration
+from cuemseditor.CuemsDBModel import (
+    Media,
+    Project,
+    database,
+    ensure_media_columns,
+    missing_media_columns,
+)
+from cuemseditor.CuemsDBProject import (
+    db_duration_resolver,
+    fix_media_durations_in_contents,
+    media_staleness,
+)
+from cuemseditor.CuemsErrors import NotTimeCodeError
 
 HELP_EPILOG = (
     'Script files are never written by this tool. They change only when an '
@@ -135,28 +142,78 @@ def backup_database(settings, backup_dir):
     print(f'  DB backed up to {backup_dir}')
 
 
+def _file_md5(path):
+    digest = hashlib.md5()
+    with open(path, 'rb') as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _check_stored(media, path, label, args, report, stored_updates):
+    """Re-measure what the row stores about its file (869fat84r): the pixel
+    size of a movie, and the size and MD5 of every file (D18). Collects the
+    column updates; nothing is written here. ``DIMS_CHANGED`` and
+    ``MD5_CHANGED`` mean the file is not the one the row was made for."""
+    update = {}
+    size = media_file_size(path)
+    if media.media_type == 'MOVIE':
+        width, height = probe_dimensions(path)
+        if not (width and height):
+            report.add('DIMS_PROBE_FAILED', label, dirty=True)
+        else:
+            new = (width, height, size)
+            old = (media.pixel_width, media.pixel_height, media.file_size)
+            if old == new:
+                report.add('DIMS_OK', label)
+            elif old == (None, None, None):
+                report.add('DIMS_FILLED', f'{label}: -> {width}x{height}, {size} bytes')
+            else:
+                report.add('DIMS_CHANGED', f'{label}: {old[0]}x{old[1]}, {old[2]} bytes -> '
+                                           f'{width}x{height}, {size} bytes')
+            if old != new:
+                update.update(pixel_width=width, pixel_height=height)
+    if size and media.file_size != size:
+        update.update(file_size=size)
+    if not args.no_md5:
+        md5 = _file_md5(path)
+        if media.file_md5 is None:
+            report.add('MD5_FILLED', f'{label}: {md5}')
+            update.update(file_md5=md5)
+        elif media.file_md5 == md5:
+            report.add('MD5_OK', label)
+        else:
+            report.add('MD5_CHANGED', f'{label}: {media.file_md5} -> {md5}', dirty=True)
+            update.update(file_md5=md5)
+    if update:
+        stored_updates.append((media.uuid, update))
+
+
 def pass_a_db(settings, args, report):
-    """Re-probe every media file, report/apply corrected durations.
+    """Re-probe every media file, report/apply corrected durations and the
+    stored pixel size, size and MD5 of each row.
 
     Returns:
         ``{unix_name: corrected_duration_str}`` for every row it would change,
         applied or not, so the script comparison can use the corrected values
         in a dry run too.
     """
-    print('\n== Pass A: database media.duration ==')
+    print('\n== Pass A: database media.duration + stored pixel size, size, MD5 ==')
     updates = []  # (uuid, new_str)
+    stored_updates = []  # (uuid, {column: value})
     corrected = {}
     for media in Media.select():
         label = f'{media.unix_name} ({media.media_type})'
-        if media.media_type == 'IMAGE':
-            report.add('SKIP_IMAGE', label)
-            continue
         if args.skip_trash and media.in_trash:
             report.add('SKIP_TRASH', label)
             continue
         path = _media_file_path(settings, media)
         if not os.path.exists(path):
             report.add('MISSING', f'{label} -> {path}', dirty=True)
+            continue
+        _check_stored(media, path, label, args, report, stored_updates)
+        if media.media_type == 'IMAGE':
+            report.add('SKIP_IMAGE', label)
             continue
         try:
             new_tc = probe_duration(path)
@@ -183,13 +240,16 @@ def pass_a_db(settings, args, report):
             updates.append((media.uuid, new_str))
             corrected[media.unix_name] = new_str
 
-    if args.apply and updates:
+    if args.apply and (updates or stored_updates):
         with database.atomic():
             for uuid, new_str in updates:
                 Media.update(duration=new_str).where(Media.uuid == uuid).execute()
-        print(f'  applied {len(updates)} DB duration update(s)')
-    elif updates:
-        print(f'  {len(updates)} DB duration update(s) pending (dry-run)')
+            for uuid, columns in stored_updates:
+                Media.update(**columns).where(Media.uuid == uuid).execute()
+        print(f'  applied {len(updates)} DB duration update(s) and {len(stored_updates)} stored-value update(s)')
+    elif updates or stored_updates:
+        print(f'  {len(updates)} DB duration update(s) and {len(stored_updates)} stored-value '
+              'update(s) pending (dry-run)')
     return corrected
 
 
@@ -235,12 +295,20 @@ def scan_scripts(settings, args, report, corrected):
             report.add('ORPHAN_MEDIA_REF',
                        f'{label}: {len(stats.orphans)} ref(s) not in DB: {stats.orphans}',
                        dirty=True)
-        if not stats.changes:
+        # The other stored values (pixel size, size, MD5) are compared against the rows
+        # as they are now: after --apply they hold the re-measured values; in a dry run
+        # they do not, so only the durations (overlay above) are exact there.
+        stored_stale = [e for e in media_staleness(script)[0] if e['field'] != 'duration']
+        if not stats.changes and not stored_stale:
             report.add('SCRIPT_OK', label)
             continue
         for file_name, previous, replacement in stats.changes:
             report.add('NEEDS_SAVE',
                        f'{label}: {file_name}: script {previous} != database {replacement}')
+        for entry in stored_stale:
+            report.add('NEEDS_SAVE',
+                       f"{label}: {entry['file_name']}: {entry['field']} script "
+                       f"{entry['stored']} != database {entry['current']}")
 
 
 def main(argv=None):
@@ -254,6 +322,8 @@ def main(argv=None):
     parser.add_argument('--database-name', help='override database file name')
     parser.add_argument('--apply', action='store_true', help='write the DB (default: dry-run); never writes scripts')
     parser.add_argument('--skip-trash', action='store_true', help='skip trashed media and projects')
+    parser.add_argument('--no-md5', action='store_true',
+                        help='do not hash the media files (Pass A then fills and checks pixel size and file size only)')
     parser.add_argument('--backup-dir', help='backup directory (default <library>/duration_repair_backup_<ts>)')
     args = parser.parse_args(argv)
 

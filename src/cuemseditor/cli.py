@@ -12,11 +12,11 @@ Example systemd service:
     Restart=always
 """
 
-import sys
-import os
-import uuid
-import json
 import argparse
+import json
+import os
+import sys
+import uuid
 
 # Add src directory to path for development (when not installed)
 if __name__ == '__main__' and __package__ is None:
@@ -27,6 +27,7 @@ if __name__ == '__main__' and __package__ is None:
 
 from cuemsutils.log import Logger
 from cuemsutils.tools.ConfigManager import ConfigManager, ProjectMappings
+
 from cuemseditor.CuemsWsServer import CuemsWsServer
 
 
@@ -75,20 +76,20 @@ def ensure_directories(settings_dict):
 def run_manual(port=9092):
     """Run server in foreground mode"""
     Logger.info("Starting CUEMS Editor")
-    
+
     # Get configuration
     settings_dict = get_settings()
     mappings_dict = get_mappings()
-    
+
     Logger.info(f"Project mappings: {json.dumps(mappings_dict)}")
-    
+
     # Ensure directories
     ensure_directories(settings_dict)
-    
+
     # Create and start server
     Logger.info(f"Starting WebSocket server on port {port}")
     server = CuemsWsServer(settings_dict, mappings_dict)
-    
+
     try:
         server.start(port)
     except KeyboardInterrupt:
@@ -112,14 +113,14 @@ Examples:
   %(prog)s --port 9092
         """
     )
-    
+
     parser.add_argument(
         '--port',
         type=int,
         default=9092,
         help='WebSocket server port. Default: 9092'
     )
-    
+
     args = parser.parse_args()
     run_manual(port=args.port)
 

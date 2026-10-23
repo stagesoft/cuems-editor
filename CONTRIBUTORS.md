@@ -67,14 +67,38 @@ pyenv local 3.11
 pip install -e ".[dev]"
 
 # Verify the test suite is green before making any changes
-cd src && pytest
+pytest                      # from the repo root; the layout is in tests/README.md
 ```
 
-Run lint checks:
+Run lint checks (the configuration is in `pyproject.toml`; CI runs the same command on the whole tree):
 
 ```bash
 ruff check .
 ```
+
+### Build the package
+
+The `.deb` is built for **bookworm**. On a Debian 13 host do not run `debuild` (it would target trixie, and
+dh-virtualenv bakes the host `python3` into the venv): build in an unprivileged bookworm chroot.
+
+```bash
+bash tests/packaging/bookworm-build.sh      # needs mmdebstrap, subuid/subgid ranges, network
+```
+
+It builds the `cuemsutils` wheel from the sibling `../cuems-utils` checkout (the release candidate is not on PyPI), builds
+`cuems-editor_<version>_all.deb`, and checks the version, that the venv's `pyvenv.cfg` says `home = /usr/bin`, and the
+chroot's `python3` is 3.11. On a bookworm host, `debuild -b -uc -us -nc` is the same build.
+
+### Pre-publication gate
+
+Nothing is published until a dispatched CI run is green on the release candidate:
+
+```bash
+gh workflow run ci.yml --ref <branch> -f cuemsutils_ref=<cuems-utils tag or SHA>
+```
+
+The `cuemsutils_ref` input is the cuems-utils release candidate the library is installed from (rule 5: nothing waits for
+PyPI). The run gates the PyPI publish and the `.deb` upload; both are maintainer acts. Record the run in the release notes.
 
 ---
 
@@ -236,7 +260,7 @@ A PR is ready to merge when ALL of the following are true:
 | `spec.md` and `plan.md` committed on branch (Tier 2) | Reviewer reads the files |
 | Failing test committed before implementation (Tier 2) | SHA provided; reviewer checks git log |
 | All tests pass | CI green |
-| Coverage ≥ 80% | CI coverage gate |
+| Combined coverage not below the CI gate | CI `coverage` job (the threshold is in `ci.yml`, taken from a measurement) |
 | `ruff check` passes | CI lint gate |
 | No new runtime dependency without justification | Reviewer checks `pyproject.toml` diff |
 | SPDX header on all new source files | Reviewer inspects new files |

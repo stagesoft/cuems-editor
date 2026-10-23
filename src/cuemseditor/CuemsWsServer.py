@@ -6,29 +6,23 @@ import concurrent.futures
 import functools
 import json
 import os
-import time
-import websockets as ws
-from websockets.asyncio.server import serve
-from multiprocessing import Process
-import signal
-from random import randint  #TODO: clean unused
-from hashlib import md5
 import re
+import signal
+import time
 
-from cuemsutils.log import logged, Logger
-
-from cuemseditor.CuemsProjectManager import CuemsDBManager
-from cuemseditor.CuemsWsUser import CuemsWsUser
-from cuemseditor.CuemsUpload import CuemsUpload
-from cuemseditor.CuemsErrors import *
-from cuemseditor.node_reads import IdentityCollision, NodeLists
-
+from cuemsutils.errors import NodeIdentityCollisionError
+from cuemsutils.helpers import new_uuid
+from cuemsutils.log import Logger
+from cuemsutils.tools import coerce_identity
 from cuemsutils.tools.CommunicatorServices import Communicator
 from cuemsutils.tools.ConfigManager import ConfigManager
 from cuemsutils.tools.NodeList import partition_by_adoption
-from cuemsutils.tools import coerce_identity
-from cuemsutils.errors import NodeIdentityCollisionError
-from cuemsutils.helpers import new_uuid
+from websockets.asyncio.server import serve
+
+from cuemseditor.CuemsProjectManager import CuemsDBManager
+from cuemseditor.CuemsUpload import CuemsUpload
+from cuemseditor.CuemsWsUser import CuemsWsUser
+from cuemseditor.node_reads import IdentityCollision, NodeLists
 
 
 class CuemsWsServer():
@@ -140,7 +134,7 @@ class CuemsWsServer():
             port = self.port
         self.port = port
         self.host = 'localhost'
-        newfeature = asyncio.get_event_loop().run_until_complete(self.run_async_server())
+        asyncio.get_event_loop().run_until_complete(self.run_async_server())
 
     async def run_async_server(self):
         """Initialise the DB, executor, and WebSocket server, then serve forever.
@@ -238,7 +232,7 @@ class CuemsWsServer():
             await self.unregister(user_session)
 
     #: The editor <-> UI wire version (not doc_version). +1 only, and only with
-    #: a bump row in tests/ws-command-responses.txt (test_payload_version).
+    #: a bump row in tests/data/ws-command-responses.txt (test_payload_version).
     PAYLOAD_VERSION = 1
 
     def payload_version_message(self):
@@ -309,7 +303,7 @@ class CuemsWsServer():
 
         matches = re.search(session_uuid_patern, path)
         if matches:
-            if (matches.groupdict()['uuid'] != None):
+            if matches.groupdict()['uuid'] is not None:
                 uuid = matches.groupdict()['uuid']
                 if uuid not in self.sessions:
                     Logger.debug(f"uuid not found {uuid}, creating new session")
@@ -383,6 +377,19 @@ class CuemsWsServer():
                 if user is not calling_user:
                     await user.outgoing.put(message)
                     Logger.debug('notifing {} {}'.format(user, list_type))
+
+    async def send_to_project_sessions(self, project_uuid, message, skip=None):
+        """Send *message* (an encoded frame), as given, to every session whose
+        last loaded, saved or created project is *project_uuid*, except
+        *skip* (869fat84r D20: ``media_check_report``).
+
+        ``users`` holds the last project a session touched, not strictly the
+        one open now: a session that moved on may receive a report for its
+        previous project, which the UI keys by project.
+        """
+        for user, project in list(self.users.items()):
+            if user is not skip and str(project) == str(project_uuid):
+                await user.outgoing.put(message)
 
     async def notify_others_config_changed(self, calling_user, value):
         """Tell every other session that a configuration document changed (FR-017).

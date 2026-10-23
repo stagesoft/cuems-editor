@@ -8,9 +8,31 @@ cuems-editor (0.1.1-1) UNRELEASED; urgency=medium
     0.1.1 (pyproject.toml, cuemseditor.__version__).
   * Depends: cuems-common (>= 1.3.1~), was (>= 1.0.0), a floor older than
     the node-identity contract.
-  * NOT YET RECONCILED: the release line debian/bookworm (0.1.0rc1-5 .. -7)
-    is 43 commits ahead and not absorbed. Do not publish until it is, then
-    re-verify the package relations.
+  * Reconciled with the release line origin/debian/bookworm at 69d749e
+    (0.1.0rc1-7), merged with its history (origin/rc1 is inside it; no
+    cherry-pick): the released entries 0.1.0rc1-4 .. -7 follow verbatim.
+    Absorbed: the pixel size, file size and MD5 of each media file stored at
+    upload and written on every save, new and duplicate included (869fat84r,
+    -4); the media check at open, before the load and after a save, its
+    media_check_report, the save-time re-measurement and the video-index
+    rebuild (-4), re-implemented on CuemsScript objects, one comparison
+    feeding both this report and the load report's media_repairs, never
+    gating a save; the save gate for media cues without a usable media block
+    or naming a file the library never saw (869fej07m, -5), on the current
+    wire (Cue with class audio|video); no /usr/lib/cuems/CACHEDIR.TAG (-6);
+    media name collisions with trashed or stray files (-7); node adoption
+    over the WebSocket (already in this line).
+  * A loaded but stopped project (the engine's project_status "loaded") is
+    not a show running: the media check no longer skips it.
+  * A 0.1.0rc1-4 behaviour that did not survive: a save into a directory the
+    editor cannot create files in no longer falls back to writing in place.
+    CuemsScript.save writes atomically and raises; reported to cuems-utils.
+  * stop_project (cuems-engine rc6-5): the editor sends no target and clears
+    a leftover one. Saving such a cue needs cuems-utils at or after the
+    re-cut of its xml-refactor-merge-candidate (script.xsd carries the value
+    from 0.1.0rc17); until then its tests are strict expected failures.
+  * The controller, the engine and the frontend upgrade together; mixed
+    versions are not supported.
   * 001-cuems-utils-migration: move onto the public cuemsutils surface.
     cuemsutils 0.1.0rc16 no longer ships cuemsutils.create_script, so the
     0.1.0rc1-3 editor died at import against it. Scripts now load and save
@@ -27,7 +49,68 @@ cuems-editor (0.1.1-1) UNRELEASED; urgency=medium
     Cue / CueOutput with class (cuems-utils 013), which a pre-05
     cuems-frontend mis-reads. Ships with the coordinated tag.
 
- -- Adrià Masip <adria@stagelab.coop>  Fri, 16 Oct 2026 20:00:00 +0200
+ -- Adrià Masip <adria@stagelab.coop>  Fri, 23 Oct 2026 12:00:00 +0200
+
+cuems-editor (0.1.0rc1-7) bookworm; urgency=medium
+
+  * Merge rc1 into debian/bookworm.
+  * Node adoption over the editor WebSocket (869ebkkme, PR #7): nodelist_get
+    with uuid validation, nodelist_modify relayed to the engine, map changes
+    pushed to every client, the engine's liveness view relayed as
+    node_status (load diagnosis verbatim); nodeconf_available no longer
+    cached. Adopting needs an engine with the nodelist_modify hop and a
+    running cuems-nodeconf; against an older engine the request errors.
+    Same code as the 0.1.0rc1-5+nodeadopt2 test-rig builds.
+  * Media library (PR #10): uploading a file named like a media in the
+    trash no longer fails with "UNIQUE constraint failed: media.unix_name";
+    it gets the versioned name <base>-NNN<ext>, as any duplicate does.
+    Delete and restore keep the media's unix_name (cues reference media by
+    filename): an untracked file already in the trash is moved aside, an
+    untracked live file in media/ refuses the restore with a clear error,
+    and both undo their own moves on rollback.
+  * The 869fej07m save gate is unchanged (already shipped since 0.1.0rc1-5;
+    rc1 got its back-port, PR #8). No new cuems-utils floor (>= 0.1.0rc15).
+
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 09 Oct 2026 14:14:49 +0200
+
+cuems-editor (0.1.0rc1-6) bookworm; urgency=medium
+
+  * packaging: stop shipping /usr/lib/cuems/CACHEDIR.TAG. The 0.1.0rc1-5
+    build picked it up from virtualenv and cuems-utils 0.1.0rc16 ships the
+    same path, so installing utils after the editor failed with "trying to
+    overwrite" unless forced. It is venv infrastructure like pyvenv.cfg
+    (already stripped); nothing reads it at runtime.
+  * No code change from 0.1.0rc1-5.
+
+ -- Ion Reguera <ion@stagelab.coop>  Fri, 09 Oct 2026 12:41:21 +0200
+
+cuems-editor (0.1.0rc1-5) bookworm; urgency=medium
+
+  * Save gate (869fej07m): new / update refuse a project in which an audio
+    or video cue arrives without a usable media block (no Media, null, an
+    empty object, no or empty file_name, no id) or names a file the library
+    has never seen, before anything is written - project row, ProjectMedia
+    rows and the XML stay untouched. A file in the media trash still passes
+    (it can be restored). The WS error carries the plain message naming the
+    cue instead of "<class 'KeyError'> 'file_name'". Closes the path by
+    which a save from the edit page silently emptied a cue's <Media/>.
+    No new cuems-utils floor (>= 0.1.0rc15 stays; rc16 adds the matching
+    guards in the library itself).
+
+ -- Ion Reguera <ion@stagelab.coop>  Thu, 08 Oct 2026 21:15:57 +0200
+
+cuems-editor (0.1.0rc1-4) bookworm; urgency=medium
+
+  * Merge rc1 into debian/bookworm (869fat84r): store each media file's
+    pixel size (video), size and MD5 at upload and write them into every
+    cue of a project on save (new, update, duplicate); legacy rows are
+    measured once at save, never hashed. At load and save, check the
+    project's media against the library and send a media_check_report to
+    the project's sessions; the project file is never rewritten at load.
+  * debian/control: require cuems-utils (>= 0.1.0rc15). An older utils
+    schema rejects every save of a project with a video cue.
+
+ -- Ion Reguera <ion@stagelab.coop>  Tue, 06 Oct 2026 20:18:57 +0200
 
 cuems-editor (0.1.0rc1-3) bookworm; urgency=medium
 

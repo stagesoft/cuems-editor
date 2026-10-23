@@ -1,27 +1,25 @@
 # SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
-import os
+import asyncio
+import json
 import math
+import os
 import shutil
-import subprocess
 import struct
-from cuemsutils.helpers import new_uuid
-
+import subprocess
 from enum import Enum, auto
-from peewee import *
 
-
-from cuemsutils.tools.StringSanitizer import StringSanitizer
+from cuemsutils.helpers import new_datetime, new_uuid
+from cuemsutils.log import Logger, logged
 from cuemsutils.tools.CopyMoveVersioned import CopyMoveVersioned
 from cuemsutils.tools.CTimecode import CTimecode
-from cuemsutils.log import logged, Logger
-from cuemsutils.helpers import new_datetime
+from cuemsutils.tools.StringSanitizer import StringSanitizer
+from peewee import JOIN, Case, DoesNotExist, fn, prefetch
 
-from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia
-from cuemseditor.CuemsDBProject import _md5
-from cuemseditor.CuemsErrors import *
-
+from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia
+from cuemseditor.CuemsErrors import NonExistentItemError, NotTimeCodeError
+from cuemseditor.media_values import _md5
 
 FFPROBE_TIMEOUT = 30  # seconds; local-disk probes finish in <1s, NFS/USB headroom
 # The engine's own timeout for the same query: a save waits on this probe.
@@ -113,6 +111,164 @@ def probe_duration(file_path):
     return CTimecode(start_seconds=seconds)
 
 
+# --- One probe for a file that changed (869fat84r D20) ----------------------
+
+PROBE_OK = 'ok'
+PROBE_NO_STREAM = 'no_stream'   # an audio file's picture, an image's duration
+PROBE_FAILED = 'failed'         # ffprobe failed, timed out, or said nonsense
+
+
+class MediaProbe:
+    """What one ffprobe call says about a file: its duration and the pixel
+    size of its first video stream, each with a state, so "this file has no
+    picture" is never mistaken for "the probe failed"."""
+
+    def __init__(self, duration=None, duration_state=PROBE_FAILED,
+                 width=None, height=None, picture_state=PROBE_FAILED):
+        self.duration = duration
+        self.duration_state = duration_state
+        self.width = width
+        self.height = height
+        self.picture_state = picture_state
+
+    def __repr__(self):
+        return (f'MediaProbe(duration={self.duration!s} [{self.duration_state}], '
+                f'picture={self.width}x{self.height} [{self.picture_state}])')
+
+
+def probe_media(file_path, timeout=DIMENSIONS_PROBE_TIMEOUT):
+    """Read a file's duration and pixel size with ONE ffprobe call.
+
+    The duration is the same ``format=duration`` field :func:`probe_duration`
+    reads, made into the same ``CTimecode``, so an unchanged file gives the
+    same stored string. Never raises.
+    """
+    cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+           '-show_entries', 'stream=width,height:format=duration',
+           '-of', 'json', file_path]
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        Logger.warning(f'could not probe {file_path}: {e}')
+        return MediaProbe()
+    if result.returncode != 0:
+        Logger.warning(f'could not probe {file_path} (ffprobe rc={result.returncode}): '
+                       f'{result.stderr.decode("utf8", errors="replace").strip()}')
+        return MediaProbe()
+    try:
+        data = json.loads(result.stdout.decode('utf8', errors='replace') or '{}')
+    except ValueError:
+        return MediaProbe()
+    probe = MediaProbe()
+    # Duration.
+    raw = (data.get('format') or {}).get('duration')
+    if raw in (None, '', 'N/A'):
+        probe.duration_state = PROBE_NO_STREAM
+    else:
+        try:
+            seconds = float(raw)
+            if math.isfinite(seconds) and seconds >= 0:
+                probe.duration = CTimecode(start_seconds=seconds)
+                probe.duration_state = PROBE_OK
+        except (TypeError, ValueError, OverflowError):
+            pass
+    # Picture.
+    streams = data.get('streams') or []
+    if not streams:
+        probe.picture_state = PROBE_NO_STREAM
+    else:
+        width, height = streams[0].get('width'), streams[0].get('height')
+        if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+            probe.width, probe.height, probe.picture_state = width, height, PROBE_OK
+    return probe
+
+
+# --- The videocomposer's frame index (869fat84r D20) -------------------------
+
+#: The video extensions whose ``.idx`` the engine's media sync carries to the
+#: nodes (``CuemsDeploy``, ``NodeEngine.ensure_video_indexes``). An index for
+#: any other movie is built by each node at arm, as before.
+INDEXED_VIDEO_EXTENSIONS = ('.mp4', '.mov', '.avi', '.mkv', '.mpg')
+VIDEO_INDEXER = 'cuems-videoindexer'
+VIDEO_INDEXER_TIMEOUT = 300  # seconds, as at upload
+
+INDEX_VALID = 'valid'
+INDEX_STALE = 'stale'       # a readable header for another size or mtime
+INDEX_MISSING = 'missing'   # no index, unreadable, or a format we do not know
+
+# videocomposer VideoFileInput.cpp IdxHeader: magic, uint32 version, int64
+# video_size, int64 video_mtime (whole seconds), int64 frameCount, ...
+_IDX_HEAD = struct.Struct('<4sIqqq')
+_IDX_MAGIC = b'CXID'
+_IDX_VERSION = 1
+
+
+def is_indexed_video(file_name):
+    return os.path.splitext(file_name)[1].lower() in INDEXED_VIDEO_EXTENSIONS
+
+
+def video_index_path(file_path):
+    """``/lib/media/a.mp4`` -> ``/lib/media/indexes/a.mp4.idx`` (the
+    videocomposer's ``getIndexPath``)."""
+    return os.path.join(os.path.dirname(file_path), 'indexes',
+                        os.path.basename(file_path) + '.idx')
+
+
+def video_index_state(file_path):
+    """Is the video's ``.idx`` the one the videocomposer would accept?
+
+    It compares what the videocomposer compares: magic, version, the video's
+    size and mtime (whole seconds), and a positive frame count. Fails closed:
+    anything it cannot read counts as missing.
+    """
+    try:
+        st = os.stat(file_path)
+        with open(video_index_path(file_path), 'rb') as f:
+            head = f.read(_IDX_HEAD.size)
+        magic, version, size, mtime, frames = _IDX_HEAD.unpack(head)
+    except (OSError, struct.error):
+        return INDEX_MISSING
+    if magic != _IDX_MAGIC or version != _IDX_VERSION or frames <= 0:
+        return INDEX_MISSING
+    if size != st.st_size or mtime != st.st_mtime_ns // 1_000_000_000:
+        return INDEX_STALE
+    return INDEX_VALID
+
+
+async def run_video_indexer(file_path, timeout=VIDEO_INDEXER_TIMEOUT):
+    """Run ``cuems-videoindexer`` on *file_path* as an asyncio subprocess (no
+    executor thread is held while it works).
+
+    Success is the exit code AND an index the videocomposer will accept, not
+    "an .idx file exists": a stale one exists too. Never raises.
+    """
+    exe = shutil.which(VIDEO_INDEXER)
+    if not exe:
+        Logger.warning(f'{VIDEO_INDEXER} is not installed: cannot rebuild the index of '
+                       f'{file_path}')
+        return False
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            exe, file_path, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            Logger.warning(f'{VIDEO_INDEXER} timed out after {timeout}s for {file_path}')
+            return False
+    except Exception as e:
+        Logger.warning(f'{VIDEO_INDEXER} could not run for {file_path}: {type(e).__name__}: {e}')
+        return False
+    if proc.returncode == 0 and video_index_state(file_path) == INDEX_VALID:
+        return True
+    tail = (out or b'').decode('utf8', errors='replace').strip()[-300:]
+    Logger.warning(f'{VIDEO_INDEXER} did not produce a valid index for {file_path} '
+                   f'(rc={proc.returncode}): {tail}')
+    return False
+
+
 class MediaType(Enum):
     """Media file category.
 
@@ -178,6 +334,24 @@ class CuemsDBMedia(StringSanitizer):
         except KeyError as e:
             Logger.error(f'can not read settings {e}')
 
+    def _free_filename(self, filename):
+        """Return *filename*, or ``<base>-NNN<ext>``, free on disk AND in the DB.
+
+        ``CopyMoveVersioned`` only looks at ``media_path``, but a trashed
+        media keeps its DB row (and the unique ``name``/``unix_name``
+        constraints) while its file sits in the trash directory, so an
+        upload with the same name passed the disk check and then failed
+        ``Media.create`` with an ``IntegrityError``.
+        """
+        (base, ext) = os.path.splitext(filename)
+        candidate = filename
+        i = 0
+        while (os.path.exists(os.path.join(self.media_path, candidate))
+               or Media.select().where((Media.unix_name == candidate) | (Media.name == candidate)).exists()):
+            i += 1
+            candidate = base + "-{:03d}".format(i) + ext
+        return candidate
+
     def new(self, tmp_file_path, filename, md5=None):
         """Intake a newly uploaded file: move it into the media library and create sidecars.
 
@@ -199,7 +373,7 @@ class CuemsDBMedia(StringSanitizer):
             filename: Sanitised target filename (no directory component).
             md5: the file's MD5 as the upload verified it (``None`` when the
                 caller has none); stored as ``file_md5`` (869fat84r, D18),
-                normalised by ``CuemsDBProject._md5`` (lowercase, or ``None``).
+                normalised by ``media_values._md5`` (lowercase, or ``None``).
 
         Returns:
             The actual destination filename (may differ from *filename* if
@@ -209,10 +383,9 @@ class CuemsDBMedia(StringSanitizer):
             Exception: Re-raises after rollback and cleanup on any failure.
         """
         with self.db.atomic() as transaction:
-            trash_state = False
             try:
                 dest_filename = None
-                dest_filename = CopyMoveVersioned.move(tmp_file_path, self.media_path, filename)
+                dest_filename = CopyMoveVersioned.move(tmp_file_path, self.media_path, self._free_filename(filename))
 
                 try:
                     _type = self.get_type(dest_filename)
@@ -251,7 +424,6 @@ class CuemsDBMedia(StringSanitizer):
                         dest_thumbnail_filename = self.create_video_thumbnail(dest_filename, None)
                 except Exception as e:
                     Logger.error(f'could not generate {_type} thumbnail or waveform; error : {e}')
-                    media_thumbnail_binary_data = None
 
                 # Stored like the duration (869fat84r): a movie's pixel size, so
                 # the engine does not probe the file when it arms a cue (a
@@ -310,7 +482,7 @@ class CuemsDBMedia(StringSanitizer):
                           fn.COUNT(Case(Project.in_trash, (('1', 1),), None)).alias('in_project_trash_count'))
                   .join(ProjectMedia, JOIN.LEFT_OUTER)
                   .join(Project, JOIN.LEFT_OUTER, on=(Project.uuid == ProjectMedia.project))
-                  .where((Media.in_trash == False))
+                  .where((Media.in_trash == False))  # noqa: E712 (peewee builds SQL from ==)
                   .group_by(Media).order_by(Media.created.desc()))
 
         medias = prefetch(
@@ -344,7 +516,7 @@ class CuemsDBMedia(StringSanitizer):
                           fn.COUNT(Case(Project.in_trash, (('1', 1),), None)).alias('in_project_trash_count'))
                   .join(ProjectMedia, JOIN.LEFT_OUTER)
                   .join(Project, JOIN.LEFT_OUTER, on=(Project.uuid == ProjectMedia.project))
-                  .where(Media.in_trash == True)
+                  .where(Media.in_trash == True)  # noqa: E712 (peewee builds SQL from ==)
                   .group_by(Media.uuid).order_by(Media.created.desc()))
         for media in medias:
             media_dict = {str(media.uuid): {'name': media.name, 'unix_name': media.unix_name, 'created': media.created, 'modified': media.modified, 'duration': media.duration, 'type': media.media_type, "in_projects": media.in_project_count, "in_trash_projects": media.in_project_trash_count}}
@@ -367,7 +539,7 @@ class CuemsDBMedia(StringSanitizer):
                 the trash.
         """
         try:
-            media = Media.get((Media.uuid == uuid) & (Media.in_trash == False))
+            media = Media.get((Media.uuid == uuid) & (Media.in_trash == False))  # noqa: E712 (peewee builds SQL from ==)
             with self.db.atomic() as transaction:
                 try:
                     media.update(name=StringSanitizer.sanitize_name(data['uuid']['name']), description=StringSanitizer.sanitize_text_size(data['uuid']['description']), modified=new_datetime()).execute()
@@ -402,7 +574,7 @@ class CuemsDBMedia(StringSanitizer):
             project_trash_list = list()
             media_projects_query = media.projects()
             for project in media_projects_query:
-                if project.in_trash == False:
+                if project.in_trash == False:  # noqa: E712 (peewee builds SQL from ==)
                     project_list.append(str(project.uuid))
                 else:
                     project_trash_list.append(str(project.uuid))
@@ -475,13 +647,40 @@ class CuemsDBMedia(StringSanitizer):
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
 
+    def _move_keeping_name(self, src_path, dest_dir, moves):
+        """Move *src_path* into *dest_dir* under the same name, logging it in *moves*.
+
+        Projects reference media by filename (``ProjectMedia.media_filename``,
+        the cue XML), so a trashed or restored file must keep its
+        ``unix_name``: ``CopyMoveVersioned`` would rename the moved file
+        instead and leave the DB row pointing at a path that does not exist.
+        ``unix_name`` is unique, so a file already at the destination is not
+        tracked by any row; it is moved aside to ``<base>-NNN<ext>``.
+        """
+        dest_path = os.path.join(dest_dir, os.path.basename(src_path))
+        if os.path.exists(dest_path):
+            aside = CopyMoveVersioned.move(dest_path, dest_dir)
+            moves.append((dest_path, os.path.join(dest_dir, aside)))
+            Logger.warning(f'{dest_path} is not tracked by the media library; moved it aside to {aside}')
+        shutil.move(src_path, dest_path)
+        moves.append((src_path, dest_path))
+
+    def _undo_moves(self, moves):
+        """Reverse the moves logged by ``_move_keeping_name``, newest first."""
+        for src_path, dest_path in reversed(moves):
+            try:
+                if os.path.exists(dest_path) and not os.path.exists(src_path):
+                    shutil.move(dest_path, src_path)
+            except Exception as e:
+                Logger.error(f'error: {type(e)} {e}; trying to move {dest_path} back to {src_path}')
+
     def delete(self, uuid):
         """Soft-delete a media file by moving it and its sidecars to the trash.
 
         Moves the media file, thumbnail, and (for audio) waveform to the
-        corresponding trash sub-directories via ``CopyMoveVersioned.move``.
-        Sets ``Media.in_trash = True`` atomically.  Reverses filesystem moves
-        on transaction rollback.
+        corresponding trash sub-directories via ``_move_keeping_name``, so
+        ``unix_name`` stays valid.  Sets ``Media.in_trash = True``
+        atomically.  Reverses filesystem moves on transaction rollback.
 
         Args:
             uuid: UUID of the live media file to trash.
@@ -494,54 +693,26 @@ class CuemsDBMedia(StringSanitizer):
             media = Media.get((Media.uuid == uuid) & (Media.in_trash == trash_state))
 
             with self.db.atomic() as transaction:
+                moves = []
                 try:
-                    dest_filename = None
-                    dest_thumbnail_filename = None
-                    file_path = self.get_file_path(media.unix_name)
                     file_thumbnail_path = self.get_thumbnail_path(media.unix_name)
-
-                    try:
-                        if os.path.exists(file_thumbnail_path):
-                            dest_thumbnail_filename = CopyMoveVersioned.move(file_thumbnail_path, self.thumbnail_trash_path)
-                    except Exception as e:
-                        Logger.error("error: {} {}; trying to move thumbnail to trash".format(type(e), e))
-                        raise e
+                    if os.path.exists(file_thumbnail_path):
+                        self._move_keeping_name(file_thumbnail_path, self.thumbnail_trash_path, moves)
 
                     if self.is_audio(media):
-                        dest_waveform_filename = None
                         file_waveform_path = self.get_waveform_path(media.unix_name)
-                        try:
-                            if os.path.exists(file_waveform_path):
-                                dest_waveform_filename = CopyMoveVersioned.move(file_waveform_path, self.waveform_trash_path)
-                        except Exception as e:
-                            Logger.error("error: {} {}; trying to move waveform to trash".format(type(e), e))
-                            raise e
+                        if os.path.exists(file_waveform_path):
+                            self._move_keeping_name(file_waveform_path, self.waveform_trash_path, moves)
 
-                    dest_filename = CopyMoveVersioned.move(file_path, self.trash_path)
+                    self._move_keeping_name(self.get_file_path(media.unix_name), self.trash_path, moves)
                     media.in_trash = True
                     media.save()
                     Logger.debug('updating instance in db: {}'.format(media))
                 except Exception as e:
                     Logger.error("error: {} {}; trying to move file to trash, rolling back database".format(type(e), e))
                     transaction.rollback()
-                    if dest_filename is None and dest_thumbnail_filename is None:
-                        if self.is_audio(media):
-                            if dest_waveform_filename is None:
-                                raise e
-                        else:
-                            raise e
-
                     Logger.debug("moving files back to media folder")
-                    if os.path.exists(self.get_file_path(dest_filename, trash_state=True)):
-                        shutil.move(self.get_file_path(dest_filename, trash_state=True), self.get_file_path(media.unix_name))
-
-                    if os.path.exists(self.get_thumbnail_path(dest_thumbnail_filename, trash_state=True)):
-                        shutil.move(self.get_thumbnail_path(dest_thumbnail_filename, trash_state=True), self.get_thumbnail_path(media.unix_name))
-
-                    if self.is_audio(media):
-                        if os.path.exists(self.get_waveform_path(dest_waveform_filename, trash_state=True)):
-                            shutil.move(self.get_waveform_path(dest_waveform_filename, trash_state=True), self.get_waveform_path(media.unix_name))
-
+                    self._undo_moves(moves)
                     raise e
 
         except DoesNotExist:
@@ -551,68 +722,50 @@ class CuemsDBMedia(StringSanitizer):
         """Restore a trashed media file and its sidecars back to the media library.
 
         Moves files from the trash sub-directories back to the live media
-        directories via ``CopyMoveVersioned.move``.  Sets
-        ``Media.in_trash = False`` atomically.  Reverses filesystem moves
-        on transaction rollback.
+        directories via ``_move_keeping_name``, so ``unix_name`` stays valid.
+        Sets ``Media.in_trash = False`` atomically.  Reverses filesystem
+        moves on transaction rollback.
+
+        A live file already at ``<media_path>/<unix_name>`` is not tracked by
+        the library, but cues may play it by name, so the restore is refused
+        rather than moving it aside.
 
         Args:
             uuid: UUID of a trashed media file to restore.
 
         Raises:
             NonExistentItemError: If no trashed media file with *uuid* exists.
+            FileExistsError: If an untracked file already holds the name in
+                the media directory.
         """
         try:
             trash_state = True
             media_trash = Media.get((Media.uuid == uuid) & (Media.in_trash == trash_state))
 
-            with self.db.atomic() as transaction:
-                try:
-                    dest_filename = None
-                    dest_thumbnail_filename = None
-                    file_path = self.get_file_path(media_trash.unix_name, trash_state=True)
-                    file_thumbnail_path = self.get_thumbnail_path(media_trash.unix_name, trash_state=True)
+            if os.path.exists(self.get_file_path(media_trash.unix_name)):
+                raise FileExistsError(f'cannot restore {media_trash.unix_name}: a file with that name, not tracked by the media library, '
+                                      f'is already in {self.media_path}; move it away first')
 
-                    try:
-                        if os.path.exists(file_thumbnail_path):
-                            dest_thumbnail_filename = CopyMoveVersioned.move(file_thumbnail_path, self.thumbnail_path)
-                    except Exception as e:
-                        Logger.error("error: {} {}; trying to move thumbnail from trash".format(type(e), e))
-                        raise e
+            with self.db.atomic() as transaction:
+                moves = []
+                try:
+                    file_thumbnail_path = self.get_thumbnail_path(media_trash.unix_name, trash_state=True)
+                    if os.path.exists(file_thumbnail_path):
+                        self._move_keeping_name(file_thumbnail_path, self.thumbnail_path, moves)
 
                     if self.is_audio(media_trash):
-                        dest_waveform_filename = None
                         file_waveform_path = self.get_waveform_path(media_trash.unix_name, trash_state=True)
-                        try:
-                            if os.path.exists(file_waveform_path):
-                                dest_waveform_filename = CopyMoveVersioned.move(file_waveform_path, self.waveform_path)
-                        except Exception as e:
-                            Logger.error("error: {} {}; trying to waveform from trash".format(type(e), e))
-                            raise e
+                        if os.path.exists(file_waveform_path):
+                            self._move_keeping_name(file_waveform_path, self.waveform_path, moves)
 
-                    dest_filename = CopyMoveVersioned.move(file_path, self.media_path)
+                    self._move_keeping_name(self.get_file_path(media_trash.unix_name, trash_state=True), self.media_path, moves)
                     media_trash.in_trash = False
                     media_trash.save()
                     Logger.debug('updating instance in db: {}'.format(media_trash))
                 except Exception as e:
-                    Logger.error("error: {} {}; trying to move file to trash, rolling back database".format(type(e), e))
+                    Logger.error("error: {} {}; trying to move file from trash, rolling back database".format(type(e), e))
                     transaction.rollback()
-                    if dest_filename is None and dest_thumbnail_filename is None:  # if move or copy where not successful we don't need to clean and can end here forwarding the exception, else continue cleaning and then forward the exception
-                        if self.is_audio(media_trash):
-                            if dest_waveform_filename is None:
-                                raise e
-                        else:
-                            raise e
-
-                    if os.path.exists(self.get_file_path(dest_filename)):
-                        shutil.move(self.get_file_path(dest_filename), self.get_file_path(media_trash.unix_name, trash_state=True))
-
-                    if os.path.exists(self.get_thumbnail_path(dest_thumbnail_filename)):
-                        shutil.move(self.get_thumbnail_path(dest_thumbnail_filename), self.get_thumbnail_path(media_trash.unix_name, trash_state=True))
-
-                    if self.is_audio(media_trash):
-                        if os.path.exists(self.get_waveform_path(dest_waveform_filename)):
-                            shutil.move(self.get_waveform_path(dest_waveform_filename), self.get_waveform_path(media_trash.unix_name, trash_state=True))
-
+                    self._undo_moves(moves)
                     raise e
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
@@ -744,7 +897,7 @@ class CuemsDBMedia(StringSanitizer):
                 result = subprocess.run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'warning', '-i', file_path, '-vf', f'scale={str(self.thumbnail_size[0])}:-1', '-frames:v', '1', '-update', 'true', thumbnail_file_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
             else:
                 time_option = "-ss"
-                timecode = f'200ms'
+                timecode = '200ms'
                 result = subprocess.run(['ffmpeg', time_option, timecode, '-y', '-hide_banner', '-loglevel', 'warning', '-i', file_path, '-vf', f'scale={str(self.thumbnail_size[0])}:-1', '-vframes', '1', '-update', 'true', thumbnail_file_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
         except subprocess.TimeoutExpired:
             Logger.warning(f'ffmpeg thumbnail timed out for {filename}')

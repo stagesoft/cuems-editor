@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 """pytest bootstrap for cuems-editor.
 
 Ensures the package under ``src/`` is importable when the editor is not
@@ -5,7 +8,10 @@ pip-installed, and falls back to a sibling ``cuems-utils/src`` checkout for
 ``cuemsutils`` in a dev tree (in CI / on a deployed host both are installed).
 """
 import os
+import shutil
 import sys
+
+import pytest
 
 _here = os.path.dirname(__file__)
 _src = os.path.abspath(os.path.join(_here, '..', 'src'))
@@ -20,11 +26,8 @@ except ImportError:
     if os.path.isdir(_utils_src):
         sys.path.insert(0, _utils_src)
 
-import shutil
 
-import pytest
-
-FIXTURE_XML = os.path.join(_here, 'fixtures', 'script_minimal.xml')
+FIXTURE_XML = os.path.join(_here, 'data', 'script_minimal.xml')
 
 # Canned durations keyed by media unix_name (seconds). Used to monkeypatch
 # probe_duration so tests need no ffprobe / real media bytes.
@@ -62,8 +65,9 @@ def library(tmp_path):
 
     Leaves the DB connection CLOSED so the repair script's main() can open it.
     """
-    from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia, database
-    from cuemsutils.helpers import new_uuid, new_datetime
+    from cuemsutils.helpers import new_datetime, new_uuid
+
+    from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia, database
 
     root = str(tmp_path)
     for sub in ('media', 'trash/media', 'projects/proj1', 'trash/projects'):
@@ -105,10 +109,29 @@ def library(tmp_path):
         database.close()
 
 
+FIXTURE_013_XML = os.path.join(_here, 'data', 'script_minimal_013.xml')
+
+
+@pytest.fixture
+def library013(library):
+    """The temporary library with a version-2 (013) script as ``proj1``."""
+    shutil.copy(FIXTURE_013_XML, os.path.join(library.projects_dir, 'proj1', 'script.xml'))
+    return library
+
+
+# Canned pixel sizes keyed by media unix_name (869fat84r): the repair tool's
+# Pass A re-probes video rows. Anything else probes as unknown.
+CANNED_DIMS = {
+    'file_video.ext': (1920, 1080),
+}
+
+
 @pytest.fixture
 def canned_probe(monkeypatch):
-    """Patch repair_durations.probe_duration with the CANNED_SECONDS map."""
+    """Patch repair_durations.probe_duration with the CANNED_SECONDS map, and
+    repair_durations.probe_dimensions with CANNED_DIMS."""
     from cuemsutils.tools.CTimecode import CTimecode
+
     import cuemseditor.repair_durations as rd
 
     def _fake(path):
@@ -119,4 +142,28 @@ def canned_probe(monkeypatch):
         return CTimecode(start_seconds=CANNED_SECONDS[name])
 
     monkeypatch.setattr(rd, 'probe_duration', _fake)
+    monkeypatch.setattr(
+        rd, 'probe_dimensions',
+        lambda path: CANNED_DIMS.get(os.path.basename(path), (None, None)),
+        raising=False)
     return _fake
+
+
+# --- markers come from the directory (003, FR-035) --------------------------------------------
+
+_MARKED_DIRECTORIES = ('unit', 'integration', 'contract')
+
+
+def pytest_collection_modifyitems(config, items):
+    """Mark each test ``unit`` / ``integration`` / ``contract`` after the directory it lives in.
+
+    A test cannot be mislabelled by forgetting a decorator. A test outside the three directories gets no
+    mark, which ``tests/contract/test_layout.py`` reports.
+    """
+    for item in items:
+        try:
+            top = os.path.relpath(str(item.path), _here).split(os.sep)[0]
+        except ValueError:
+            continue
+        if top in _MARKED_DIRECTORIES:
+            item.add_marker(getattr(pytest.mark, top))

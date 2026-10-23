@@ -1,106 +1,53 @@
-# Tests and Development Files
+<!--
+SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
 
-This directory contains test files, development scripts, and web interface for testing the CUEMS Editor WebSocket functionality.
-
-## Contents
-
-### Web Testing Interface
-- **`index.html`** - Web UI for testing WebSocket file uploads
-- **`static/`** - Static assets (JavaScript crypto libraries, CSS)
-  - `static/scripts/criptojs/` - CryptoJS library for MD5 hashing
-  - `static/stylesheets/main.css` - Upload UI styles
-
-### Test Files
-- **`test.py`** - Basic tests
-- **`test_db.py`** - Database tests
-- **`test_nng.py`** - NNG communication tests
-- **`ws-command-responses.txt`** - WebSocket command examples
-
-### Legacy Files (Reference Only)
-- **`legacy/`** - Directory containing old Python source files
-  - All original Python modules (CuemsWsServer.py, CuemsDBModel.py, etc.)
-  - Old scripts (ws-server.py)
-  - **Note**: These are duplicates kept for reference only
-  - **Active source code** is in `src/cuemseditor/`
-
-## Using the Web Interface
-> #### **Note**: All bash code that use `cd` are referenced from the project root.
-
-
-### 1. Start the WebSocket Server
+# Tests
 
 ```bash
-cd src/cuemseditor/
-python3 cli.py --port 9092
+pip install -e ".[dev]"            # pytest, pytest-cov, pytest-xdist, ruff
+pytest                             # everything
+pytest tests/unit tests/contract -n auto      # what CI's unit job runs (no network)
+pytest tests/integration           # what CI's integration job runs
 ```
 
-### 2. Serve the Web Interface
+`cuemsutils` must be the version the package bounds (`>=0.1.1,<0.1.2`). Two tests read a sibling checkout when there is
+one (`../cuems-utils/tests/data/corpus/`, `../cuems-nodeconf`) and skip when there is not.
 
-Option A - Simple Python HTTP Server:
-```bash
-cd tests/
-python3 -m http.server 8000
-```
+## Layout
 
-Then open: http://localhost:8000/index.html
+The shape cuems-utils uses, so a contributor meets one layout across the ecosystem.
 
-Option B - Using Apache (Production):
-- Configure Apache to serve these files from `/var/www/cuems-editor/`
-- See `apache-conf/000-default-le-ssl.conf` for reference
+| Directory | What goes there |
+|---|---|
+| `unit/` | Pure logic. Every socket, JACK and subprocess is mocked. Safe under `pytest-xdist`. |
+| `integration/` | A test that binds or connects a real socket, starts a real subprocess or player, touches JACK or ALSA, or sleeps 0.5 s or more for correctness. |
+| `contract/` | Repository and packaging invariants: the public `cuemsutils` surface, every module importing, the protocol reference, payload version, changelog completeness, the layout itself. |
+| `support/` | Shared helpers. `paths.py` is the one place the data path is written (`DATA_DIR`). |
+| `data/` | Every non-test data file: the fixtures (`script_minimal*.xml`, `conf/`), the protocol reference `ws-command-responses.txt`, the golden `media_check_report` frames, the released-builds manifest. See `data/README.md`. |
+| `packaging/` | `bookworm-build.sh`: builds the `.deb` in an unprivileged bookworm chroot. Not a hosted-CI job. |
 
-### 3. Test WebSocket Upload
+**Marks come from the directory.** `conftest.py` adds `unit`, `integration` or `contract` to each test after the
+directory it lives in, so a test cannot be mislabelled by forgetting a decorator. `--strict-markers` is on.
+`contract/test_layout.py` fails on a test module at the root of `tests/`, in a directory that is not one of these,
+or an empty `integration/`.
 
-1. Open `index.html` in browser
-2. Update WebSocket URL if needed (default: `ws://localhost:9092/upload`)
-3. Select a file and upload
-4. Monitor console for MD5 hash calculation and upload progress
+A unit test that needs something an integration test would use, mocks it. Cross-imports between test modules stay
+inside one directory (`unit/` imports `unit/` and `support/`); anything shared by several directories belongs in
+`support/`.
 
-## File Paths in index.html
+## Rules the tests enforce
 
-The HTML references static files with relative paths:
-```html
-<script src="static/scripts/criptojs/rollups/md5.js"></script>
-<script src="static/scripts/criptojs/components/lib-typedarrays-min.js"></script>
-<link rel="stylesheet" href="./static/stylesheets/main.css">
-```
+- A wire change updates `data/ws-command-responses.txt` and is pinned by a test that fails against the old behaviour
+  (constitution I). The `media_check_report` frame is compared with `data/golden/`, captured from the released editor.
+- `src/` uses none of the retired surface (`contract/test_retired_surface.py`) and only the public `cuemsutils` surface
+  (`contract/test_public_surface.py`).
+- Every shipped Debian build is in `debian/changelog` and `CHANGELOG.md` (`contract/test_changelog_complete.py`, manifest
+  `data/released-builds.txt`). Add a line when you release.
+- Strict expected failures name their reason and the report that explains them; they turn red when the thing they wait
+  for arrives (the `stop_project` and `get_media` markers wait for the cuems-utils re-cut).
 
-These paths work when serving from this `tests/` directory.
+## The manual upload page
 
-## Apache Integration
-
-For production deployment with Apache:
-
-1. Copy web files to Apache document root:
-   ```bash
-   sudo cp -r tests/index.html tests/static /var/www/cuems-editor/
-   ```
-
-2. Configure Apache proxy (see `apache-conf/000-default-le-ssl.conf`):
-   ```apache
-   ProxyPass "/ws" "ws://127.0.0.1:9092/"
-   ProxyPass "/upload" "ws://127.0.0.1:9092/upload"
-   ```
-
-3. Access via: https://your-domain/cuems-editor/index.html
-
-## Notes
-
-- **Web interface is for testing only** - Not part of the Python package
-- **Static files are client-side** - Served by web server, not WebSocket server
-- **WebSocket server** - Runs separately on port 9092
-- **Legacy scripts** - Old files kept for reference, use new `cli.py` instead
-
-## Active Package
-
-The production code is in `src/cuemseditor/`:
-```bash
-cd src/cuemseditor
-python3 cli.py            # Run server
-python3 cli.py --port 9092  # Specify port
-```
-
-Or after installation:
-```bash
-/usr/lib/cuems/bin/cuems-editor
-systemctl start cuems-editor
-```
+Not a test: `dev/scripts/manual-ui/` (see its README).

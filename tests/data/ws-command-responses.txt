@@ -1,0 +1,468 @@
+/ws
+
+Commands 													 ->	Responses
+																
+
+																->  {"type" : "payload_version", "value": 1}		(first frame on every connection)
+																->  {"type" : "initial_mappings", "value": "mapings_json"}		(the mapping document only)
+																->  {"type" : "node_list", "value": {"nodes": [...], "new_nodes": [...], "nodeconf_available": bool}}
+																->  {"type" : "users", "value": "connected_users_count"}
+
+																->  {"type" : "project_update", "value" : "project_uuid"}
+																->  {"type" : "file_update", "value" : "file_uuid"}
+																->  {"type" : "list_update", "value": "project_list"}
+																->  {"type" : "list_update", "value": "project_trash_list"}
+																->  {"type" : "list_update", "value": "file_list"}
+																->  {"type" : "list_update", "value": "file_trash_list"}
+
+{"action" : "project_list"}  									->  {"type": "project_list", "value": "project_list_json"}
+{"action" : "project_load", "value" : "project_uuid"}   		->  {"type": "project", "value": "project_json"}
+																->  {"type": "document_load_report", "value": {"report_id": "uuid", "project_uuid": "uuid", "document": "path", "outcome": "clean|converted|repaired", "file_differs_from_loaded": false, "conversions": [...], "repairs": [...], "media_repairs": [{"cue_id": "uuid", "file_name": "name", "field": "duration|pixel_size|file_size|file_md5", "stored": "text", "current": "text|null"}], "acknowledgment_required": false}}
+																or, instead of both:
+																->  {"type": "document_load_failed", "value": {"project_uuid": "uuid", "document": "path", "cue_id": "uuid|null", "field": "name|null", "message": "library text", "next_steps": ["restore_from_conversion_backup", "correct_field_by_hand", "remove_document"]}}
+{"action" : "repair_acknowledge", "value" : {"project_uuid": "uuid", "report_id": "uuid"}}	->  {"type": "repair_acknowledge", "value": {"project_uuid": "uuid", "report_id": "uuid"}}
+																->  then {"type": "media_check_report", "value": media_report}   (context "open", to the requester)
+{"action" : "project_ready", "value" : "project_uuid"}   		->  {"type": "project_ready", "value": "project_uuid"}
+																->  then {"type": "media_check_report", "value": media_report}   (to the requester and every session on the project)
+{"action" : "project_deploy", "value" : "project_uuid"}   		->  {"type": "project_deploy", "value": "project_uuid"}
+{"action" : "project_status"}  									->  {"type": "project_status", "value":  {"status": "running|loaded|none", "project_uuid": "project_uuid", "project_unix_name": "unix_name"}}
+																	(relayed from the engine as it answers: "running" a show is playing, "loaded" a project is loaded and stopped, "none" no project.
+																	 Since cuems-engine 0.1.0rc6-4 the status is three-state and carries project_unix_name; "project_uuid" is "" when none.
+																	 The media check treats "running" as a show playing and "loaded"/"none" as not; an unanswered query is a fourth, distinct case.)
+{"action" : "project_unload", "value" : "project_uuid"}   		->  {"type": "project_unload", "value": "project_uuid"}
+
+{"action" : "project_new", "value" : "project_json", "unix_name" : "unix_name_string"}   		->  {"type": "project_save", "value": "project_uuid"}
+{"action" : "project_save", "value" : "project_json"}   		->  {"type": "project_save", "value": "project_uuid"}		(value is {"CuemsScript": …} and nothing beside it; CuemsScript.from_json refuses any other top-level key)
+																->  {"type": "repair_save_refused", "value": {"project_uuid": "uuid", "report_id": "uuid", "reason": "unacknowledged|preserve_failed"}}
+{"action" : "project_save", "value" : "project_json"}   		->  {"type": "project_save", "value": "project_uuid"}
+																->  then {"type": "media_check_report", "value": media_report}   (context "save", to every session on the project)
+{"action" : "project_delete", "value" : "project_uuid"} 		->  {"type": "project_delete", "value": "project_uuid"}
+{"action" : "project_trash_list"}  							 	->  {"type": "project_trash_list", "value": "project_trash_list_json"}
+{"action" : "project_restore", "value" : "project_uuid"}  		->  {"type": "project_recover", "value": "project_uuid"}
+{"action" : "project_trash_delete", "value" : "project_uuid"}	->  {"type": "project_trash_delete", "value": "project_uuid"}
+{"action" : "project_duplicate", "value" : "project_uuid"}		->  {"type": "project_duplicate", "value": {"uuid": "project_uuid", "new_uuid": "duplicated_project_uuid", "report": {...} }}
+{"action" : "project_export", "value" : "project_uuid"}			->  {"type": "project_export", "value": exported_file_url}
+
+{"action" : "file_list"}  										->  {"type": "file_list", "value": "file_list_json"}
+{"action" : "file_load_meta", "value" : "file_uuid"}  			->  {"type": "file_load_meta", "value": "file_metadata_json"}
+{"action" : "file_load", "value" : "file_uuid"}  				->  { Binary Message }
+{"action" : "file_load_thumbnail", "value" : "file_uuid"}  		->  { Binary Message }
+{"action" : "file_load_waveform", "value" : "file_uuid"}  		->  { Binary Message }
+{"action" : "file_save", "value" : "file_json"}  				->  {"type": "file_save", "value": "file_uuid"}
+{"action" : "file_delete", "value" : "file_uuid"}  				->  {"type": "file_delete", "value": "file_uuid"}
+{"action" : "file_trash_list"}  								->  {"type": "file_trash_list", "value": "file_trash_list_json"}
+{"action" : "file_restore", "value" : "file_uuid"}  			->  {"type": "file_recover", "value": "file_uuid"}
+{"action" : "file_trash_delete", "value" : "file_uuid"}			->  {"type": "file_trash_delete", "value": "file_uuid"}
+
+{"action" : "hw_discovery"}   									->  {"type": "hw_discovery", "value": "hardware_json"}
+{"action" : "nodelist_modify", "value" : "node_uuid", "modify_action" : "ADD|REMOVE"}		->  {"type": "nodelist_modify", "value": "OK"}
+{"action" : "node_set", "value" : {"node_uuid": "uuid", "alias": "text|null"}}	->  {"type": "node_set", "value": {"node_uuid": "uuid", "alias": "text|null"}}		(caller), then node_list to ALL sessions
+																or: {"type": "node_set_refused", "value": {"node_uuid": "uuid", "reason": "unavailable|timeout|nodeconf_error|not_operator_field|invalid_value", "message": "text"}}		(caller only)
+{"action" : "nodelist_get"}										->  {"type": "node_list", "value": {"nodes": [...], "new_nodes": [...], "nodeconf_available": bool}}
+{"action" : "schema_descriptor", "value" : "script|settings|network_map|project_mappings|project_settings|hardware_outputs"}	->  {"type": "schema_descriptor", "value": {"schema": "name", "types": [{"key": "schema:TypeName", "fields": [{"name", "xsd_type", "required", "repeated", "order", "kind", "enum_values", "default", "repairability"}], "instance": {...}}]}}
+{"action" : "config_load", "value" : {"schema": "settings|network_map|project_mappings", "project_uuid": "uuid"}}	->  {"type": "config_load", "value": {"schema": "name", "project_uuid": "uuid|null", "exists": true, "revision": "md5|null", "document": {...}}}		(caller only)
+																or: {"type": "config_load_failed", "value": {"schema", "project_uuid", "field": "name|null", "location": [...]|null, "rule": "name|null", "message": "library text"}}		(caller only)
+{"action" : "config_save", "value" : {"schema": "name", "document": {...}, "base_revision": "md5|null", "project_uuid": "uuid"}}	->  {"type": "config_save", "value": {"schema": "name", "project_uuid": "uuid|null", "revision": "md5", "restart": [{"service": "name", "where_active": bool}]}}		(caller only; project_uuid only for project_mappings/project_settings; see below)
+																or: {"type": "config_conflict", "value": {"schema", "project_uuid", "revision": "md5|null", "document": {...}}}		(caller only)
+																or: {"type": "config_save_refused", "value": {"schema", "project_uuid", "field", "location", "rule", "message"}}		(caller only)
+																->  {"type": "config_changed", "value": {"schema": "name", "project_uuid": "uuid|null", "revision": "md5"}}		(every OTHER session, after a config_save)
+{"action" : "node_status"}										->  {"type": "node_status", "value": {"alive": [...], "adopted": [...], "controller": "uuid", "age_s": 0.1, "missing": [...], "unreachable": [...]}}
+
+
+Payload version (editor <-> UI wire version; NOT doc_version)
+
+{"type": "payload_version", "value": <int>} is the first frame on every
+connection, before users, session_id and initial_mappings. A peer that never
+sends it speaks version 0, the wire before 001. Bump +1 when an existing
+message loses, renames or reorders a key, changes a value's form (the string
+booleans included) or changes audience. Do not bump for a new message type
+or a new optional key. Every bump is a row here; tests/test_payload_version.py
+fails if the advertised integer has none.
+
+payload_version 1: the coordinated xml-refactor-merge-candidate wire. It has
+not shipped, so it was restated on 2026-10-12 rather than bumped, and the
+restatement is the definition: every boolean on the wire is a JSON true /
+false. A client built for version 1 needs no string-boolean handling.
+
+Contents: project deltas (a) (b) (c) (d) (e); initial_template not sent
+(clients build from schema_descriptor's per-type instance, which is not
+directly usable until cuems-frontend UR-1 is fixed in cuems-utils; see the
+schema_descriptor section); node_list
+carries the node arrays and nodeconf_available, and initial_mappings no
+longer does; adopted / online on node_list nodes and autoload / enabled /
+timecode on project are JSON booleans (8f8b46e, folded in, not bumped);
+config_save's reply is an object {schema, project_uuid, revision, restart},
+not "OK" (002, folded in, not bumped).
+
+schema_descriptor / config_load / config_save (caller only, except config_changed)
+
+schema_descriptor answers with ConfigManager.get_schema_descriptor for the
+named schema, rendered as JSON: enums as their values, a default that is a
+factory or absent as null (as "instance" renders it). An unknown name is the
+error frame.
+
+A type's "instance" is NOT directly usable as a document until cuems-frontend
+UR-1 is fixed in cuems-utils: it is not in to_wire() shape, and required
+fields have null defaults, so a document built from it unedited is refused
+on save. That holds for the script's types and for the config schemas' root
+types too (specs/002-config-round-trip/evidence/descriptor-instance-config.txt:
+all four refused by from_json + save). Gate G3 pins it.
+
+network_map's node "uuid" is rendered as a one-value enumeration, the NOT
+PROVISIONED sentinel (00000000-0000-0000-0000-000000000000): the descriptor
+flattens the uuid union type (a known cuems-utils gap, its requirements doc
+§5). A form must render that field as free text, not as a choice.
+
+The four config domains and their files: "settings" (settings.xml) and
+"network_map" (network_map.xml) are the controller's; "project_mappings"
+(mappings.xml) and "project_settings" (settings.xml) are a project's, and
+need "project_uuid" in the inbound value — the document alone does not say
+which project it belongs to — resolved to a unix_name the same way
+project_ready resolves one (CuemsDBProject.get_project_unix_name); missing or
+unknown is the error frame. "script", "hardware_outputs", anything that is not
+a schema name, and default_mappings.xml are the error frame on both actions.
+
+config_load (002) serves a document as the file holds it: "document" is
+ConfigManager.to_wire(<schema>) on a manager loaded for this request (never
+the startup copy), "revision" is the md5 of the file's bytes. Scalars come as
+the library projects them. With no file, "exists" is false, "revision" null
+and "document" the descriptor "instance" of the domain's root type: a form's
+starting point, which config_save also accepts as it is: every required leaf is
+seeded with a placeholder its type accepts (gate G3, closed).
+"network_map" is read only. "project_settings" is served like
+"project_mappings", with a "project_uuid" (gate G2, closed). A file the
+library cannot load (e.g. a settings.xml still in the pre-013
+device shape) is config_load_failed, with the library's message.
+
+config_save writes a WHOLE document. "base_revision" is required: the
+revision config_load returned, or null for "I expect no file". A request
+without the key is the error frame and writes nothing. Under a per-file lock
+the file is hashed again: a different md5 writes nothing and answers
+config_conflict with the current revision and document (for
+"project_settings", whose document cannot be loaded yet, "document" is null).
+Otherwise the bytes just hashed are copied to
+<library>/trash/config/<scope>_<file stem>_<YYYYmmddTHHMMSS>.xml (scope
+"controller" or the project's unix_name; if that copy fails, the error frame
+and nothing is saved; no UI purges these copies), the document is built with
+ConfigManager.from_json (cuemsutils 014, 001 upstream report UR-5) and
+written with its own save(path). The reply carries the new file's md5 and
+"restart": for "settings", [{"service": "cuems-controller-engine",
+"where_active": false}, {"service": "cuems-node-engine", "where_active":
+true}] (the second only where it runs; the editor cannot see that, and
+restarts nothing); for the other domains []. Every other session then gets
+config_changed: its copy is stale, re-run config_load before editing.
+
+A document the library refuses is config_save_refused, the file unchanged:
+an IngestError (not a document of that kind, e.g. an unknown top-level key)
+or a SchemaError / ValidationError from from_json or from save's T1 check.
+"location" is the library violation's location as a list (e.g. [null,
+"default"]), "field" its second element, "rule" the violated rule (e.g.
+"XsdEnumerationFacets"); all three are null when the library gives no
+violation. "message" is the library's text: display it, never parse it.
+
+"network_map" is refused by config_save: network_map.xml is written by
+cuems-nodeconf, which reverts any other writer; an alias is set with node_set.
+No path in the editor writes network_map.xml.
+
+Pending cuems-editor UR-6 (gate G1), a project's FIRST config_save still
+fails (the error frame): ConfigManager.project_path/conf_path raise
+FileNotFoundError for a file never saved before, the ordinary state of a
+project's settings.xml/mappings.xml before an operator customises it.
+
+Measured save quirks, recorded and not fixed (002 FR-023):
+  - a save writes unindented XML (settings went from 2429 bytes / 44 lines
+    to 1901 bytes / 1 line);
+  - a save upgrades doc_version (2 -> 3 for settings) and rewrites
+    schemaLocation;
+  - from_json('settings') accepts by design the body that to_wire('settings')
+    returns one level deeper.
+So the file's md5 changes on a save even of an unchanged document: a client
+MUST take the new revision from the config_save reply, never compute it.
+
+initial_template (retired at payload version 1)
+
+No longer sent. Clients build a new script from schema_descriptor("script")'s
+per-type "instance" (not directly usable until cuems-frontend UR-1 is fixed
+in cuems-utils; see the schema_descriptor section). Until 001 milestone 2 it was sent on connect, before
+initial_mappings. The value is
+{"CuemsScript": <ConfigManager.generate_example(SchemaName.SCRIPT)>}. Until
+001 it was cuemsutils' create_script(), deleted upstream. Against that
+baseline (v0.1.0rc14, specs/001-cuems-utils-migration/evidence/
+create-script-baseline.json) the value differs by exactly these deltas,
+pinned by tests/test_initial_template.py. History, retired frame:
+
+  (a) every boolean is the string "True" / "False", not JSON true / false
+      (the same form the "project" frame already uses)
+  (b) ui_properties scalars are strings: 0 -> "0", null -> "None"
+  (c) a hardware cue's key is "Cue" with "class" ("audio", "video", "dmx")
+      as its last key, not "AudioCue" / "VideoCue" / "DmxCue"; a hardware
+      cue output's key is "CueOutput" with "class" last, not
+      "AudioCueOutput" / "VideoCueOutput" / "DmxCueOutput". ActionCue,
+      FadeCue and CueList keep their keys
+  (e) hardware cues have no "fade_profiles" key
+  (f) Media.duration is {"CTimecode": "HH:MM:SS.mmm"}, not a bare string
+  (d) example values, not empty ones: ids, created / modified, name,
+      description, file_name, master_vol, output_name, output_vol,
+      channel_vol, action_target and CTimecode values. Keys and their order
+      are unchanged; only these values differ
+
+Consumer: cuems-frontend src/app/services/projects/projects.service.ts:240
+(type check), :243 (writes localStorage "initial_template"), :159 (reads it
+back on start). A cached pre-001 template stays in localStorage until the
+next connect overwrites it, and since it is no longer sent, nothing
+overwrites it any more: the frontend must stop reading it.
+
+project (reply to project_load)
+
+The value is CuemsScript.to_wire() of the script on disk, built once by the
+library's load and not walked afterwards. Opening a project does not write
+its file. Payload version 1 (not a bump to 2) differs from the pre-001 frame
+(specs/001-cuems-utils-migration/evidence/project-capture/) by exactly
+these, (d) sanctioned 2026-10-02:
+
+  (a) "schemaLocation" is absent (it was a top-level key beside CuemsScript)
+  (b) Media.duration is {"CTimecode": "HH:MM:SS.mmm"}, not a bare string
+  (c) a hardware cue's key is "Cue" with "class" ("audio", "video", "dmx",
+      or any other string the document carries) as its last key; a hardware
+      cue output's key is "CueOutput" with "class". ActionCue, FadeCue and
+      CueList keep their keys. "AudioCue" is not written back
+
+Key order is otherwise unchanged. doc_version is never a key. Pinned by
+tests/test_project_payload.py. A pre-05 UI mis-reads (c), which is why the
+milestone 1 checkpoint is not deployed.
+
+  (d) a video cue whose document has no <opacity> carries "opacity": 100
+      (the VideoCue default; opacity is a script.xsd field), before "class"
+  (e) autoload, enabled and timecode are JSON booleans, not strings
+      (8f8b46e; folded into version 1, not a bump)
+
+Consumer: cuems-frontend src/app/services/projects/projects.service.ts:120
+declares schemaLocation: string as required.
+
+Load reports and the save gate (001, milestone 2; audience: the session only)
+
+Every successful project_load is followed by document_load_report, also for
+a clean load (outcome "clean", empty lists). It is never omitted and never
+null. outcome "converted" / "repaired" means the library changed the
+document in memory: the file on disk is NOT written by opening it
+(file_differs_from_loaded true). repairs[] items are {field_path
+"<cue_id>/<field>", previous_value, substituted_value, rule_name}; values
+are JSON-safe (a CTimecode as its string, None as null). conversions[] items
+are {from_version, to_version, description, dropped_elements[]}.
+file_differs_from_loaded is a JSON boolean: editor state about the file, not
+a cms:BoolType field.
+
+media_repairs (002; always present, [] when nothing is stale) lists the media
+values PRESENT in the file that differ from the media library's row, which
+the next save will write: field "duration", "pixel_size" ("WxH"; also a pixel
+size on an audio cue, which may not carry one), "file_size" or "file_md5";
+"stored" as the file has it, "current" the library's value, or null when the
+save will remove it. A value the file merely lacks (a project written before
+these values existed) is not listed: the save adds it without a report. A
+cue whose file has no library row is never listed. outcome, repairs[] and
+conversions[] stay the library's verdict, verbatim: a script can be "clean"
+with media_repairs. acknowledgment_required is true when outcome is not
+"clean" OR media_repairs is not empty, and file_differs_from_loaded is true
+when either part differs. Gate the save UI on acknowledgment_required, not
+on outcome. New optional keys, so not a payload-version bump.
+
+A later media check (re-probing the files, for instance) adds its findings
+to media_repairs of this same report, under this report_id and this
+acknowledgment. It never sends a frame of its own that gates a save (002
+FR-046).
+
+document_load_failed replaces both frames when the library refuses the
+document: an unrepairable value (e.g. an action_target naming no cue) or a
+document newer than the library (cue_id and field null). message is the
+library's text. next_steps is always all three. The session stays up and
+the project stays in project_list. A malformed file still answers with the
+generic error frame.
+
+The save gate is per project (002), not per connection. While a project's
+outstanding report has acknowledgment_required (converted / repaired, or
+media_repairs), project_save is refused (reason "unacknowledged") until the
+saving session sends repair_acknowledge with that report_id. Each session acknowledges for itself: another session's
+acknowledgment does not count. The report_id is the project's: every session
+that loads the unchanged file gets the same one, and loading it again does
+not revoke anyone's acknowledgment.
+
+What survives: an acknowledgment survives a reconnect that re-uses the
+session_id (repair_acknowledge from the reconnected session answers with the
+echo). The gate survives a reconnect with a new session_id, a second
+session, a stale tab and an editor restart: a save for a project the editor
+holds no report for is checked against the file on disk first, and refused
+while that file is not clean. The refusal's report_id is the one project_load
+returns. A file changed on disk since its report (another hand edit, a
+copy), or a media library row changed since it (a re-upload, the repair
+tool), gets a new report_id, and every acknowledgment is dropped.
+project_unload drops that session's acknowledgment. A clean project's save
+adds no check.
+
+The first save after acknowledgment moves the file on disk into
+<library>/trash/projects/ as <unix_name>_<YYYYmmddTHHMMSS>_<script_file_name>
+before writing the repaired document; if that move fails, nothing is saved
+(reason "preserve_failed"). One move per stale file: the save retires the
+report, and a second save makes no second copy.
+
+cuems-frontend's reload-on-reconnect (src/app/services/projects/
+load-report.service.ts) is no longer needed: a reconnected session keeps its
+acknowledgment, and one that never had it is refused, not let through.
+
+project_duplicate gains an optional "report" (same shape as
+document_load_report's value) when the source was not clean. The copy is the
+repaired document; the source is not overwritten and no acknowledgment is
+needed. New optional key, so not a payload-version bump.
+
+New message types do not bump the payload version.
+
+Nodes: adoption
+
+The node list is pushed as "node_list" on connect (after initial_mappings),
+after a successful nodelist_modify, and whenever cuems-nodeconf rewrites
+network_map.xml (the editor watches its mtime). "nodelist_get" is only for
+refreshing on demand without reconnecting; it replies with the same payload,
+so a client needs no extra handling for it. Audience: all sessions for the
+push, the caller for nodelist_get.
+
+    value.nodes              adopted nodes
+    value.new_nodes          discovered, not adopted yet
+    value.nodeconf_available false = cuems-nodeconf is not running on this
+                             host, so every adopt/un-adopt WILL fail. Grey the
+                             controls instead of letting the operator click.
+                             Sampled when the frame is built. It is not on any
+                             node and not in initial_mappings.
+
+Before payload version 1 all of this rode inside "initial_mappings" (version
+0). initial_mappings is now the output mapping document alone: number_of_nodes,
+defaults, and its nodes / new_nodes as the document has them (devices, no
+status). The mixers that read it from localStorage need the 05 eviction.
+
+Each node carries uuid, mac, name, ip, node_role, adopted, online and the
+optional identity fields role_id / alias / hostname, in the library's wire
+form: uuid a string, adopted / online JSON true / false, node_role
+"controller" / "node" / .... There is no node_type. A node
+that has a mapping node keeps that mapping node's keys, output blocks
+(devices / device / class) included, in place. `online` is nodeconf's
+discovery view (refreshed within ~30 s), NOT runtime liveness.
+
+Before 001 these frames lost nodeconf_available and node_role, and carried
+JSON booleans: json.dumps of the library mappings object re-projected every
+node through the mappings schema (specs/001-cuems-utils-migration/evidence/
+mappings-capture/). tests/test_node_merge.py pins the difference.
+
+network_map_error (all sessions; new in 001, not a payload-version bump)
+
+    ->  {"type": "network_map_error", "value": {"kind": "duplicate_identity",
+         "identity": "<uuid string>", "file": "<path of network_map.xml>"}}
+    ->  {"type": "network_map_error", "value": null}
+
+network_map.xml names one node identity on two rows. The editor does not
+retry that read (the file will not become unique by waiting), keeps serving
+the last good node list, logs once per identity, and broadcasts the first
+frame to every session, and to each session that connects while it stands
+(after node_list). The next successful read broadcasts the null frame, then
+the usual node_list. A nodelist_get while it stands answers the caller with
+the error frame, then the last good node_list. Fix: decide
+from the two rows' MACs which is the real node and run cuems-init-node
+--remint (the library's message, in the editor log, says the same).
+
+For runtime liveness use "node_status": `alive` is the engine's sub-second
+ping/pong, the only signal the GO gate trusts, and `age_s` says how old that
+probe is. Show the two as SEPARATE indicators — merging them tells the operator
+a node is dead when it was merely missed by the last discovery pass, or alive
+when it vanished 20 s ago. A failed or timed-out node_status means UNKNOWN,
+never dead: the engine serializes editor commands, so the request can queue
+behind a slow project load and time out while every node is healthy. Repeat
+calls inside 2 s are served from a cache, so polling is cheap.
+
+"node_status" also carries the last project load's diagnosis, relayed verbatim
+from the engine:
+
+    value.missing      node UUIDs the loaded project uses that are NOT in the
+                       cluster at all (un-adopted, or never adopted)
+    value.unreachable  adopted and used by the project, but did not answer the
+                       engine's ping
+
+Their cues will NOT play, and GO is deliberately NOT blocked — warn, never
+block. The two cases need different actions from the operator (adopt it vs go
+and switch it on), so show them apart. Both are re-read on every call, outside
+the 2 s cache, so they are never stale. The same lists are also pushed over the
+OSC channel at load time as /engine/status/cluster_warning (a JSON string, with
+a per-load `load_id`), and replayed to WebSocket clients that connect after the
+load. Empty lists mean a clean load and are sent on purpose: they are what
+erases a previous warning.
+
+A node's alias is set with "node_set" (002), never through config_save:
+network_map.xml is cuems-nodeconf's file, and config_save refuses it. The
+editor sends {"action": "node_set", "node_uuid", "alias"} straight to
+cuems-nodeconf on /tmp/nodeconf.ipc (not through the engine) and writes no
+file; nodeconf persists the alias and the map push reaches every UI. alias
+null removes it. alias is the only node field the operator owns: a request
+carrying any other field (uuid as a change, mac, name, node_role, ip, online,
+adopted, role_id, hostname) is node_set_refused "not_operator_field" before
+anything is sent. An alias that is not a non-empty string or null, or a
+node_uuid that is not a node identity, is "invalid_value". Where
+nodeconf_available is false the answer is "unavailable" at once, with no
+IPC and no timeout. nodeconf's own refusal is "nodeconf_error" with its text
+verbatim, not retried; no answer within the editor's timeout is "timeout".
+Until cuems-nodeconf implements node_set (cuems-editor UR-8, gate G4) every
+node_set reaching it is "nodeconf_error" "unknown action: node_set".
+
+nodelist_modify is refused, with the reason in the error frame, when:
+  - a project is running or merely loaded (unload it first),
+  - the node is offline, or is the controller (it cannot be un-adopted),
+  - cuems-nodeconf is not responding.
+
+The "nodeconf" action is a legacy stub: nodeconf implements no such verb, so it
+only ever times out. Do not wire it into the UI.
+
+Error responses
+
+				->	{"type": "error", "action": "project_list", "value": "error_msg"}
+				->	{"type": "error", "action": "project_ready", "uuid": "project_uuid", "value": "error_msg"}
+				->	{"type": "error", "action": "project_deploy", "uuid": "project_uuid", "value": "error_msg"}
+				->	{"type": "error", "action": "project_load", "uuid": "project_uuid", value": "error_msg"}
+				->	{"type": "error", "action": "project_new", "value": "error_msg"}
+				->	{"type": "error", "action": "project_save", "uuid": "project_uuid", value": "error_msg"}
+				->	{"type": "error", "action": "project_delete", "uuid": "project_uuid", value": "error_msg"}
+				->	{"type": "error", "action": "project_trash_list", "value": "error_msg"}
+				->	{"type": "error", "action": "project_restore", "uuid" : "project_uuid", "value": "error_msg"}
+				->	{"type": "error", "action": "project_trash_delete", "uuid" : "project_uuid", "value": "error_msg"}
+
+				->	{"type": "error", "action": "file_list", "value": "error_msg"}
+				->	{"type": "error", "action": "file_load", "uuid": "project_uuid", value": "error_msg"}
+				->	{"type": "error", "action": "file_save", "uuid": "project_uuid", value": "error_msg"}
+				->	{"type": "error", "action": "file_delete", "uuid": "project_uuid", value": "error_msg"}
+				->	{"type": "error", "action": "file_trash_list", "value": "error_msg"}
+				->	{"type": "error", "action": "file_restore", "uuid" : "file_uuid", "value": "error_msg"}
+				->	{"type": "error", "action": "file_trash_delete", "uuid" : "file_uuid", "value": "error_msg"}
+
+				->	{"type": "error", "action": "hw_discovery", "value": "error_msg"}
+
+				->  {"type": "error", "value": "unsupported event: event"}
+				->  {"type": "error", "value": "unsupported action: action"}
+
+
+media_check_report (869fat84r D20, cuems-RELATIONS Plans/2026-10-01-engine-late-go-media-probe.md §8.3)
+
+  media_report = {"project_uuid": "...", "project_name": "...", "context": "ready" | "open" | "save",
+                  "complete": true | false,
+                  "reason": null | "engine_running" | "engine_silent" | "deadline" | "probe_failed" | "copy_in_progress",
+                  "files": [{"file_name": "...", "cues": 3,
+                             "changes": [{"field": "duration" | "pixel_size" | "file_size" | "file_md5",
+                                          "stored": "00:00:10.010", "current": "00:00:20.020" | null}]}],
+                  "unverified": ["file names whose file changed and is not measured yet"],
+                  "total_files": 1}
+
+  "files" lists at most 20 files; "total_files" counts them all.
+  An all-clear is complete && no files && no unverified; a client clears a warning only on that.
+
+  Audience: "open" goes to the requester only, after the project frame and the document_load_report;
+  "ready" (after the project_ready reply) and "save" (after the project_save reply) go to every session on
+  the project. The report is informational: it never gates a save (only the document_load_report's
+  acknowledgment does) and it carries the same findings as that report's media_repairs, grouped by file.
+  The frame is the one released in 0.1.0rc1-4, restored byte-for-byte (key order included); payload version 1.
+
+SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+SPDX-License-Identifier: GPL-3.0-or-later
+SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>

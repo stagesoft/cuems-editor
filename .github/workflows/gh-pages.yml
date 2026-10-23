@@ -1,27 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Publishes the MkDocs site. Only the release refs may deploy (003, FR-037): a push to, or a dispatch on, any
+# other ref (the integration branch, a feature branch) builds nothing. Pull requests never deploy.
 name: Deploy MkDocs site
 
 on:
   push:
     branches:
       - main
-      - master
+      - debian/bookworm
       - rc1
-      - feature/gh-pages
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   deploy:
+    if: contains(fromJSON('["refs/heads/main", "refs/heads/debian/bookworm", "refs/heads/rc1"]'), github.ref)
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
