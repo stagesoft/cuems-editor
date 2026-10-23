@@ -360,7 +360,22 @@ def _walk_fade_durations(contents, offenders):
                 )
 
 
+#: The wire's media cues. Since cuems-utils 013 a media cue travels as
+#: ``{'Cue': {'class': 'audio' | 'video', ...}}``; the wrappers below are what
+#: earlier clients sent and a deployed frontend may still send (Principle I).
+MEDIA_CUE_CLASSES = ('audio', 'video')
 MEDIA_CUE_KEYS = ('AudioCue', 'VideoCue')
+
+
+def _media_cue_data(item):
+    """The cue dict of a wire item when it is an audio or video cue, else ``None``."""
+    cue = item.get('Cue')
+    if isinstance(cue, dict) and cue.get('class') in MEDIA_CUE_CLASSES:
+        return cue
+    for key in MEDIA_CUE_KEYS:
+        if isinstance(item.get(key), dict):
+            return item[key]
+    return None
 
 
 def _walk_media_cues(contents, offenders, media_exists):
@@ -371,21 +386,15 @@ def _walk_media_cues(contents, offenders, media_exists):
             continue
         if 'CueList' in item and isinstance(item['CueList'], dict):
             _walk_media_cues(item['CueList'].get('contents', []), offenders, media_exists)
-        for key in MEDIA_CUE_KEYS:
-            if key not in item:
-                continue
-            cue_data = item[key]
-            if not isinstance(cue_data, dict):
-                continue
+        cue_data = _media_cue_data(item)
+        if cue_data is not None:
             name, cue_id = cue_data.get('name'), cue_data.get('id')
             media = cue_data.get('Media')
             if not isinstance(media, dict) or not media.get('file_name'):
                 offenders.append((name, cue_id, 'no media file'))
-                continue
-            if 'id' not in media:
+            elif 'id' not in media:
                 offenders.append((name, cue_id, 'media block has no id'))
-                continue
-            if media_exists is not None and not media_exists(media['file_name']):
+            elif media_exists is not None and not media_exists(media['file_name']):
                 offenders.append(
                     (name, cue_id, f"media file '{media['file_name']}' does not exist")
                 )
@@ -687,7 +696,9 @@ class CuemsDBProject(StringSanitizer):
         Raises:
             NonExistentItemError: If the project does not exist or is in the
                 trash.
-            ValueError: A FadeCue duration is missing, unparseable or ``<= 0``.
+            ValueError: A media cue has no usable media block or names a file
+                the library has never seen, or a FadeCue duration is missing,
+                unparseable or ``<= 0``.
             OriginalNotPreserved: *preserve_original* and the move failed.
             Exception: Re-raises any error after rolling back the transaction.
         """
@@ -700,6 +711,14 @@ class CuemsDBProject(StringSanitizer):
             del data['CuemsScript']['unix_name']
         except KeyError:
             pass
+
+        # Reject media cues without a usable media block FIRST, on the raw
+        # payload: nothing may be written for a save that is going to be
+        # refused (869fej07m).
+        validate_media_cues_in_contents(
+            (data.get('CuemsScript', {}).get('CueList') or {}).get('contents') or [],
+            media_exists=self._media_exists,
+        )
 
         # Reject zero/unparseable FadeCue durations on the raw payload, before
         # it becomes an object: a saved zero later becomes a silent no-op at
@@ -731,6 +750,10 @@ class CuemsDBProject(StringSanitizer):
                 Logger.error("error: {} {} trying to update  project, rolling back database update".format(type(e), e))
                 transaction.rollback()
                 raise e
+
+    def _media_exists(self, unix_name):
+        """Is a media file of that unix_name known to the library (trash included)?"""
+        return Media.select(Media.uuid).where(Media.unix_name == unix_name).exists()
 
     def _save_preserving_original(self, unix_name, project_object):
         """Move the script on disk into the trash, then save; undo the move if the save fails.
@@ -823,7 +846,11 @@ class CuemsDBProject(StringSanitizer):
             Logger.error("error: {} {} ;trying to read  project data".format(type(e), e))
             raise e
 
-        # Same save-time gate as update() — see validate_fade_durations_in_contents.
+        # Same save-time gates as update(): media cues first, then the fade gate.
+        validate_media_cues_in_contents(
+            (data.get('CuemsScript', {}).get('CueList') or {}).get('contents') or [],
+            media_exists=self._media_exists,
+        )
         validate_fade_durations_in_contents(
             (data.get('CuemsScript', {}).get('CueList') or {}).get('contents') or []
         )

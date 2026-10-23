@@ -257,3 +257,51 @@ def test_value_error_text_has_no_class_prefix():
     assert CuemsWsUser._error_text(ValueError('Media cue without a usable media file: x')) == \
         'Media cue without a usable media file: x'
     assert CuemsWsUser._error_text(KeyError('file_name')).startswith("<class 'KeyError'>")
+
+
+# ─── the library's own guard, if the gate is bypassed (FR-009, utils 017 §1) ─
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="cuems-utils 4b336cd (the candidate tag) raises KeyError('file_name') from CueList.get_media; "
+           "rc16's ValueError guard is only in utils 387598e and later (utils 017). "
+           "See specs/003-release-line-reconciliation/upstream-reports/cuems-utils.md. "
+           "Turns XPASS (red) on the re-cut: drop this marker then.")
+def test_the_librarys_media_error_reaches_the_client_unprefixed(library013):
+    """Without the gate, ``CueList.get_media`` raises a ``ValueError`` naming the cue.
+
+    It must still be a ``ValueError`` (so ``_error_text`` forwards it as is), never a
+    ``KeyError 'file_name'`` as in cuems-utils < rc16.
+    """
+    library = library013
+    mgr = _manager(library)
+    uuid = str(Project.get(Project.unix_name == 'proj1').uuid)
+    data = mgr.load(uuid)
+    audio = [c for c in _media_cues_of(data) if c['class'] == 'audio'][0]
+    audio['name'] = 'Bypassed'
+    audio['Media'] = {}
+    with mock.patch('cuemseditor.CuemsDBProject.validate_media_cues_in_contents'):
+        with pytest.raises(Exception) as e:
+            mgr.update(uuid, data)
+    if not database.is_closed():
+        database.close()
+    assert isinstance(e.value, ValueError), repr(e.value)
+    assert not CuemsWsUser._error_text(e.value).startswith('<class')
+
+
+def test_new_refuses_a_media_less_cue_before_writing_anything(library013):
+    library = library013
+    mgr = _manager(library)
+    uuid = str(Project.get(Project.unix_name == 'proj1').uuid)
+    data = mgr.load(uuid)
+    audio = [c for c in _media_cues_of(data) if c['class'] == 'audio'][0]
+    audio['name'] = 'NoMedia'
+    del audio['Media']
+    data['CuemsScript']['id'] = '00000000-0000-4000-8000-000000000001'
+    with pytest.raises(ValueError) as e:
+        mgr.new(data, 'proj_new')
+    if not database.is_closed():
+        database.close()
+    assert "'NoMedia'" in str(e.value)
+    assert not os.path.exists(os.path.join(library.projects_dir, 'proj_new'))
