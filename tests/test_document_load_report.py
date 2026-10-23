@@ -129,7 +129,18 @@ def _session(server):
 
 
 def _run(server, coro):
-    return server.event_loop.run_until_complete(coro)
+    """Run *coro* on the server's loop, then let the work it scheduled finish.
+
+    ``send_project`` and ``received_project`` start the informational media check in the
+    background (003); on the real server the loop keeps running, here it would be closed with
+    the task unfinished (a "never awaited" warning), so the test settles it.
+    """
+    loop = server.event_loop
+    result = loop.run_until_complete(coro)
+    pending = asyncio.all_tasks(loop)
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending))
+    return result
 
 
 def _drain(session, media_reports=False):
