@@ -1,0 +1,12 @@
+{
+  "project_uuid": "e6f99658-c6f7-436c-ab14-82ce3cd15906",
+  "project_name": "Proj One",
+  "context": "ready",
+  "complete": false,
+  "reason": "copy_in_progress",
+  "files": [],
+  "unverified": [
+    "file_video.ext"
+  ],
+  "total_files": 0
+}

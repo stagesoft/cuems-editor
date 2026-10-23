@@ -1,0 +1,22 @@
+{
+  "project_uuid": "0afceb81-e759-4dd2-8416-bd7ff645846b",
+  "project_name": "Proj One",
+  "context": "ready",
+  "complete": true,
+  "reason": null,
+  "files": [
+    {
+      "file_name": "file_video.ext",
+      "cues": 2,
+      "changes": [
+        {
+          "field": "duration",
+          "stored": "00:01:30.000",
+          "current": "00:02:00.000"
+        }
+      ]
+    }
+  ],
+  "unverified": [],
+  "total_files": 1
+}
