@@ -30,7 +30,7 @@ import stat
 import struct
 import sys
 import time
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # test helper only: edits the fixture script on disk
 from unittest import mock
 
 import pytest
@@ -45,7 +45,7 @@ from cuemseditor.CuemsDBMedia import (
 from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia, database
 from cuemsutils.helpers import new_datetime, new_uuid
 from cuemsutils.tools.CTimecode import CTimecode
-from cuemsutils.xml.XmlReaderWriter import XmlReaderWriter
+from cuemsutils.cues import CueList, CuemsScript
 
 STORED = ('pixel_width', 'pixel_height', 'file_size', 'file_md5')
 MD5 = 'd41d8cd98f00b204e9800998ecf8427e'
@@ -56,6 +56,12 @@ ET.register_namespace('xsi', 'http://www.w3.org/2001/XMLSchema-instance')
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+@pytest.fixture
+def lib(library013):
+    """The temporary library with a version-2 (013) script as ``proj1`` (the released tests used the pre-013 shape)."""
+    return library013
+
 
 @pytest.fixture(autouse=True)
 def _fresh_marks():
@@ -94,57 +100,57 @@ class FakeProbe:
         return result(path) if callable(result) else result
 
 
-def _settings(library):
+def _settings(lib):
     settings = get_settings()
-    settings['library_path'] = library.root
-    settings['tmp_path'] = os.path.join(library.root, 'tmp')
-    settings['html_root_path'] = os.path.join(library.root, 'www')
+    settings['library_path'] = lib.root
+    settings['tmp_path'] = os.path.join(lib.root, 'tmp')
+    settings['html_root_path'] = os.path.join(lib.root, 'www')
     return settings
 
 
-def _mgr(library):
-    library.connect()
-    return p.CuemsDBProject(_settings(library), database)
+def _mgr(lib):
+    lib.connect()
+    return p.CuemsDBProject(_settings(lib), database)
 
 
-def _uuid(library, unix_name='proj1'):
-    library.connect()
+def _uuid(lib, unix_name='proj1'):
+    lib.connect()
     return str(Project.get(Project.unix_name == unix_name).uuid)
 
 
-def _script(library, project='proj1'):
-    return os.path.join(library.projects_dir, project, 'script.xml')
+def _script(lib, project='proj1'):
+    return os.path.join(lib.projects_dir, project, 'script.xml')
 
 
-def _write(library, name, nbytes, fill=b'x'):
-    path = os.path.join(library.root, 'media', name)
+def _write(lib, name, nbytes, fill=b'x'):
+    path = os.path.join(lib.root, 'media', name)
     with open(path, 'wb') as f:
         f.write(fill * nbytes)
     return path
 
 
-def _row(library, name):
-    library.connect()
+def _row(lib, name):
+    lib.connect()
     return Media.get(Media.unix_name == name)
 
 
-def _set_row(library, name, **fields):
-    library.connect()
+def _set_row(lib, name, **fields):
+    lib.connect()
     Media.update(**fields).where(Media.unix_name == name).execute()
 
 
-def _add_row(library, name, media_type, **fields):
-    library.connect()
+def _add_row(lib, name, media_type, **fields):
+    lib.connect()
     Media.create(uuid=str(new_uuid()), name=name, unix_name=name,
                  created=new_datetime(), modified=new_datetime(),
                  media_type=media_type, in_trash=False, **fields)
 
 
-def _set_xml_media(library, name, project='proj1', duration=None, rename=None, **stored):
+def _set_xml_media(lib, name, project='proj1', duration=None, rename=None, **stored):
     """Edit every ``Media`` block that uses *name*: its duration, its stored
     values (replaced by *stored*, in schema order, after ``regions``), and
     optionally its file name."""
-    path = _script(library, project)
+    path = _script(lib, project)
     tree = ET.parse(path)
     for media in tree.getroot().iter('Media'):
         if media.findtext('file_name') != name:
@@ -163,43 +169,40 @@ def _set_xml_media(library, name, project='proj1', duration=None, rename=None, *
     tree.write(path, encoding='utf-8', xml_declaration=True)
 
 
-def _blocks(library, project='proj1'):
-    """[(cue_type, Media dict)] as the editor reads the project."""
-    data = XmlReaderWriter(schema_name='script', xmlfile=_script(library, project)).read()
+def _blocks(lib, project='proj1'):
+    """[(cue class name, Media)] of the project on disk, read through the library's object load."""
+    script, _report = CuemsScript.load_with_report(_script(lib, project))
     out = []
 
-    def walk(node):
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key in ('AudioCue', 'VideoCue') and isinstance(value, dict):
-                    out.append((key, value.get('Media')))
-                walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
+    def walk(contents):
+        for cue in contents:
+            if isinstance(cue, CueList):
+                walk(cue.contents)
+            elif cue.get('Media'):
+                out.append((type(cue).__name__, cue['Media']))
 
-    walk(data)
+    walk(script.cuelist.contents)
     return out
 
 
-def _media_of(library, name, project='proj1'):
-    return [mm for _, mm in _blocks(library, project) if mm and mm.get('file_name') == name]
+def _media_of(lib, name, project='proj1'):
+    return [mm for _, mm in _blocks(lib, project) if mm and mm.get('file_name') == name]
 
 
-def _backups(library, project='proj1'):
-    d = os.path.join(library.projects_dir, project)
+def _backups(lib, project='proj1'):
+    d = os.path.join(lib.projects_dir, project)
     return sorted(f for f in os.listdir(d) if '.pre-refresh-' in f)
 
 
-def _in_line(library, video_seconds=90.0, video_size=10, audio_seconds=30.0, audio_size=20):
-    """A library whose rows match the files and the project: nothing to do."""
-    _write(library, 'file_video.ext', video_size)
-    _write(library, 'file.ext', audio_size)
-    _set_row(library, 'file_video.ext', duration=tc(video_seconds), file_size=video_size,
+def _in_line(lib, video_seconds=90.0, video_size=10, audio_seconds=30.0, audio_size=20):
+    """A lib whose rows match the files and the project: nothing to do."""
+    _write(lib, 'file_video.ext', video_size)
+    _write(lib, 'file.ext', audio_size)
+    _set_row(lib, 'file_video.ext', duration=tc(video_seconds), file_size=video_size,
              pixel_width=1920, pixel_height=1080)
-    _set_row(library, 'file.ext', duration=tc(audio_seconds), file_size=audio_size)
-    _set_xml_media(library, 'file_video.ext', duration=tc(video_seconds))
-    _set_xml_media(library, 'file.ext', duration=tc(audio_seconds))
+    _set_row(lib, 'file.ext', duration=tc(audio_seconds), file_size=audio_size)
+    _set_xml_media(lib, 'file_video.ext', duration=tc(video_seconds))
+    _set_xml_media(lib, 'file.ext', duration=tc(audio_seconds))
 
 
 def _refresh(mgr, uuid, engine='none', clock=time.monotonic):
@@ -320,85 +323,85 @@ def _changes(report, file_name):
     return None
 
 
-def _bytes(library, project='proj1'):
-    return open(_script(library, project), 'rb').read()
+def _bytes(lib, project='proj1'):
+    return open(_script(lib, project), 'rb').read()
 
 
 class TestPlan:
-    def test_an_unchanged_library_has_no_work(self, library):
-        _in_line(library)
-        mgr = _mgr(library)
+    def test_an_unchanged_library_has_no_work(self, lib):
+        _in_line(lib)
+        mgr = _mgr(lib)
         fake = FakeProbe({})
         with mock.patch.object(p, 'probe_media', fake):
-            plan = mgr.plan_media_refresh(_uuid(library))
-            report = _refresh(mgr, _uuid(library), engine='running')  # never asked
+            plan = mgr.plan_media_refresh(_uuid(lib))
+            report = _refresh(mgr, _uuid(lib), engine='running')  # never asked
         assert not plan.has_work and not plan.has_stale_values
         assert fake.calls == []
         assert report['engine_asked'] is False
         mr = report['media_report']
         assert mr['complete'] is True and mr['files'] == [] and mr['unverified'] == []
 
-    def test_a_replaced_file_is_changed(self, library):
-        _in_line(library)
-        _write(library, 'file_video.ext', 11)
-        plan = _mgr(library).plan_media_refresh(_uuid(library))
+    def test_a_replaced_file_is_changed(self, lib):
+        _in_line(lib)
+        _write(lib, 'file_video.ext', 11)
+        plan = _mgr(lib).plan_media_refresh(_uuid(lib))
         states = {c.file_name: c.state for c in plan.checks}
         assert states == {'file_video.ext': 'changed', 'file.ext': 'unchanged'}
         assert plan.has_work
 
-    def test_a_row_without_a_size_is_legacy(self, library):
-        _in_line(library)
-        _set_row(library, 'file.ext', file_size=None)
-        plan = _mgr(library).plan_media_refresh(_uuid(library))
+    def test_a_row_without_a_size_is_legacy(self, lib):
+        _in_line(lib)
+        _set_row(lib, 'file.ext', file_size=None)
+        plan = _mgr(lib).plan_media_refresh(_uuid(lib))
         assert {c.file_name: c.state for c in plan.checks}['file.ext'] == 'legacy'
 
-    def test_a_missing_or_empty_file_and_an_orphan_are_skipped(self, library):
-        _in_line(library)
-        os.remove(os.path.join(library.root, 'media', 'file.ext'))
-        _write(library, 'file_video.ext', 0)
-        _set_xml_media(library, 'file_video.ext', rename='nobody.ext')
-        plan = _mgr(library).plan_media_refresh(_uuid(library))
+    def test_a_missing_or_empty_file_and_an_orphan_are_skipped(self, lib):
+        _in_line(lib)
+        os.remove(os.path.join(lib.root, 'media', 'file.ext'))
+        _write(lib, 'file_video.ext', 0)
+        _set_xml_media(lib, 'file_video.ext', rename='nobody.ext')
+        plan = _mgr(lib).plan_media_refresh(_uuid(lib))
         assert all(c.state == 'skipped' for c in plan.checks)
         assert not plan.has_work
 
-    def test_missing_values_are_not_stale(self, library):
-        _in_line(library)                     # the XML has no stored values at all
-        assert not _mgr(library).plan_media_refresh(_uuid(library)).has_stale_values
+    def test_missing_values_are_not_stale(self, lib):
+        _in_line(lib)                     # the XML has no stored values at all
+        assert not _mgr(lib).plan_media_refresh(_uuid(lib)).has_stale_values
 
-    def test_matching_values_read_as_strings_are_not_stale(self, library):
-        _in_line(library)
-        _set_row(library, 'file_video.ext', file_md5=MD5)
-        _set_xml_media(library, 'file_video.ext', pixel_width=1920, pixel_height=1080,
+    def test_matching_values_read_as_strings_are_not_stale(self, lib):
+        _in_line(lib)
+        _set_row(lib, 'file_video.ext', file_md5=MD5)
+        _set_xml_media(lib, 'file_video.ext', pixel_width=1920, pixel_height=1080,
                        file_size=10, file_md5=MD5)
-        assert not _mgr(library).plan_media_refresh(_uuid(library)).has_stale_values
+        assert not _mgr(lib).plan_media_refresh(_uuid(lib)).has_stale_values
 
-    def test_a_present_wrong_duration_is_stale_but_no_work(self, library):
-        _in_line(library)
-        _set_xml_media(library, 'file_video.ext', duration=tc(80))
-        plan = _mgr(library).plan_media_refresh(_uuid(library))
+    def test_a_present_wrong_duration_is_stale_but_no_work(self, lib):
+        _in_line(lib)
+        _set_xml_media(lib, 'file_video.ext', duration=tc(80))
+        plan = _mgr(lib).plan_media_refresh(_uuid(lib))
         assert plan.has_stale_values
         assert not plan.has_work                # nothing to measure: no engine query
 
-    def test_a_null_db_duration_is_never_stale(self, library):
-        _in_line(library)
-        _set_row(library, 'file_video.ext', duration=None)
-        assert not _mgr(library).plan_media_refresh(_uuid(library)).has_stale_values
+    def test_a_null_db_duration_is_never_stale(self, lib):
+        _in_line(lib)
+        _set_row(lib, 'file_video.ext', duration=None)
+        assert not _mgr(lib).plan_media_refresh(_uuid(lib)).has_stale_values
 
-    def test_a_stored_value_the_db_does_not_have_is_stale(self, library):
-        _in_line(library)
-        _set_xml_media(library, 'file_video.ext', file_size=10, file_md5=MD5)   # row: no md5
-        assert _mgr(library).plan_media_refresh(_uuid(library)).has_stale_values
+    def test_a_stored_value_the_db_does_not_have_is_stale(self, lib):
+        _in_line(lib)
+        _set_xml_media(lib, 'file_video.ext', file_size=10, file_md5=MD5)   # row: no md5
+        assert _mgr(lib).plan_media_refresh(_uuid(lib)).has_stale_values
 
-    def test_pixel_keys_on_an_audio_cue_are_stale(self, library):
-        _in_line(library)
-        _set_xml_media(library, 'file.ext', pixel_width=10, pixel_height=10)
-        assert _mgr(library).plan_media_refresh(_uuid(library)).has_stale_values
+    def test_pixel_keys_on_an_audio_cue_are_stale(self, lib):
+        _in_line(lib)
+        _set_xml_media(lib, 'file.ext', pixel_width=10, pixel_height=10)
+        assert _mgr(lib).plan_media_refresh(_uuid(lib)).has_stale_values
 
-    def test_a_trashed_project_is_not_planned(self, library):
-        _in_line(library)
-        _mgr(library).delete(_uuid(library))
+    def test_a_trashed_project_is_not_planned(self, lib):
+        _in_line(lib)
+        _mgr(lib).delete(_uuid(lib))
         with pytest.raises(Exception):
-            _mgr(library).plan_media_refresh(_uuid(library))
+            _mgr(lib).plan_media_refresh(_uuid(lib))
 
 
 # ---------------------------------------------------------------------------
@@ -406,14 +409,14 @@ class TestPlan:
 # ---------------------------------------------------------------------------
 
 class TestReport:
-    def test_changes_are_grouped_by_file_with_the_cues_counted(self, library):
-        _in_line(library)
-        _set_row(library, 'file_video.ext', duration=tc(120.0), file_size=11,
+    def test_changes_are_grouped_by_file_with_the_cues_counted(self, lib):
+        _in_line(lib)
+        _set_row(lib, 'file_video.ext', duration=tc(120.0), file_size=11,
                  pixel_width=1280, pixel_height=720)
-        _set_xml_media(library, 'file_video.ext', pixel_width=1920, pixel_height=1080,
+        _set_xml_media(lib, 'file_video.ext', pixel_width=1920, pixel_height=1080,
                        file_size=10, file_md5=MD5)
-        _write(library, 'file_video.ext', 11)
-        mr = _report(_mgr(library), _uuid(library), 'open')
+        _write(lib, 'file_video.ext', 11)
+        mr = _report(_mgr(lib), _uuid(lib), 'open')
         assert mr['context'] == 'open' and mr['project_name'] == 'Proj One'
         assert [f['file_name'] for f in mr['files']] == ['file_video.ext']
         assert mr['files'][0]['cues'] == 2                 # two VideoCues use it
@@ -424,31 +427,31 @@ class TestReport:
             'file_md5': (MD5, None)}
         assert mr['complete'] is True and mr['total_files'] == 1
 
-    def test_a_changed_file_not_yet_measured_is_unverified(self, library):
-        _in_line(library)
-        _write(library, 'file_video.ext', 11)              # row still says 10
-        mr = _report(_mgr(library), _uuid(library), 'open')
+    def test_a_changed_file_not_yet_measured_is_unverified(self, lib):
+        _in_line(lib)
+        _write(lib, 'file_video.ext', 11)              # row still says 10
+        mr = _report(_mgr(lib), _uuid(lib), 'open')
         assert mr['unverified'] == ['file_video.ext']
         assert mr['files'] == []
 
-    def test_a_legacy_row_is_not_unverified(self, library):
-        _in_line(library)
-        _set_row(library, 'file.ext', file_size=None)
-        assert _report(_mgr(library), _uuid(library))['unverified'] == []
+    def test_a_legacy_row_is_not_unverified(self, lib):
+        _in_line(lib)
+        _set_row(lib, 'file.ext', file_size=None)
+        assert _report(_mgr(lib), _uuid(lib))['unverified'] == []
 
-    def test_a_reason_makes_it_incomplete(self, library):
-        _in_line(library)
-        mr = _report(_mgr(library), _uuid(library), 'ready', 'engine_running')
+    def test_a_reason_makes_it_incomplete(self, lib):
+        _in_line(lib)
+        mr = _report(_mgr(lib), _uuid(lib), 'ready', 'engine_running')
         assert (mr['complete'], mr['reason']) == (False, 'engine_running')
 
-    def test_a_file_whose_probe_failed_makes_it_incomplete(self, library):
-        _in_line(library)
-        _write(library, 'file_video.ext', 11)
+    def test_a_file_whose_probe_failed_makes_it_incomplete(self, lib):
+        _in_line(lib)
+        _write(lib, 'file_video.ext', 11)
         fake = FakeProbe({'file_video.ext': probe(duration_state=PROBE_FAILED,
                                                   picture_state=PROBE_FAILED)})
         with mock.patch.object(p, 'probe_media', fake):
-            _refresh(_mgr(library), _uuid(library))
-        mr = _report(_mgr(library), _uuid(library))
+            _refresh(_mgr(lib), _uuid(lib))
+        mr = _report(_mgr(lib), _uuid(lib))
         assert (mr['complete'], mr['reason']) == (False, 'probe_failed')
 
     def test_the_files_are_capped(self):
@@ -464,41 +467,41 @@ class TestReport:
 # ---------------------------------------------------------------------------
 
 class TestRefresh:
-    def test_a_replaced_file_corrects_the_row_and_reports_the_project(self, library):
-        _in_line(library)
-        _set_row(library, 'file_video.ext', file_md5=MD5)
-        _write(library, 'file_video.ext', 11)
-        before = _bytes(library)
-        mgr = _mgr(library)
+    def test_a_replaced_file_corrects_the_row_and_reports_the_project(self, lib):
+        _in_line(lib)
+        _set_row(lib, 'file_video.ext', file_md5=MD5)
+        _write(lib, 'file_video.ext', 11)
+        before = _bytes(lib)
+        mgr = _mgr(lib)
         fake = FakeProbe({'file_video.ext': probe(120.0, (1280, 720))})
         with mock.patch.object(p, 'probe_media', fake), \
                 mock.patch.object(p.Logger, 'warning') as warning:
-            report = _refresh(mgr, _uuid(library))
-        row = _row(library, 'file_video.ext')
+            report = _refresh(mgr, _uuid(lib))
+        row = _row(lib, 'file_video.ext')
         assert (row.duration, row.pixel_width, row.pixel_height, row.file_size, row.file_md5) \
             == (tc(120.0), 1280, 720, 11, None)
-        assert _bytes(library) == before                  # D21: never rewritten at load
-        assert _backups(library) == []
+        assert _bytes(lib) == before                  # D21: never rewritten at load
+        assert _backups(lib) == []
         mr = report['media_report']
         assert mr['context'] == 'ready' and mr['complete'] is True
         assert _changes(mr, 'file_video.ext')['duration'] == (tc(90.0), tc(120.0))
         assert any('Proj One' in str(c) and 'stale' in str(c) for c in warning.call_args_list)
 
-    def test_the_second_load_measures_nothing_and_still_reports(self, library):
-        _in_line(library)
-        _write(library, 'file_video.ext', 11)
-        mgr = _mgr(library)
+    def test_the_second_load_measures_nothing_and_still_reports(self, lib):
+        _in_line(lib)
+        _write(lib, 'file_video.ext', 11)
+        mgr = _mgr(lib)
         fake = FakeProbe({'file_video.ext': probe(120.0, (1280, 720))})
         with mock.patch.object(p, 'probe_media', fake):
-            _refresh(mgr, _uuid(library))
-            report = _refresh(mgr, _uuid(library), engine='running')
+            _refresh(mgr, _uuid(lib))
+            report = _refresh(mgr, _uuid(lib), engine='running')
         assert fake.calls == ['file_video.ext']
         assert report['engine_asked'] is False          # stale values alone are no work
         assert _changes(report['media_report'], 'file_video.ext')['duration'] == (tc(90.0), tc(120.0))
 
-    def test_a_copy_in_progress_is_skipped_and_incomplete(self, library):
-        _in_line(library)
-        path = _write(library, 'file_video.ext', 11)
+    def test_a_copy_in_progress_is_skipped_and_incomplete(self, lib):
+        _in_line(lib)
+        path = _write(lib, 'file_video.ext', 11)
 
         def growing(_path):
             with open(path, 'ab') as f:
@@ -506,139 +509,139 @@ class TestRefresh:
             return probe(120.0, (1280, 720))
 
         with mock.patch.object(p, 'probe_media', FakeProbe({'file_video.ext': growing})):
-            report = _refresh(_mgr(library), _uuid(library))
-        row = _row(library, 'file_video.ext')
+            report = _refresh(_mgr(lib), _uuid(lib))
+        row = _row(lib, 'file_video.ext')
         assert (row.duration, row.file_size) == (tc(90.0), 10)
         mr = report['media_report']
         assert (mr['complete'], mr['reason']) == (False, 'copy_in_progress')
 
-    def test_a_legacy_row_is_verified_and_marked(self, library):
-        _in_line(library)
-        _set_row(library, 'file.ext', file_size=None)
-        before = _bytes(library)
+    def test_a_legacy_row_is_verified_and_marked(self, lib):
+        _in_line(lib)
+        _set_row(lib, 'file.ext', file_size=None)
+        before = _bytes(lib)
         with mock.patch.object(p, 'probe_media', FakeProbe({'file.ext': probe(30.0)})):
-            report = _refresh(_mgr(library), _uuid(library))
-        assert _row(library, 'file.ext').file_size == 20
-        assert _bytes(library) == before
+            report = _refresh(_mgr(lib), _uuid(lib))
+        assert _row(lib, 'file.ext').file_size == 20
+        assert _bytes(lib) == before
         mr = report['media_report']
         assert mr['complete'] and mr['files'] == [] and mr['unverified'] == []
 
-    def test_a_legacy_row_with_the_old_rounding_is_corrected_and_reported(self, library):
-        _in_line(library)
-        _set_row(library, 'file.ext', file_size=None, duration='00:05:32.009')
-        _set_xml_media(library, 'file.ext', duration='00:05:32.009')
-        before = _bytes(library)
+    def test_a_legacy_row_with_the_old_rounding_is_corrected_and_reported(self, lib):
+        _in_line(lib)
+        _set_row(lib, 'file.ext', file_size=None, duration='00:05:32.009')
+        _set_xml_media(lib, 'file.ext', duration='00:05:32.009')
+        before = _bytes(lib)
         with mock.patch.object(p, 'probe_media', FakeProbe({'file.ext': probe(332.9)})), \
                 mock.patch.object(p.Logger, 'warning') as warning:
-            report = _refresh(_mgr(library), _uuid(library))
-        assert _row(library, 'file.ext').duration == '00:05:32.900'
-        assert _bytes(library) == before
+            report = _refresh(_mgr(lib), _uuid(lib))
+        assert _row(lib, 'file.ext').duration == '00:05:32.900'
+        assert _bytes(lib) == before
         assert _changes(report['media_report'], 'file.ext')['duration'] == ('00:05:32.009', '00:05:32.900')
         assert any('00:05:32.009' in str(c) and '00:05:32.900' in str(c)
                    for c in warning.call_args_list)
 
-    def test_an_audio_only_movie_is_marked_and_not_probed_again(self, library):
-        _in_line(library)
-        _set_row(library, 'file_video.ext', file_size=None, pixel_width=None, pixel_height=None)
+    def test_an_audio_only_movie_is_marked_and_not_probed_again(self, lib):
+        _in_line(lib)
+        _set_row(lib, 'file_video.ext', file_size=None, pixel_width=None, pixel_height=None)
         fake = FakeProbe({'file_video.ext': probe(90.0)})
         with mock.patch.object(p, 'probe_media', fake):
-            _refresh(_mgr(library), _uuid(library))
-            _refresh(_mgr(library), _uuid(library))
-        row = _row(library, 'file_video.ext')
+            _refresh(_mgr(lib), _uuid(lib))
+            _refresh(_mgr(lib), _uuid(lib))
+        row = _row(lib, 'file_video.ext')
         assert (row.file_size, row.pixel_width) == (10, None)
         assert fake.calls == ['file_video.ext']
 
-    def test_a_failed_duration_probe_leaves_the_row_backs_off_and_is_incomplete(self, library):
-        _in_line(library)
-        _write(library, 'file_video.ext', 11)
+    def test_a_failed_duration_probe_leaves_the_row_backs_off_and_is_incomplete(self, lib):
+        _in_line(lib)
+        _write(lib, 'file_video.ext', 11)
         fake = FakeProbe({'file_video.ext': probe(duration_state=PROBE_FAILED,
                                                   picture_state=PROBE_FAILED)})
         with mock.patch.object(p, 'probe_media', fake):
-            first = _refresh(_mgr(library), _uuid(library))
-            second = _refresh(_mgr(library), _uuid(library))
-        row = _row(library, 'file_video.ext')
+            first = _refresh(_mgr(lib), _uuid(lib))
+            second = _refresh(_mgr(lib), _uuid(lib))
+        row = _row(lib, 'file_video.ext')
         assert (row.duration, row.file_size) == (tc(90.0), 10)
         assert fake.calls == ['file_video.ext']          # not retried until it changes
         for report in (first, second):
             assert (report['media_report']['complete'], report['media_report']['reason']) \
                 == (False, 'probe_failed')
-        _write(library, 'file_video.ext', 12)
+        _write(lib, 'file_video.ext', 12)
         with mock.patch.object(p, 'probe_media', fake):
-            _refresh(_mgr(library), _uuid(library))
+            _refresh(_mgr(lib), _uuid(lib))
         assert fake.calls == ['file_video.ext', 'file_video.ext']
 
-    def test_a_failed_pixel_probe_still_writes_the_duration_and_the_mark(self, library):
-        _in_line(library)
-        _write(library, 'file_video.ext', 11)
+    def test_a_failed_pixel_probe_still_writes_the_duration_and_the_mark(self, lib):
+        _in_line(lib)
+        _write(lib, 'file_video.ext', 11)
         fake = FakeProbe({'file_video.ext': probe(120.0, picture_state=PROBE_FAILED)})
         with mock.patch.object(p, 'probe_media', fake):
-            _refresh(_mgr(library), _uuid(library))
-        row = _row(library, 'file_video.ext')
+            _refresh(_mgr(lib), _uuid(lib))
+        row = _row(lib, 'file_video.ext')
         assert (row.duration, row.file_size, row.pixel_width) == (tc(120.0), 11, None)
 
-    def test_an_image_needs_no_duration(self, library):
-        _in_line(library)
-        _write(library, 'pic.png', 7)
-        _set_xml_media(library, 'file_video.ext', rename='pic.png')
+    def test_an_image_needs_no_duration(self, lib):
+        _in_line(lib)
+        _write(lib, 'pic.png', 7)
+        _set_xml_media(lib, 'file_video.ext', rename='pic.png')
         with mock.patch.object(p, 'probe_media', FakeProbe({'pic.png': probe(dims=(640, 480))})):
-            _refresh(_mgr(library), _uuid(library))
-            report = _refresh(_mgr(library), _uuid(library), engine='running')
-        row = _row(library, 'pic.png')
+            _refresh(_mgr(lib), _uuid(lib))
+            report = _refresh(_mgr(lib), _uuid(lib), engine='running')
+        row = _row(lib, 'pic.png')
         assert (row.duration, row.pixel_width, row.file_size) == (None, 640, 7)
         assert report['engine_asked'] is False
 
-    def test_an_audio_file_with_cover_art_gets_no_pixel_size(self, library):
-        _in_line(library)
-        _write(library, 'file.ext', 21)
+    def test_an_audio_file_with_cover_art_gets_no_pixel_size(self, lib):
+        _in_line(lib)
+        _write(lib, 'file.ext', 21)
         with mock.patch.object(p, 'probe_media', FakeProbe({'file.ext': probe(31.0, (600, 600))})):
-            _refresh(_mgr(library), _uuid(library))
-        row = _row(library, 'file.ext')
+            _refresh(_mgr(lib), _uuid(lib))
+        row = _row(lib, 'file.ext')
         assert (row.duration, row.pixel_width, row.file_size) == (tc(31.0), None, 21)
 
-    def test_shared_media_is_reported_in_every_project(self, library):
-        _in_line(library)
-        shutil.copytree(os.path.join(library.projects_dir, 'proj1'),
-                        os.path.join(library.projects_dir, 'proj2'))
-        library.connect()
+    def test_shared_media_is_reported_in_every_project(self, lib):
+        _in_line(lib)
+        shutil.copytree(os.path.join(lib.projects_dir, 'proj1'),
+                        os.path.join(lib.projects_dir, 'proj2'))
+        lib.connect()
         Project.create(uuid=str(new_uuid()), name='Proj Two', unix_name='proj2',
                        created=new_datetime(), modified=new_datetime(), in_trash=False)
-        _write(library, 'file_video.ext', 11)
-        before = _bytes(library, 'proj2')
+        _write(lib, 'file_video.ext', 11)
+        before = _bytes(lib, 'proj2')
         fake = FakeProbe({'file_video.ext': probe(120.0, (1280, 720))})
         with mock.patch.object(p, 'probe_media', fake):
-            _refresh(_mgr(library), _uuid(library, 'proj1'))
-            report = _refresh(_mgr(library), _uuid(library, 'proj2'))
+            _refresh(_mgr(lib), _uuid(lib, 'proj1'))
+            report = _refresh(_mgr(lib), _uuid(lib, 'proj2'))
         assert fake.calls == ['file_video.ext']             # B causes no probe
-        assert _bytes(library, 'proj2') == before
+        assert _bytes(lib, 'proj2') == before
         assert _changes(report['media_report'], 'file_video.ext')['duration'] == (tc(90.0), tc(120.0))
 
-    def test_audio_cue_pixel_keys_are_reported(self, library):
-        _in_line(library)
-        _set_xml_media(library, 'file.ext', pixel_width=10, pixel_height=10)
-        report = _refresh(_mgr(library), _uuid(library), engine='running')
+    def test_audio_cue_pixel_keys_are_reported(self, lib):
+        _in_line(lib)
+        _set_xml_media(lib, 'file.ext', pixel_width=10, pixel_height=10)
+        report = _refresh(_mgr(lib), _uuid(lib), engine='running')
         assert report['engine_asked'] is False
         assert _changes(report['media_report'], 'file.ext') == {'pixel_size': ('10x10', None)}
 
-    def test_a_running_show_or_a_silent_engine_means_no_write_and_incomplete(self, library):
+    def test_a_running_show_or_a_silent_engine_means_no_write_and_incomplete(self, lib):
         for engine, reason in (('running', 'engine_running'), ('silent', 'engine_silent')):
-            _in_line(library)
-            _write(library, 'file_video.ext', 11)
-            before = _bytes(library)
+            _in_line(lib)
+            _write(lib, 'file_video.ext', 11)
+            before = _bytes(lib)
             fake = FakeProbe({'file_video.ext': probe(120.0, (1280, 720))})
             with mock.patch.object(p, 'probe_media', fake):
-                report = _refresh(_mgr(library), _uuid(library), engine=engine)
+                report = _refresh(_mgr(lib), _uuid(lib), engine=engine)
             assert report['engine_asked'] is True and report['skipped'] == engine
             assert fake.calls == []
-            assert _row(library, 'file_video.ext').file_size == 10
-            assert _bytes(library) == before
+            assert _row(lib, 'file_video.ext').file_size == 10
+            assert _bytes(lib) == before
             mr = report['media_report']
             assert (mr['complete'], mr['reason']) == (False, reason)
             assert mr['unverified'] == ['file_video.ext']
 
-    def test_the_deadline_stops_reports_incomplete_and_the_next_load_continues(self, library):
-        _in_line(library)
-        _set_row(library, 'file_video.ext', file_size=None)
-        _set_row(library, 'file.ext', file_size=None)
+    def test_the_deadline_stops_reports_incomplete_and_the_next_load_continues(self, lib):
+        _in_line(lib)
+        _set_row(lib, 'file_video.ext', file_size=None)
+        _set_row(lib, 'file.ext', file_size=None)
         now = [0.0]
 
         def slow(seconds):
@@ -649,18 +652,18 @@ class TestRefresh:
 
         fake = FakeProbe({'file_video.ext': slow(90.0), 'file.ext': slow(30.0)})
         with mock.patch.object(p, 'probe_media', fake):
-            first = _refresh(_mgr(library), _uuid(library), clock=lambda: now[0])
+            first = _refresh(_mgr(lib), _uuid(lib), clock=lambda: now[0])
             assert len(fake.calls) == 1
             assert (first['media_report']['complete'], first['media_report']['reason']) \
                 == (False, 'deadline')
-            _refresh(_mgr(library), _uuid(library), clock=lambda: now[0])
+            _refresh(_mgr(lib), _uuid(lib), clock=lambda: now[0])
         assert len(fake.calls) == 2 and fake.calls[1] != fake.calls[0]
 
-    def test_any_exception_in_l1_is_swallowed(self, library):
-        mgr = _mgr(library)
+    def test_any_exception_in_l1_is_swallowed(self, lib):
+        mgr = _mgr(lib)
         with mock.patch.object(mgr, 'plan_media_refresh', side_effect=RuntimeError('boom')), \
                 mock.patch.object(r.Logger, 'error') as error:
-            report = _refresh(mgr, _uuid(library))
+            report = _refresh(mgr, _uuid(lib))
         assert report is None
         assert error.called
 
@@ -697,14 +700,14 @@ class TestOneRefreshPerProject:
 # ---------------------------------------------------------------------------
 
 class TestOpenAndSave:
-    def test_the_open_check_is_read_only(self, library):
-        _in_line(library)
-        _write(library, 'file_video.ext', 11)
+    def test_the_open_check_is_read_only(self, lib):
+        _in_line(lib)
+        _write(lib, 'file_video.ext', 11)
         fake = FakeProbe({})
         with mock.patch.object(p, 'probe_media', fake):
-            mr = asyncio.run(r.check_media_on_open(_mgr(library), _uuid(library), executor=None))
+            mr = asyncio.run(r.check_media_on_open(_mgr(lib), _uuid(lib), executor=None))
         assert fake.calls == []
-        assert _row(library, 'file_video.ext').file_size == 10
+        assert _row(lib, 'file_video.ext').file_size == 10
         assert mr['context'] == 'open' and mr['unverified'] == ['file_video.ext']
 
     def test_simultaneous_opens_share_one_check(self):
@@ -732,17 +735,17 @@ class TestOpenAndSave:
             assert asyncio.run(r.check_media_on_open(BrokenDB(), 'u1', executor=None)) is None
         assert error.called
 
-    def test_a_save_measures_a_changed_file_and_writes_its_real_values(self, library):
-        _in_line(library)
-        _write(library, 'file_video.ext', 11)               # replaced, never loaded since
-        data = XmlReaderWriter(schema_name='script', xmlfile=_script(library)).read()
+    def test_a_save_measures_a_changed_file_and_writes_its_real_values(self, lib):
+        _in_line(lib)
+        _write(lib, 'file_video.ext', 11)               # replaced, never loaded since
+        data = _mgr(lib).load(_uuid(lib))
         fake = FakeProbe({'file_video.ext': probe(120.0, (1280, 720))})
         with mock.patch.object(p, 'probe_media', fake):
-            _mgr(library).update(_uuid(library), data)
+            _mgr(lib).update(_uuid(lib), data)
         assert fake.calls == ['file_video.ext']
         assert all(mm['duration'] == tc(120.0) and mm['file_size'] == 11
-                   for mm in _media_of(library, 'file_video.ext'))
-        mr = _report(_mgr(library), _uuid(library), 'save')
+                   for mm in _media_of(lib, 'file_video.ext'))
+        mr = _report(_mgr(lib), _uuid(lib), 'save')
         assert mr['complete'] and mr['files'] == [] and mr['unverified'] == []
 
 
@@ -932,40 +935,40 @@ class TestVideoIndexer:
         assert second['index_busy'] == 1 and second['indexed'] == 0
         assert time.monotonic() - start < 2.0
 
-    def test_a_replaced_video_is_reindexed_before_the_load(self, library, tmp_path, monkeypatch):
+    def test_a_replaced_video_is_reindexed_before_the_load(self, lib, tmp_path, monkeypatch):
         _fake_indexer(tmp_path, monkeypatch, 'ok')
-        _in_line(library)
-        _add_row(library, 'clip.mp4', 'MOVIE', duration=tc(90.0), file_size=10,
+        _in_line(lib)
+        _add_row(lib, 'clip.mp4', 'MOVIE', duration=tc(90.0), file_size=10,
                  pixel_width=1920, pixel_height=1080)
-        _set_xml_media(library, 'file_video.ext', rename='clip.mp4')
-        clip = _write(library, 'clip.mp4', 10)
+        _set_xml_media(lib, 'file_video.ext', rename='clip.mp4')
+        clip = _write(lib, 'clip.mp4', 10)
         _valid_idx(clip)
-        _write(library, 'clip.mp4', 10, fill=b'z')        # same size, new content
+        _write(lib, 'clip.mp4', 10, fill=b'z')        # same size, new content
         os.utime(clip, (5, 5))
         with mock.patch.object(p, 'probe_media', FakeProbe({'clip.mp4': probe(90.0, (1920, 1080))})):
-            plan = _mgr(library).plan_media_refresh(_uuid(library))
+            plan = _mgr(lib).plan_media_refresh(_uuid(lib))
             assert {c.file_name: c.state for c in plan.checks}['clip.mp4'] == 'changed'
-            report = _refresh(_mgr(library), _uuid(library))
+            report = _refresh(_mgr(lib), _uuid(lib))
         assert report['indexed'] == 1
         assert video_index_state(clip) == INDEX_VALID
 
-    def test_a_video_the_sync_does_not_carry_is_never_work(self, library):
-        _in_line(library)
-        _add_row(library, 'clip.webm', 'MOVIE', duration=tc(90.0), file_size=10)
-        _set_xml_media(library, 'file_video.ext', rename='clip.webm')
-        _write(library, 'clip.webm', 10)               # no .idx at all
-        assert not _mgr(library).plan_media_refresh(_uuid(library)).has_work
+    def test_a_video_the_sync_does_not_carry_is_never_work(self, lib):
+        _in_line(lib)
+        _add_row(lib, 'clip.webm', 'MOVIE', duration=tc(90.0), file_size=10)
+        _set_xml_media(lib, 'file_video.ext', rename='clip.webm')
+        _write(lib, 'clip.webm', 10)               # no .idx at all
+        assert not _mgr(lib).plan_media_refresh(_uuid(lib)).has_work
 
-    def test_an_index_failure_leaves_the_rows_and_is_not_retried(self, library, tmp_path, monkeypatch):
+    def test_an_index_failure_leaves_the_rows_and_is_not_retried(self, lib, tmp_path, monkeypatch):
         _fake_indexer(tmp_path, monkeypatch, 'fail')
-        _in_line(library)
-        _add_row(library, 'clip.mp4', 'MOVIE', duration=tc(90.0), file_size=10)
-        _set_xml_media(library, 'file_video.ext', rename='clip.mp4')
-        _write(library, 'clip.mp4', 10)                # no .idx: index only
-        first = _refresh(_mgr(library), _uuid(library))
-        second = _refresh(_mgr(library), _uuid(library), engine='running')
+        _in_line(lib)
+        _add_row(lib, 'clip.mp4', 'MOVIE', duration=tc(90.0), file_size=10)
+        _set_xml_media(lib, 'file_video.ext', rename='clip.mp4')
+        _write(lib, 'clip.mp4', 10)                # no .idx: index only
+        first = _refresh(_mgr(lib), _uuid(lib))
+        second = _refresh(_mgr(lib), _uuid(lib), engine='running')
         assert first['index_failed'] == 1
-        assert _row(library, 'clip.mp4').file_size == 10
+        assert _row(lib, 'clip.mp4').file_size == 10
         assert second['engine_asked'] is False
 
 
@@ -976,36 +979,36 @@ class TestVideoIndexer:
 # ---------------------------------------------------------------------------
 
 class TestSaving:
-    def test_a_failed_write_leaves_the_old_file_and_no_temporary(self, library):
-        mgr = _mgr(library)
-        before = _bytes(library)
+    def test_a_failed_write_leaves_the_old_file_and_no_temporary(self, lib):
+        mgr = _mgr(lib)
+        before = _bytes(lib)
         obj = mock.Mock()
         with mock.patch.object(p.XmlReaderWriter, 'write_from_object', side_effect=ValueError('bad')):
             with pytest.raises(ValueError):
                 mgr.save_xml('proj1', obj)
-        assert _bytes(library) == before
-        assert [f for f in os.listdir(os.path.dirname(_script(library))) if f.endswith('.tmp')] == []
+        assert _bytes(lib) == before
+        assert [f for f in os.listdir(os.path.dirname(_script(lib))) if f.endswith('.tmp')] == []
 
-    def test_a_save_keeps_the_old_mode(self, library):
-        _in_line(library)
-        os.chmod(_script(library), 0o604)
-        data = XmlReaderWriter(schema_name='script', xmlfile=_script(library)).read()
-        _mgr(library).update(_uuid(library), data)
-        assert stat.S_IMODE(os.stat(_script(library)).st_mode) == 0o604
+    def test_a_save_keeps_the_old_mode(self, lib):
+        _in_line(lib)
+        os.chmod(_script(lib), 0o604)
+        data = _mgr(lib).load(_uuid(lib))
+        _mgr(lib).update(_uuid(lib), data)
+        assert stat.S_IMODE(os.stat(_script(lib)).st_mode) == 0o604
 
     @pytest.mark.skipif(os.geteuid() == 0, reason='root ignores directory permissions')
-    def test_an_unwritable_directory_falls_back_to_writing_in_place(self, library):
-        _in_line(library)
-        data = XmlReaderWriter(schema_name='script', xmlfile=_script(library)).read()
+    def test_an_unwritable_directory_falls_back_to_writing_in_place(self, lib):
+        _in_line(lib)
+        data = _mgr(lib).load(_uuid(lib))
         data['CuemsScript']['name'] = 'Saved In Place'
-        d = os.path.dirname(_script(library))
-        os.chmod(_script(library), 0o666)
+        d = os.path.dirname(_script(lib))
+        os.chmod(_script(lib), 0o666)
         os.chmod(d, 0o555)
         try:
-            _mgr(library).update(_uuid(library), data)
+            _mgr(lib).update(_uuid(lib), data)
         finally:
             os.chmod(d, 0o755)
-        saved = XmlReaderWriter(schema_name='script', xmlfile=_script(library)).read()
+        saved = _mgr(lib).load(_uuid(lib))
         assert saved['CuemsScript']['name'] == 'Saved In Place'
 
     def test_no_project_lock_and_no_backups_any_more(self):
@@ -1013,12 +1016,12 @@ class TestSaving:
         assert not hasattr(p.CuemsDBProject, 'rewrite_project_media')
         assert not hasattr(p.CuemsDBProject, '_backup_script')
 
-    def test_a_duplicate_does_not_copy_leftover_backups(self, library):
-        _in_line(library)
-        open(_script(library) + '.pre-refresh-20261005T000000Z', 'w').write('old')
-        _mgr(library).duplicate(_uuid(library))
-        dup = [d for d in os.listdir(library.projects_dir) if d != 'proj1'][0]
-        assert _backups(library, dup) == []
+    def test_a_duplicate_does_not_copy_leftover_backups(self, lib):
+        _in_line(lib)
+        open(_script(lib) + '.pre-refresh-20261005T000000Z', 'w').write('old')
+        _mgr(lib).duplicate(_uuid(lib))
+        dup = [d for d in os.listdir(lib.projects_dir) if d != 'proj1'][0]
+        assert _backups(lib, dup) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1026,66 +1029,66 @@ class TestSaving:
 # ---------------------------------------------------------------------------
 
 class TestSaveVerifiesLegacyRows:
-    def test_a_save_verifies_a_legacy_rows_duration_too(self, library):
-        _write(library, 'file_video.ext', 55)
-        _set_row(library, 'file_video.ext', duration='00:00:00.000')
-        data = XmlReaderWriter(schema_name='script', xmlfile=_script(library)).read()
+    def test_a_save_verifies_a_legacy_rows_duration_too(self, lib):
+        _write(lib, 'file_video.ext', 55)
+        _set_row(lib, 'file_video.ext', duration='00:00:00.000')
+        data = _mgr(lib).load(_uuid(lib))
         fake = FakeProbe({'file_video.ext': probe(90.0, (1280, 720))})
         with mock.patch.object(p, 'probe_media', fake):
-            _mgr(library).update(_uuid(library), data)
-        row = _row(library, 'file_video.ext')
+            _mgr(lib).update(_uuid(lib), data)
+        row = _row(lib, 'file_video.ext')
         assert (row.duration, row.pixel_width, row.file_size) == (tc(90.0), 1280, 55)
         assert fake.calls == ['file_video.ext']
-        assert all(mm['duration'] == tc(90.0) for mm in _media_of(library, 'file_video.ext'))
+        assert all(mm['duration'] == tc(90.0) for mm in _media_of(lib, 'file_video.ext'))
 
-    def test_a_save_stops_verifying_at_the_deadline(self, library):
-        _write(library, 'file_video.ext', 55)
-        data = XmlReaderWriter(schema_name='script', xmlfile=_script(library)).read()
+    def test_a_save_stops_verifying_at_the_deadline(self, lib):
+        _write(lib, 'file_video.ext', 55)
+        data = _mgr(lib).load(_uuid(lib))
         fake = FakeProbe({'file_video.ext': probe(90.0, (1280, 720))})
         with mock.patch.object(p, 'probe_media', fake), \
                 mock.patch.object(p, 'REFRESH_DEADLINE_S', 0):
-            _mgr(library).update(_uuid(library), data)
+            _mgr(lib).update(_uuid(lib), data)
         assert fake.calls == []
-        assert _row(library, 'file_video.ext').file_size is None
+        assert _row(lib, 'file_video.ext').file_size is None
 
 
 # ---------------------------------------------------------------------------
 # Q2: re-upload after a permanent deletion
 # ---------------------------------------------------------------------------
 
-def _dangling(library, project_unix, name):
-    library.connect()
+def _dangling(lib, project_unix, name):
+    lib.connect()
     project = Project.get(Project.unix_name == project_unix)
     ProjectMedia.create(project=project, media=None, media_filename=name)
 
 
 class TestReupload:
-    def test_the_cleanup_deletes_only_the_reuploaded_files_rows(self, library):
-        _dangling(library, 'proj1', 'x.wav')
-        _dangling(library, 'proj1', 'y.wav')
-        _mgr(library).deletele_mising_media_references('x.wav')
-        library.connect()
+    def test_the_cleanup_deletes_only_the_reuploaded_files_rows(self, lib):
+        _dangling(lib, 'proj1', 'x.wav')
+        _dangling(lib, 'proj1', 'y.wav')
+        _mgr(lib).deletele_mising_media_references('x.wav')
+        lib.connect()
         names = sorted(pm.media_filename for pm in ProjectMedia.select())
         assert names == ['y.wav']
 
-    def test_a_reupload_only_relinks_and_trashed_projects_are_skipped(self, library):
-        _in_line(library)
-        shutil.copytree(os.path.join(library.projects_dir, 'proj1'),
-                        os.path.join(library.projects_dir, 'proj2'))
-        library.connect()
+    def test_a_reupload_only_relinks_and_trashed_projects_are_skipped(self, lib):
+        _in_line(lib)
+        shutil.copytree(os.path.join(lib.projects_dir, 'proj1'),
+                        os.path.join(lib.projects_dir, 'proj2'))
+        lib.connect()
         Project.create(uuid=str(new_uuid()), name='Proj Two', unix_name='proj2',
                        created=new_datetime(), modified=new_datetime(), in_trash=False)
-        mgr = _mgr(library)
-        mgr.delete(_uuid(library, 'proj2'))                # trashed
-        _set_row(library, 'file_video.ext', duration=tc(120.0), file_size=11)
-        before = _bytes(library)
-        mgr.update_projects_existed_media(_uuid(library, 'proj1'), 'file_video.ext')
-        mgr.update_projects_existed_media(_uuid(library, 'proj2'), 'file_video.ext')
-        assert _bytes(library) == before                   # relink only: D21
-        mr = _report(_mgr(library), _uuid(library, 'proj1'))
+        mgr = _mgr(lib)
+        mgr.delete(_uuid(lib, 'proj2'))                # trashed
+        _set_row(lib, 'file_video.ext', duration=tc(120.0), file_size=11)
+        before = _bytes(lib)
+        mgr.update_projects_existed_media(_uuid(lib, 'proj1'), 'file_video.ext')
+        mgr.update_projects_existed_media(_uuid(lib, 'proj2'), 'file_video.ext')
+        assert _bytes(lib) == before                   # relink only: D21
+        mr = _report(_mgr(lib), _uuid(lib, 'proj1'))
         assert _changes(mr, 'file_video.ext')['duration'] == (tc(90.0), tc(120.0))
 
-    def test_one_failing_project_does_not_fail_the_upload(self, library):
+    def test_one_failing_project_does_not_fail_the_upload(self, lib):
         from cuemseditor.CuemsUpload import CuemsUpload
         upload = object.__new__(CuemsUpload)
         upload.server = mock.Mock()
@@ -1096,9 +1099,9 @@ class TestReupload:
         upload.check_if_media_existed('file.ext')
         assert upload.server.db.project.update_projects_existed_media.call_count == 2
 
-    def test_export_skips_a_dangling_row(self, library):
-        _in_line(library)
-        _dangling(library, 'proj1', 'gone-forever.wav')
-        os.makedirs(os.path.join(library.root, 'www', 'exports'), exist_ok=True)
-        os.makedirs(os.path.join(library.root, 'tmp'), exist_ok=True)
-        assert _mgr(library).export(_uuid(library)).endswith('.zip')
+    def test_export_skips_a_dangling_row(self, lib):
+        _in_line(lib)
+        _dangling(lib, 'proj1', 'gone-forever.wav')
+        os.makedirs(os.path.join(lib.root, 'www', 'exports'), exist_ok=True)
+        os.makedirs(os.path.join(lib.root, 'tmp'), exist_ok=True)
+        assert _mgr(lib).export(_uuid(lib)).endswith('.zip')
