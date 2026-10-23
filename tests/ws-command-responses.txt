@@ -25,7 +25,10 @@ Commands 													 ->	Responses
 {"action" : "project_ready", "value" : "project_uuid"}   		->  {"type": "project_ready", "value": "project_uuid"}
 																->  then {"type": "media_check_report", "value": media_report}   (to the requester and every session on the project)
 {"action" : "project_deploy", "value" : "project_uuid"}   		->  {"type": "project_deploy", "value": "project_uuid"}
-{"action" : "project_status"}  									->  {"type": "project_status", "value":  {"status ": "none|running", "project_uuid": "project_uuid"}
+{"action" : "project_status"}  									->  {"type": "project_status", "value":  {"status": "running|loaded|none", "project_uuid": "project_uuid", "project_unix_name": "unix_name"}}
+																	(relayed from the engine as it answers: "running" a show is playing, "loaded" a project is loaded and stopped, "none" no project.
+																	 Since cuems-engine 0.1.0rc6-4 the status is three-state and carries project_unix_name; "project_uuid" is "" when none.
+																	 The media check treats "running" as a show playing and "loaded"/"none" as not; an unanswered query is a fourth, distinct case.)
 {"action" : "project_unload", "value" : "project_uuid"}   		->  {"type": "project_unload", "value": "project_uuid"}
 
 {"action" : "project_new", "value" : "project_json", "unix_name" : "unix_name_string"}   		->  {"type": "project_save", "value": "project_uuid"}
@@ -453,6 +456,12 @@ media_check_report (869fat84r D20, cuems-RELATIONS Plans/2026-10-01-engine-late-
 
   "files" lists at most 20 files; "total_files" counts them all.
   An all-clear is complete && no files && no unverified; a client clears a warning only on that.
+
+  Audience: "open" goes to the requester only, after the project frame and the document_load_report;
+  "ready" (after the project_ready reply) and "save" (after the project_save reply) go to every session on
+  the project. The report is informational: it never gates a save (only the document_load_report's
+  acknowledgment does) and it carries the same findings as that report's media_repairs, grouped by file.
+  The frame is the one released in 0.1.0rc1-4, restored byte-for-byte (key order included); payload version 1.
 
 SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 SPDX-License-Identifier: GPL-3.0-or-later

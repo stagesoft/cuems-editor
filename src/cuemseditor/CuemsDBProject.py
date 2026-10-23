@@ -980,6 +980,8 @@ class CuemsDBProject(StringSanitizer):
                 Logger.debug('data is now: {}'.format(data))
                 project_object = CuemsScript.from_json(data)
                 Logger.debug(f'project_object is now: {type(project_object)},{project_object}')
+                # Fill durations and stored values from the DB, as a save does (869fat84r).
+                self._fix_media_durations(project_object)
                 self.add_media_relations(project, project_object)
                 self.save_xml(unix_name, project_object)
                 return project_uuid
@@ -1066,6 +1068,9 @@ class CuemsDBProject(StringSanitizer):
                     # an existing project — legacy scripts must stay duplicable
                     # beyond what the library load itself refuses; the engine's
                     # reveal guard covers them.
+                    # Fill durations and stored values from the DB, as a save does, so a
+                    # legacy project's copy carries them (869fat84r).
+                    self._fix_media_durations(project_object)
                     self.add_media_relations(dup_project, project_object)
                     self.save_xml(new_unix_name, project_object)
                     return new_project_uuid, source_report

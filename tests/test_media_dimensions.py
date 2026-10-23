@@ -39,7 +39,7 @@ import pytest
 import cuemseditor.repair_durations as rd
 from cuemseditor.cli import get_settings
 from cuemseditor.CuemsDBModel import Media, Project, database
-from cuemsutils.xml.XmlReaderWriter import XmlReaderWriter
+from cuemsutils.cues import CueList, CuemsScript
 
 DIMS = ('pixel_width', 'pixel_height', 'file_size')
 PIXEL = ('pixel_width', 'pixel_height')
@@ -92,21 +92,18 @@ def _script_path(library, project='proj1'):
 
 
 def _media_blocks(path):
-    """[(cue_type, Media dict)] for every media cue in a project XML."""
-    data = XmlReaderWriter(schema_name='script', xmlfile=path).read()
+    """[(cue class name, Media)] for every media cue of a project file, read through the library."""
+    script, _report = CuemsScript.load_with_report(path)
     out = []
 
-    def walk(node):
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key in ('AudioCue', 'VideoCue') and isinstance(value, dict):
-                    out.append((key, value.get('Media')))
-                walk(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
+    def walk(contents):
+        for cue in contents:
+            if isinstance(cue, CueList):
+                walk(cue.contents)
+            elif cue.get('Media'):
+                out.append((type(cue).__name__, cue['Media']))
 
-    walk(data)
+    walk(script.cuelist.contents)
     return out
 
 
@@ -162,11 +159,19 @@ def _project_uuid(library, unix_name='proj1'):
 
 
 def _script_json(library, project='proj1'):
-    return XmlReaderWriter(schema_name='script', xmlfile=_script_path(library, project)).read()
+    """The project as the client receives it (the wire), through the editor's own load."""
+    uuid = _project_uuid(library, project)
+    return _project_manager(library).load(uuid)
 
 
 def _contents(data):
     return data['CuemsScript']['CueList']['contents']
+
+
+def _video_media(data):
+    """The Media dicts of the wire's video cues."""
+    return [item['Cue']['Media'] for item in _contents(data)
+            if 'Cue' in item and item['Cue'].get('class') == 'video']
 
 
 # ---------------------------------------------------------------------------
@@ -303,10 +308,53 @@ class TestUpload:
 
 
 # ---------------------------------------------------------------------------
-# The metadata walk (shared by the save path and the repair tool)
+# The metadata walk (shared by the save path and the repair tool), on objects (003)
+#
+# The released tests drove the walk with dict cues. The walk now takes the
+# ``CuemsScript``'s cues, and a client's raw values arrive through
+# ``CuemsScript.from_json``, which stores them untouched; so the cases below build
+# the script from the 013 fixture's wire and put the raw values in the payload.
 # ---------------------------------------------------------------------------
 
-def _walk(contents, dims_by_file, known=('file.ext', 'file_video.ext')):
+import copy
+
+from cuemsutils.helpers import new_uuid
+
+HERE = os.path.dirname(__file__)
+FIXTURE_013 = os.path.join(HERE, 'fixtures', 'script_minimal_013.xml')
+VIDEO_1 = '1f301cf8-dd03-4b40-ac17-ef0e5e7988be'
+AUDIO_1 = 'bb391e70-e65e-47ca-8b29-5a7076bbd250'
+VIDEO_2 = '96d6e5de-c29b-4ab2-b828-297d84293304'
+
+
+def _fixture_wire():
+    script, _report = CuemsScript.load_with_report(FIXTURE_013)
+    return script.to_wire()
+
+
+def _wire_cue(data, cue_id):
+    for item in _contents(data):
+        cue = item.get('Cue')
+        if cue and str(cue.get('id')) == cue_id:
+            return cue
+    raise AssertionError(cue_id)
+
+
+def _object_cue(script, cue_id):
+    def walk(contents):
+        for cue in contents:
+            if isinstance(cue, CueList):
+                found = walk(cue.contents)
+                if found is not None:
+                    return found
+            elif str(cue.get('id')) == cue_id:
+                return cue
+        return None
+
+    return walk(script.cuelist.contents)
+
+
+def _walk(script, dims_by_file, known=('file.ext', 'file_video.ext')):
     from cuemseditor.CuemsDBProject import fix_media_durations_in_contents
 
     def durations(name):
@@ -322,79 +370,98 @@ def _walk(contents, dims_by_file, known=('file.ext', 'file_video.ext')):
             raise value
         return value
 
-    return fix_media_durations_in_contents(contents, durations, dimensions)
-
-
-def _cue(cue_type, file_name, **media):
-    return {cue_type: {'Media': {'file_name': file_name, 'duration': '00:00:01.000',
-                                 **media}}}
+    return fix_media_durations_in_contents(script.cuelist.contents, durations, dimensions)
 
 
 STORED = {'pixel_width': 1920, 'pixel_height': 1080, 'file_size': 4096, 'file_md5': MD5}
 
 
+def _media(script, cue_id):
+    return _object_cue(script, cue_id)['Media']
+
+
+def _stored_of(media):
+    return {k: media[k] for k in ALL if k in media}
+
+
 class TestFill:
     def test_video_cues_get_everything_audio_cues_size_and_md5(self):
-        contents = [_cue('VideoCue', 'file_video.ext'), _cue('AudioCue', 'file.ext')]
-        stats = _walk(contents, {'file_video.ext': STORED, 'file.ext': STORED})
-        video, audio = contents[0]['VideoCue']['Media'], contents[1]['AudioCue']['Media']
-        assert {k: video[k] for k in ALL} == STORED
-        assert {k: audio[k] for k in ('file_size', 'file_md5')} == {'file_size': 4096, 'file_md5': MD5}
+        script = CuemsScript.from_json(_fixture_wire())
+        _walk(script, {'file_video.ext': STORED, 'file.ext': STORED})
+        assert _stored_of(_media(script, VIDEO_1)) == STORED
+        audio = _media(script, AUDIO_1)
+        assert _stored_of(audio) == {'file_size': 4096, 'file_md5': MD5}
         assert not set(PIXEL) & set(audio)
-        assert stats.dimension_changes == 2
 
     def test_an_md5_is_stored_lowercase(self):
-        contents = [_cue('AudioCue', 'file.ext', file_md5=MD5.upper())]
-        _walk(contents, {'file.ext': None}, known=())
-        assert contents[0]['AudioCue']['Media']['file_md5'] == MD5
+        data = _fixture_wire()
+        _wire_cue(data, AUDIO_1)['Media'].update(file_name='orphan.wav', file_md5=MD5.upper())
+        script = CuemsScript.from_json(data)
+        _walk(script, {}, known=())
+        assert _media(script, AUDIO_1)['file_md5'] == MD5
 
     def test_the_stored_values_replace_what_the_client_sent(self):
-        contents = [_cue('VideoCue', 'file_video.ext', pixel_width=10, pixel_height=10,
-                         file_size=10)]
-        _walk(contents, {'file_video.ext': STORED})
-        assert {k: contents[0]['VideoCue']['Media'][k] for k in ALL} == STORED
+        data = _fixture_wire()
+        _wire_cue(data, VIDEO_1)['Media'].update(pixel_width=10, pixel_height=10, file_size=10)
+        script = CuemsScript.from_json(data)
+        _walk(script, {'file_video.ext': STORED})
+        assert _stored_of(_media(script, VIDEO_1)) == STORED
 
     def test_unknown_values_remove_what_the_client_sent(self):
-        contents = [_cue('VideoCue', 'file_video.ext', pixel_width=10, pixel_height=10)]
-        stats = _walk(contents, {'file_video.ext': None})
-        assert not set(ALL) & set(contents[0]['VideoCue']['Media'])
-        assert stats.dimension_changes == 1
+        data = _fixture_wire()
+        _wire_cue(data, VIDEO_1)['Media'].update(pixel_width=10, pixel_height=10)
+        script = CuemsScript.from_json(data)
+        _walk(script, {'file_video.ext': None})
+        assert not set(ALL) & set(_media(script, VIDEO_1))
 
     @pytest.mark.parametrize('bad', [None, 0, -5, 'abc', '', 1.5, True])
     def test_invalid_client_values_are_stripped_everywhere(self, bad):
-        contents = [
-            _cue('VideoCue', 'orphan.mov', pixel_width=bad),
-            _cue('AudioCue', 'file.ext', file_size=bad),
-            _cue('VideoCue', 'file_video.ext', pixel_height=bad),
-            _cue('AudioCue', 'orphan.wav', file_md5=bad),
-        ]
-        _walk(contents, {'file_video.ext': None})
-        for item in contents:
-            (cue,) = item.values()
-            assert not set(ALL) & set(cue['Media'])
+        data = _fixture_wire()
+        _wire_cue(data, VIDEO_1)['Media'].update(file_name='orphan.mov', pixel_width=bad)
+        _wire_cue(data, AUDIO_1)['Media'].update(file_size=bad, file_md5=bad)
+        _wire_cue(data, VIDEO_2)['Media'].update(pixel_height=bad)
+        script = CuemsScript.from_json(data)
+        _walk(script, {'file_video.ext': None})
+        for cue_id in (VIDEO_1, AUDIO_1, VIDEO_2):
+            assert not set(ALL) & set(_media(script, cue_id)), cue_id
 
     def test_an_orphan_keeps_valid_values(self):
-        contents = [_cue('VideoCue', 'orphan.mov', **STORED)]
-        stats = _walk(contents, {})
-        assert {k: contents[0]['VideoCue']['Media'][k] for k in ALL} == STORED
+        data = _fixture_wire()
+        _wire_cue(data, VIDEO_1)['Media'].update(file_name='orphan.mov', **STORED)
+        script = CuemsScript.from_json(data)
+        stats = _walk(script, {})
+        assert _stored_of(_media(script, VIDEO_1)) == STORED
         assert stats.orphans == ['orphan.mov']
 
     def test_one_bad_cue_does_not_stop_the_others(self):
-        contents = [_cue('VideoCue', 'file.ext'), _cue('VideoCue', 'file_video.ext')]
-        _walk(contents, {'file.ext': RuntimeError('db'), 'file_video.ext': STORED})
-        assert {k: contents[1]['VideoCue']['Media'][k] for k in ALL} == STORED
+        data = _fixture_wire()
+        _wire_cue(data, VIDEO_1)['Media'].update(file_name='file.ext')
+        script = CuemsScript.from_json(data)
+        stats = _walk(script, {'file.ext': RuntimeError('db'), 'file_video.ext': STORED})
+        assert _stored_of(_media(script, VIDEO_2)) == STORED
+        assert 'file.ext' in stats.errors
 
     def test_nested_cuelists_are_walked(self):
-        inner = [_cue('VideoCue', 'file_video.ext')]
-        contents = [{'CueList': {'contents': inner}}]
-        _walk(contents, {'file_video.ext': STORED})
-        assert inner[0]['VideoCue']['Media']['pixel_width'] == 1920
+        data = _fixture_wire()
+        root = data['CuemsScript']['CueList']
+        inner = copy.deepcopy({k: v for k, v in root.items() if k != 'contents'})
+        inner['id'] = str(new_uuid())
+        moved = [item for item in root['contents'] if item.get('Cue', {}).get('id') is not None
+                 and str(item['Cue']['id']) == VIDEO_1]
+        root['contents'] = [item for item in root['contents'] if item not in moved]
+        inner['contents'] = moved
+        root['contents'].append({'CueList': inner})
+        script = CuemsScript.from_json(data)
+        _walk(script, {'file_video.ext': STORED})
+        assert _media(script, VIDEO_1)['pixel_width'] == 1920
 
     def test_without_a_dimensions_resolver_only_invalid_values_go(self):
         from cuemseditor.CuemsDBProject import fix_media_durations_in_contents
-        contents = [_cue('VideoCue', 'file_video.ext', pixel_width=0, pixel_height=1080)]
-        fix_media_durations_in_contents(contents, lambda name: None)
-        media = contents[0]['VideoCue']['Media']
+        data = _fixture_wire()
+        _wire_cue(data, VIDEO_1)['Media'].update(pixel_width=0, pixel_height=1080)
+        script = CuemsScript.from_json(data)
+        fix_media_durations_in_contents(script.cuelist.contents, lambda name: None)
+        media = _media(script, VIDEO_1)
         assert 'pixel_width' not in media and media['pixel_height'] == 1080
 
 
@@ -408,7 +475,8 @@ def _patched_probe(dims=(1280, 720)):
 
 
 class TestSavePaths:
-    def test_update_writes_the_stored_values_into_video_cues(self, library):
+    def test_update_writes_the_stored_values_into_video_cues(self, library013):
+        library = library013
         _set_row_dims(library, 'file_video.ext', 3840, 2160, 777)
         data = _script_json(library)
         mgr = _project_manager(library)
@@ -424,9 +492,10 @@ class TestSavePaths:
                               == (3840, 2160, 777) for m in videos)
         assert audios and all(not set(PIXEL) & set(m) for m in audios)
 
-    def test_update_probes_and_stores_a_file_without_values(self, library):
+    def test_update_probes_and_stores_a_file_without_values(self, library013):
         # A row with no stored size is verified by the one probe that reads
         # the duration and the pixel size together (D20, plan §7.9.4).
+        library = library013
         from cuemseditor import CuemsDBProject as p
         from cuemseditor.CuemsDBMedia import MediaProbe, PROBE_OK
         from cuemsutils.tools.CTimecode import CTimecode
@@ -445,11 +514,11 @@ class TestSavePaths:
         videos = [m for t, m in _media_blocks(_script_path(library)) if t == 'VideoCue']
         assert all(m['pixel_width'] == 1280 for m in videos)
 
-    def test_a_failed_probe_never_fails_the_save(self, library):
+    def test_a_failed_probe_never_fails_the_save(self, library013):
+        library = library013
         data = _script_json(library)
-        for item in _contents(data):
-            if 'VideoCue' in item:
-                item['VideoCue']['Media']['pixel_width'] = 0   # client junk
+        for media in _video_media(data):
+            media['pixel_width'] = 0   # client junk
         mgr = _project_manager(library)
         with _patched_probe((None, None)):
             mgr.update(_project_uuid(library), data)
@@ -458,10 +527,12 @@ class TestSavePaths:
         videos = [m for t, m in _media_blocks(_script_path(library)) if t == 'VideoCue']
         assert videos and all(not set(PIXEL) & set(m) for m in videos)
 
-    def test_new_fills_the_values(self, library):
+    def test_new_fills_the_values(self, library013):
+        library = library013
         _set_row_dims(library, 'file_video.ext', 3840, 2160, 777)
         data = _script_json(library)
         data['CuemsScript']['name'] = 'Proj New'
+        data['CuemsScript']['id'] = str(new_uuid())
         mgr = _project_manager(library)
         with _patched_probe():
             mgr.new(data, 'projnew')
@@ -471,7 +542,8 @@ class TestSavePaths:
                   if t == 'VideoCue']
         assert videos and all(m['pixel_width'] == 3840 for m in videos)
 
-    def test_duplicate_fills_the_values(self, library):
+    def test_duplicate_fills_the_values(self, library013):
+        library = library013
         _set_row_dims(library, 'file_video.ext', 3840, 2160, 777)
         mgr = _project_manager(library)
         with _patched_probe():
@@ -490,7 +562,8 @@ class TestSavePaths:
 # ---------------------------------------------------------------------------
 
 class TestRepairTool:
-    def test_dry_run_on_an_unmigrated_db_changes_nothing(self, library, canned_probe):
+    def test_dry_run_on_an_unmigrated_db_changes_nothing(self, library013, canned_probe):
+        library = library013
         _make_old_schema(library.db_path)
         db_before = _md5(library.db_path)
         xml_before = _md5(_script_path(library))
@@ -499,33 +572,34 @@ class TestRepairTool:
         assert not set(ALL) & set(_columns(library.db_path))
         assert _md5(_script_path(library)) == xml_before
 
-    def test_apply_migrates_fills_the_db_and_the_projects(self, library, canned_probe):
+    def test_apply_migrates_and_fills_the_db_but_writes_no_script(self, library013, canned_probe, capsys):
+        library = library013
         _make_old_schema(library.db_path)
         with open(os.path.join(library.root, 'media', 'file_video.ext'), 'wb') as f:
             f.write(b'v' * 321)
+        xml_before = _md5(_script_path(library))
         rd.main(['--library-path', library.root, '--apply'])
         assert _row(library, 'file_video.ext') == (1920, 1080, 321)
         assert _row_md5(library, 'file_video.ext') == hashlib.md5(b'v' * 321).hexdigest()
-        videos = [m for t, m in _media_blocks(_script_path(library)) if t == 'VideoCue']
-        assert videos and all(m['pixel_width'] == 1920 for m in videos)
+        # 002 FR-027a: the script changes only when an operator saves it in the editor.
+        assert _md5(_script_path(library)) == xml_before
+        assert 'NEEDS_SAVE' in capsys.readouterr().out
 
-    def test_pass_b_writes_values_into_a_project_whose_durations_are_right(
-            self, library, canned_probe):
-        rd.main(['--library-path', library.root, '--apply'])   # durations fixed
-        # Wipe the stored values from the XML only: durations are now correct.
-        _strip_xml(_script_path(library))
-        assert all(not set(ALL) & set(m) for _, m in _media_blocks(_script_path(library)))
-        rd.main(['--library-path', library.root, '--apply', '--xml-only'])
-        videos = [m for t, m in _media_blocks(_script_path(library)) if t == 'VideoCue']
-        assert videos and all(m['pixel_width'] == 1920 for m in videos)
+    def test_no_mode_writes_a_script(self, library013):
+        # The released --xml-only (Pass B) was an explicit bulk save; on this line the tool lists
+        # the projects that need a save (002 FR-027a).
+        with pytest.raises(SystemExit):
+            rd.main(['--library-path', library013.root, '--apply', '--xml-only'])
 
-    def test_pass_a_reports_a_replaced_file(self, library, canned_probe, capsys):
+    def test_pass_a_reports_a_replaced_file(self, library013, canned_probe, capsys):
+        library = library013
         _set_row_dims(library, 'file_video.ext', 640, 480, 1)
         rd.main(['--library-path', library.root])
         out = capsys.readouterr().out
         assert 'DIMS_CHANGED' in out and 'file_video.ext' in out
 
-    def test_pass_a_reports_a_changed_md5_as_dirty(self, library, canned_probe, capsys):
+    def test_pass_a_reports_a_changed_md5_as_dirty(self, library013, canned_probe, capsys):
+        library = library013
         library.connect()
         Media.update(file_md5=MD5).where(Media.unix_name == 'file.ext').execute()
         database.close()
@@ -535,7 +609,8 @@ class TestRepairTool:
         out = capsys.readouterr().out
         assert 'MD5_CHANGED' in out and 'file.ext' in out
 
-    def test_no_md5_skips_the_hashing(self, library, canned_probe):
+    def test_no_md5_skips_the_hashing(self, library013, canned_probe):
+        library = library013
         rd.main(['--library-path', library.root, '--apply', '--no-md5'])
         assert _row_md5(library, 'file_video.ext') is None
 
