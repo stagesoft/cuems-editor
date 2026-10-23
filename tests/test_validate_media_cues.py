@@ -18,9 +18,19 @@ cue's media. Pinned here:
   rows and the XML are byte-identical afterwards (the duration fixer used
   to write Media rows before the fade gate ran);
 * the WS layer forwards a ``ValueError`` without the ``<class …>`` prefix.
+
+003 adaptation (T011): since cuems-utils 013 the wire carries a media cue as
+``{'Cue': {'class': 'audio' | 'video', ...}}``, not as ``{'AudioCue': ...}``.
+The released gate only knew the old wrappers, so on the current wire it would
+find no media cue at all and refuse nothing (constitution IV gate 4: a
+caller that still resolves but now computes the wrong answer). The shape
+tests below use the current wire; one test keeps the old wrappers, because a
+deployed frontend may still send them. The update tests save a version-2
+(013) script, which is what ``CuemsScript.load`` accepts.
 """
 
 import os
+import shutil
 from unittest import mock
 
 import pytest
@@ -34,15 +44,40 @@ from cuemseditor.CuemsDBProject import (
 from cuemseditor.CuemsWsUser import CuemsWsUser
 
 
+FIXTURE_013 = os.path.join(os.path.dirname(__file__), 'fixtures', 'script_minimal_013.xml')
+
+
 def _audio(media, name='A1', cue_id='a1-uuid'):
-    cue = {'name': name, 'id': cue_id}
+    cue = {'name': name, 'id': cue_id, 'class': 'audio'}
     if media is not mock.sentinel.absent:
         cue['Media'] = media
-    return {'AudioCue': cue}
+    return {'Cue': cue}
 
 
 def _video(media, name='V1', cue_id='v1-uuid'):
-    return {'VideoCue': {'name': name, 'id': cue_id, 'Media': media}}
+    return {'Cue': {'name': name, 'id': cue_id, 'class': 'video', 'Media': media}}
+
+
+def _media_cues_of(data):
+    """The media cues of a wire payload (class audio or video), nested lists walked."""
+    found = []
+
+    def walk(contents):
+        for item in contents:
+            if 'CueList' in item:
+                walk(item['CueList'].get('contents', []))
+            elif 'Cue' in item and item['Cue'].get('class') in ('audio', 'video'):
+                found.append(item['Cue'])
+
+    walk(data['CuemsScript']['CueList']['contents'])
+    return found
+
+
+@pytest.fixture
+def library013(library):
+    """The temporary library with a version-2 (013) script as ``proj1``."""
+    shutil.copy(FIXTURE_013, os.path.join(library.projects_dir, 'proj1', 'script.xml'))
+    return library
 
 
 GOOD = {'file_name': 'file.ext', 'id': 'm-1', 'duration': '00:00:01.000', 'regions': []}
@@ -68,6 +103,18 @@ def test_every_bad_shape_is_rejected_naming_the_cue(media, reason):
         validate_media_cues_in_contents([_audio(media, name='Intro', cue_id='c-9')])
     text = str(e.value)
     assert "'Intro'" in text and 'c-9' in text and reason in text
+
+
+@pytest.mark.parametrize('key', ['AudioCue', 'VideoCue'])
+def test_the_pre_013_wrappers_are_still_gated(key):
+    """A deployed frontend may still send ``{'AudioCue': ...}``: keep accepting it (Principle I)."""
+    with pytest.raises(ValueError) as e:
+        validate_media_cues_in_contents([{key: {'name': 'Old', 'id': 'o-1'}}])
+    assert "'Old'" in str(e.value) and 'no media file' in str(e.value)
+
+
+def test_a_hardware_cue_of_another_class_is_not_a_media_cue():
+    validate_media_cues_in_contents([{'Cue': {'name': 'dmx', 'id': 'd-1', 'class': 'dmx'}}])
 
 
 def test_good_cues_pass_and_action_cues_are_ignored():
@@ -140,24 +187,23 @@ def _xml(library):
         return f.read()
 
 
-def test_update_refuses_a_media_less_cue_and_writes_nothing(library):
+def test_update_refuses_a_media_less_cue_and_writes_nothing(library013):
+    library = library013
     mgr = _manager(library)
     uuid = str(Project.get(Project.unix_name == 'proj1').uuid)
-    data = mgr.load(uuid)
     database.close()
     # Link the fixture's media so the ProjectMedia snapshot is non-trivial.
     mgr2 = _manager(library)
-    with mock.patch('cuemseditor.CuemsDBProject.probe_dimensions', return_value=(1, 1)):
-        mgr2.update(uuid, mgr2.load(uuid))
+    mgr2.update(uuid, mgr2.load(uuid))
     database.close()
     before_db, before_xml = _snapshot(library), _xml(library)
 
-    # The frontend's shape: the AudioCue arrives with no Media key at all.
-    bad = mgr.load(uuid) if not database.is_closed() else _manager(library).load(uuid)
-    for item in bad['CuemsScript']['CueList']['contents']:
-        if 'AudioCue' in item:
-            item['AudioCue']['name'] = 'renamed'
-            del item['AudioCue']['Media']
+    # The frontend's shape: the audio cue arrives with no Media key at all.
+    bad = _manager(library).load(uuid)
+    audio = [c for c in _media_cues_of(bad) if c['class'] == 'audio']
+    assert audio, 'the 013 fixture holds an audio cue'
+    audio[0]['name'] = 'renamed'
+    del audio[0]['Media']
     with pytest.raises(ValueError) as e:
         _manager(library).update(uuid, bad)
     if not database.is_closed():
@@ -168,13 +214,14 @@ def test_update_refuses_a_media_less_cue_and_writes_nothing(library):
     assert _xml(library) == before_xml
 
 
-def test_update_refuses_a_deleted_media_file(library):
+def test_update_refuses_a_deleted_media_file(library013):
+    library = library013
     mgr = _manager(library)
     uuid = str(Project.get(Project.unix_name == 'proj1').uuid)
     data = mgr.load(uuid)
-    for item in data['CuemsScript']['CueList']['contents']:
-        if 'AudioCue' in item:
-            item['AudioCue']['Media']['file_name'] = 'vanished.wav'
+    for cue in _media_cues_of(data):
+        if cue['class'] == 'audio':
+            cue['Media']['file_name'] = 'vanished.wav'
     with pytest.raises(ValueError) as e:
         mgr.update(uuid, data)
     if not database.is_closed():
@@ -182,22 +229,22 @@ def test_update_refuses_a_deleted_media_file(library):
     assert "'vanished.wav' does not exist" in str(e.value)
 
 
-def test_update_accepts_a_trashed_media_file(library):
+def test_update_accepts_a_trashed_media_file(library013):
     """Trashed is fine: the file can be restored; the save must not block."""
     # The fixture's only trashed file carries a malformed duration on purpose
     # (for the repair-durations tests); the duration fixer would copy it into
     # the XML and the XSD would reject the save for that unrelated reason.
+    library = library013
     library.connect()
     Media.update(duration='00:00:03.900').where(Media.unix_name == 'tone_c.wav').execute()
     database.close()
     mgr = _manager(library)
     uuid = str(Project.get(Project.unix_name == 'proj1').uuid)
     data = mgr.load(uuid)
-    for item in data['CuemsScript']['CueList']['contents']:
-        if 'AudioCue' in item:
-            item['AudioCue']['Media']['file_name'] = 'tone_c.wav'
-    with mock.patch('cuemseditor.CuemsDBProject.probe_dimensions', return_value=(1, 1)):
-        mgr.update(uuid, data)
+    for cue in _media_cues_of(data):
+        if cue['class'] == 'audio':
+            cue['Media']['file_name'] = 'tone_c.wav'
+    mgr.update(uuid, data)
     if not database.is_closed():
         database.close()
     assert b'tone_c.wav' in _xml(library)
