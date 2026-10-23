@@ -19,7 +19,7 @@ from cuemsutils.log import logged, Logger
 from cuemsutils.helpers import new_datetime
 
 from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia
-from cuemseditor.CuemsDBProject import _md5
+from cuemseditor.media_values import _md5
 from cuemseditor.CuemsErrors import *
 
 
@@ -217,7 +217,7 @@ class CuemsDBMedia(StringSanitizer):
             filename: Sanitised target filename (no directory component).
             md5: the file's MD5 as the upload verified it (``None`` when the
                 caller has none); stored as ``file_md5`` (869fat84r, D18),
-                normalised by ``CuemsDBProject._md5`` (lowercase, or ``None``).
+                normalised by ``media_values._md5`` (lowercase, or ``None``).
 
         Returns:
             The actual destination filename (may differ from *filename* if

@@ -62,15 +62,15 @@ merges into rename conflicts. Each phase says what it depends on.
 **Goal**: the released 869fej07m gate and the trash name-collision fix work under the 0.1.1 contract.
 **Independent test**: `pytest tests/test_validate_media_cues.py tests/test_media.py` green; a refused save writes nothing.
 
-- [ ] T011 [US2] (red) Fix the absorbed fixtures in `tests/test_validate_media_cues.py` to the version-2 device shape (use `tests/fixtures/script_minimal_013.xml`); confirm the 4 failing cases still fail for the right reason (`_error_text` missing) before any source edit (FR-011, FR-007)
-- [ ] T012 [US2] (green) In `src/cuemseditor/CuemsWsUser.py` keep `_error_text` as a static method beside `repair_acknowledge` and use it in project save and project new, so a `ValueError` reaches the client unprefixed (FR-008)
-- [ ] T013 [US2] (green) In `src/cuemseditor/CuemsDBProject.py` `update()`/`new()`: call `validate_media_cues_in_contents(contents, media_exists=self._media_exists)` on the raw payload **before any write** and before fade validation (combine rule of hunk 8); keep `_media_exists`; a trashed file passes (FR-007)
-- [ ] T014 [P] [US2] (red then green) Add a test in `tests/test_validate_media_cues.py` that the library's `ValueError` for a media block without a file reaches the client unprefixed when the gate is bypassed (monkeypatch the gate off) (FR-009)
-- [ ] T015 [P] [US2] Confirm the media-name tests in `tests/test_media.py` (5 new) pass on the merged tree; add a rollback test if absent: upload, delete and restore undo their own moves on failure, and restore refuses an untracked live file with a clear error (FR-010, constitution III gate 3)
-- [ ] T016 [US2] (red) Add `tests/test_media_import_cycle.py`: `import cuemseditor.CuemsDBMedia` and `import cuemseditor.CuemsDBProject` each succeed in a fresh interpreter, and `media_values` imports neither (FR-021)
-- [ ] T017 [US2] (green) Create `src/cuemseditor/media_values.py` (leaf) holding `_md5`, `_positive_int`, `_valid`; import them from there in `CuemsDBMedia.py` and `CuemsDBProject.py`; keep the lowercase-before-assign rule (utils 014) (FR-021)
-- [ ] T018 [P] [US2] Add a grep test `tests/test_retired_surface.py`: `src/` contains none of `XmlReaderWriter`, `CuemsParser`, `CUE_TYPES`, `_clean_dangling_targets`, and no dict-walk `_walk_media_durations` signature (FR-022, FR-023, research R9)
-- [ ] T019 [US2] Fill the disposition rows for `test_validate_media_cues` and `test_media` in `evidence/test-disposition.md`
+- [X] T011 [US2] (red) Fix the absorbed fixtures in `tests/test_validate_media_cues.py` to the version-2 device shape (use `tests/fixtures/script_minimal_013.xml`); confirm the 4 failing cases still fail for the right reason (`_error_text` missing) before any source edit (FR-011, FR-007)
+- [X] T012 [US2] (green) In `src/cuemseditor/CuemsWsUser.py` keep `_error_text` as a static method beside `repair_acknowledge` and use it in project save and project new, so a `ValueError` reaches the client unprefixed (FR-008)
+- [X] T013 [US2] (green) In `src/cuemseditor/CuemsDBProject.py` `update()`/`new()`: call `validate_media_cues_in_contents(contents, media_exists=self._media_exists)` on the raw payload **before any write** and before fade validation (combine rule of hunk 8); keep `_media_exists`; a trashed file passes (FR-007)
+- [X] T014 [P] [US2] (red then green) Add a test in `tests/test_validate_media_cues.py` that the library's `ValueError` for a media block without a file reaches the client unprefixed when the gate is bypassed (monkeypatch the gate off) (FR-009)
+- [X] T015 [P] [US2] Confirm the media-name tests in `tests/test_media.py` (5 new) pass on the merged tree; add a rollback test if absent: upload, delete and restore undo their own moves on failure, and restore refuses an untracked live file with a clear error (FR-010, constitution III gate 3)
+- [X] T016 [US2] (red) Add `tests/test_media_import_cycle.py`: `import cuemseditor.CuemsDBMedia` and `import cuemseditor.CuemsDBProject` each succeed in a fresh interpreter, and `media_values` imports neither (FR-021)
+- [X] T017 [US2] (green) Create `src/cuemseditor/media_values.py` (leaf) holding `_md5`, `_positive_int`, `_valid`; import them from there in `CuemsDBMedia.py` and `CuemsDBProject.py`; keep the lowercase-before-assign rule (utils 014) (FR-021)
+- [X] T018 [P] [US2] Add a grep test `tests/test_retired_surface.py`: `src/` contains none of `XmlReaderWriter`, `CuemsParser`, `CUE_TYPES`, `_clean_dangling_targets`, and no dict-walk `_walk_media_durations` signature (FR-022, FR-023, research R9)
+- [X] T019 [US2] Fill the disposition rows for `test_validate_media_cues` and `test_media` in `evidence/test-disposition.md`
 
 **Checkpoint**: US2 green on its own.
 

@@ -18,6 +18,7 @@ from cuemsutils.log import logged, Logger
 
 from cuemseditor.CuemsErrors import *
 from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia
+from cuemseditor.media_values import _md5, _positive_int, _valid
 
 
 class DurationFixStats:
@@ -49,28 +50,6 @@ class DurationFixStats:
 #: file's size and MD5 (every media cue, D18).
 PIXEL_KEYS = ('pixel_width', 'pixel_height')
 STORED_KEYS = PIXEL_KEYS + ('file_size', 'file_md5')
-
-
-def _positive_int(value):
-    """A usable stored size: a positive int (a digit string is accepted and
-    converted). ``None`` for anything else, ``bool`` included."""
-    if isinstance(value, str) and value.isdigit():
-        value = int(value)
-    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-        return value
-    return None
-
-
-def _md5(value):
-    """A usable MD5: 32 hex digits, returned lowercase; ``None`` otherwise."""
-    if isinstance(value, str) and len(value) == 32 and all(
-            c in '0123456789abcdef' for c in value.lower()):
-        return value.lower()
-    return None
-
-
-def _valid(key, value):
-    return _md5(value) if key == 'file_md5' else _positive_int(value)
 
 
 def dimensions_of_row(media):
