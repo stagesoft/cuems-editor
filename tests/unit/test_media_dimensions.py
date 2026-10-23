@@ -28,6 +28,7 @@ hashes a file; the repair tool fills and checks the MD5.
 
 Design: cuems-RELATIONS Plans/2026-10-01-engine-late-go-media-probe.md §3.2.
 """
+import copy
 import hashlib
 import os
 import sqlite3
@@ -36,6 +37,7 @@ from unittest import mock
 
 import pytest
 from cuemsutils.cues import CueList, CuemsScript
+from cuemsutils.helpers import new_uuid
 
 import cuemseditor.repair_durations as rd
 from cuemseditor.cli import get_settings
@@ -317,10 +319,6 @@ class TestUpload:
 # ``CuemsScript.from_json``, which stores them untouched; so the cases below build
 # the script from the 013 fixture's wire and put the raw values in the payload.
 # ---------------------------------------------------------------------------
-
-import copy
-
-from cuemsutils.helpers import new_uuid
 
 FIXTURE_013 = str(DATA_DIR / 'script_minimal_013.xml')
 VIDEO_1 = '1f301cf8-dd03-4b40-ac17-ef0e5e7988be'

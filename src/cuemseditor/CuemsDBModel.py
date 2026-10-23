@@ -164,7 +164,7 @@ class Media(CuemsBaseModel):
         return (Media
                 .select()
                 .join(ProjectMedia, JOIN.LEFT_OUTER)
-                .where(ProjectMedia.media == None)
+                .where(ProjectMedia.media.is_null())
                 .order_by(Media.created))
 
 
@@ -199,8 +199,8 @@ class ProjectMedia(CuemsBaseModel):
                 .join(Media, JOIN.LEFT_OUTER, on=(Media.uuid == ProjectMedia.media))
                 .join(Project, JOIN.LEFT_OUTER, on=(Project.uuid == ProjectMedia.project))
                 .where(
-                    (Media.uuid == None) |
-                    (Project.uuid == None))
+                    Media.uuid.is_null() |
+                    Project.uuid.is_null())
                 .order_by(Media.created))
 
 

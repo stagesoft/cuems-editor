@@ -8,7 +8,10 @@ pip-installed, and falls back to a sibling ``cuems-utils/src`` checkout for
 ``cuemsutils`` in a dev tree (in CI / on a deployed host both are installed).
 """
 import os
+import shutil
 import sys
+
+import pytest
 
 _here = os.path.dirname(__file__)
 _src = os.path.abspath(os.path.join(_here, '..', 'src'))
@@ -23,9 +26,6 @@ except ImportError:
     if os.path.isdir(_utils_src):
         sys.path.insert(0, _utils_src)
 
-import shutil
-
-import pytest
 
 # The deferred media-check half of 869fat84r (003 US3). These two released test
 # files drive the dict-era implementation; each is un-ignored by the task that

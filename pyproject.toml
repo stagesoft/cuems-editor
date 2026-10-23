@@ -64,6 +64,11 @@ extend-exclude = ["site", "specs", "dev/scripts/manual-ui/static"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 
+# A fixture imported by name from a sibling module, then taken as a test argument, is pytest's
+# idiom, not a redefinition (F811); the imports carry their reason.
+[tool.ruff.lint.per-file-ignores]
+"tests/**/test_*.py" = ["F811"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["cuemseditor", "support"]
 

@@ -252,9 +252,9 @@ def _stale_entries(cue, media, row):
     wrong = {key for key, value in present.items()
              if key not in allowed or _valid(key, value) is None
              or (known and _valid(key, value) != expected.get(key))}
-    entry = lambda field, stored, current: {
-        'cue_id': str(cue.get('id')), 'file_name': file_name, 'field': field,
-        'stored': stored, 'current': current}
+    def entry(field, stored, current):
+        return {'cue_id': str(cue.get('id')), 'file_name': file_name, 'field': field,
+                'stored': stored, 'current': current}
     entries = []
     if known and row.duration and media.get('duration') is not None:
         current = CTimecode(str(row.duration))
@@ -639,7 +639,7 @@ class CuemsDBProject(StringSanitizer):
             NonExistentItemError: If no live project with *uuid* exists.
         """
         try:
-            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
+            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))  # noqa: E712 (peewee builds SQL from ==)
             return project.unix_name
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
@@ -718,7 +718,7 @@ class CuemsDBProject(StringSanitizer):
         re-derives the gate on a mismatch, so that race fails safe.
         """
         try:
-            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
+            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))  # noqa: E712 (peewee builds SQL from ==)
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
         path = self.script_path(project.unix_name)
@@ -747,7 +747,7 @@ class CuemsDBProject(StringSanitizer):
         """
         try:
             if not include_trash:
-                project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
+                project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))  # noqa: E712 (peewee builds SQL from ==)
             else:
                 project = Project.get(Project.uuid == uuid)
         except DoesNotExist:
@@ -769,7 +769,7 @@ class CuemsDBProject(StringSanitizer):
             ...     print(uuid, meta['name'])
         """
         project_list = list()
-        projects = Project.select().where(Project.in_trash == False).order_by(Project.created.desc())
+        projects = Project.select().where(Project.in_trash == False).order_by(Project.created.desc())  # noqa: E712 (peewee builds SQL from ==)
         for project in projects:
             project_dict = {str(project.uuid): {'name': project.name, 'unix_name': project.unix_name, 'description': project.description, 'created': project.created, 'modified': project.modified}}
             project_list.append(project_dict)
@@ -784,7 +784,7 @@ class CuemsDBProject(StringSanitizer):
             ``in_trash == True``.
         """
         project_trash_list = list()
-        projects_trash = Project.select().where(Project.in_trash == True).order_by(Project.created.desc())
+        projects_trash = Project.select().where(Project.in_trash == True).order_by(Project.created.desc())  # noqa: E712 (peewee builds SQL from ==)
         for project in projects_trash:
             project_dict = {str(project.uuid): {'name': project.name, 'unix_name': project.unix_name, 'description': project.description, 'created': project.created, 'modified': project.modified}}
             project_trash_list.append(project_dict)
@@ -825,7 +825,7 @@ class CuemsDBProject(StringSanitizer):
             Exception: Re-raises any error after rolling back the transaction.
         """
         try:
-            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
+            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))  # noqa: E712 (peewee builds SQL from ==)
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
 
@@ -1033,7 +1033,7 @@ class CuemsDBProject(StringSanitizer):
             Exception: Re-raises after rollback and copy cleanup.
         """
         try:
-            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
+            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))  # noqa: E712 (peewee builds SQL from ==)
             with self.db.atomic() as transaction:
                 try:
                     new_unix_name = None
@@ -1167,7 +1167,7 @@ class CuemsDBProject(StringSanitizer):
             Exception: Re-raises after rollback and filesystem cleanup.
         """
         try:
-            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))
+            project = Project.get((Project.uuid == uuid) & (Project.in_trash == False))  # noqa: E712 (peewee builds SQL from ==)
             with self.db.atomic() as transaction:
                 try:
                     dest_filename = None
@@ -1204,7 +1204,7 @@ class CuemsDBProject(StringSanitizer):
             Exception: Re-raises after rollback and filesystem cleanup.
         """
         try:
-            project_trash = Project.get((Project.uuid == uuid) & (Project.in_trash == True))
+            project_trash = Project.get((Project.uuid == uuid) & (Project.in_trash == True))  # noqa: E712 (peewee builds SQL from ==)
 
             with self.db.atomic() as transaction:
                 try:
@@ -1242,7 +1242,7 @@ class CuemsDBProject(StringSanitizer):
                 may already be gone at that point).
         """
         try:
-            project = Project.get((Project.uuid == uuid) & (Project.in_trash == True))
+            project = Project.get((Project.uuid == uuid) & (Project.in_trash == True))  # noqa: E712 (peewee builds SQL from ==)
 
             with self.db.atomic() as transaction:
                 try:
@@ -1642,7 +1642,7 @@ class CuemsDBProject(StringSanitizer):
         """
         Logger.debug('updating media uuid for media filename: {} with old uuid: {}'.format(media_filename, old_media_uuid))
         try:
-            media = Media.get(Media.unix_name == media_filename)
+            Media.get(Media.unix_name == media_filename)       # raises DoesNotExist for an unknown file
             with self.db.atomic() as transaction:
                 try:
                     Media.update(uuid=old_media_uuid).where(Media.unix_name == media_filename).execute()
@@ -1665,7 +1665,7 @@ class CuemsDBProject(StringSanitizer):
         Logger.debug('deleting missing media references for media filename: {}'.format(media_filename))
         # Parenthesised: Python's ``&`` binds tighter than ``==``. (It was
         # ``and``, which deleted every dangling row of every file.)
-        missing_media_project_refs = ProjectMedia.delete().where(
+        ProjectMedia.delete().where(
             (ProjectMedia.media_filename == media_filename) & (ProjectMedia.media.is_null())
         ).execute()
 

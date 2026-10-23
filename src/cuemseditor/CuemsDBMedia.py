@@ -383,7 +383,6 @@ class CuemsDBMedia(StringSanitizer):
             Exception: Re-raises after rollback and cleanup on any failure.
         """
         with self.db.atomic() as transaction:
-            trash_state = False
             try:
                 dest_filename = None
                 dest_filename = CopyMoveVersioned.move(tmp_file_path, self.media_path, self._free_filename(filename))
@@ -425,7 +424,6 @@ class CuemsDBMedia(StringSanitizer):
                         dest_thumbnail_filename = self.create_video_thumbnail(dest_filename, None)
                 except Exception as e:
                     Logger.error(f'could not generate {_type} thumbnail or waveform; error : {e}')
-                    media_thumbnail_binary_data = None
 
                 # Stored like the duration (869fat84r): a movie's pixel size, so
                 # the engine does not probe the file when it arms a cue (a
@@ -484,7 +482,7 @@ class CuemsDBMedia(StringSanitizer):
                           fn.COUNT(Case(Project.in_trash, (('1', 1),), None)).alias('in_project_trash_count'))
                   .join(ProjectMedia, JOIN.LEFT_OUTER)
                   .join(Project, JOIN.LEFT_OUTER, on=(Project.uuid == ProjectMedia.project))
-                  .where((Media.in_trash == False))
+                  .where((Media.in_trash == False))  # noqa: E712 (peewee builds SQL from ==)
                   .group_by(Media).order_by(Media.created.desc()))
 
         medias = prefetch(
@@ -518,7 +516,7 @@ class CuemsDBMedia(StringSanitizer):
                           fn.COUNT(Case(Project.in_trash, (('1', 1),), None)).alias('in_project_trash_count'))
                   .join(ProjectMedia, JOIN.LEFT_OUTER)
                   .join(Project, JOIN.LEFT_OUTER, on=(Project.uuid == ProjectMedia.project))
-                  .where(Media.in_trash == True)
+                  .where(Media.in_trash == True)  # noqa: E712 (peewee builds SQL from ==)
                   .group_by(Media.uuid).order_by(Media.created.desc()))
         for media in medias:
             media_dict = {str(media.uuid): {'name': media.name, 'unix_name': media.unix_name, 'created': media.created, 'modified': media.modified, 'duration': media.duration, 'type': media.media_type, "in_projects": media.in_project_count, "in_trash_projects": media.in_project_trash_count}}
@@ -541,7 +539,7 @@ class CuemsDBMedia(StringSanitizer):
                 the trash.
         """
         try:
-            media = Media.get((Media.uuid == uuid) & (Media.in_trash == False))
+            media = Media.get((Media.uuid == uuid) & (Media.in_trash == False))  # noqa: E712 (peewee builds SQL from ==)
             with self.db.atomic() as transaction:
                 try:
                     media.update(name=StringSanitizer.sanitize_name(data['uuid']['name']), description=StringSanitizer.sanitize_text_size(data['uuid']['description']), modified=new_datetime()).execute()
@@ -576,7 +574,7 @@ class CuemsDBMedia(StringSanitizer):
             project_trash_list = list()
             media_projects_query = media.projects()
             for project in media_projects_query:
-                if project.in_trash == False:
+                if project.in_trash == False:  # noqa: E712 (peewee builds SQL from ==)
                     project_list.append(str(project.uuid))
                 else:
                     project_trash_list.append(str(project.uuid))

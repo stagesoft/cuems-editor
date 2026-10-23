@@ -135,7 +135,7 @@ class CuemsWsServer():
             port = self.port
         self.port = port
         self.host = 'localhost'
-        newfeature = asyncio.get_event_loop().run_until_complete(self.run_async_server())
+        asyncio.get_event_loop().run_until_complete(self.run_async_server())
 
     async def run_async_server(self):
         """Initialise the DB, executor, and WebSocket server, then serve forever.
@@ -304,7 +304,7 @@ class CuemsWsServer():
 
         matches = re.search(session_uuid_patern, path)
         if matches:
-            if (matches.groupdict()['uuid'] != None):
+            if matches.groupdict()['uuid'] is not None:
                 uuid = matches.groupdict()['uuid']
                 if uuid not in self.sessions:
                     Logger.debug(f"uuid not found {uuid}, creating new session")

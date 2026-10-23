@@ -24,7 +24,8 @@ from cuemseditor.node_reads import IdentityCollision
 
 TIMEOUT = 25  # TODO: make it configurable, or get from settings
 
-functionNameAsString = lambda n=0: sys._getframe(n + 1).f_code.co_name
+def functionNameAsString(n=0):
+    return sys._getframe(n + 1).f_code.co_name
 
 # document_load_failed always offers all three: the editor cannot know which
 # one the operator can carry out.
@@ -855,7 +856,7 @@ class CuemsWsUser():
             action_uuid = str(new_uuid())
             engine_command = {"action": functionNameAsString(), "action_uuid": action_uuid}
 
-            result = await self.comunicate_with_engine(action, action_uuid, engine_command)
+            await self.comunicate_with_engine(action, action_uuid, engine_command)
 
             self.server.users[self] = None
             loaded = None
@@ -1279,7 +1280,7 @@ class CuemsWsUser():
             action_uuid = str(new_uuid())
             engine_command = {"action": functionNameAsString(), "action_uuid": action_uuid, "value": unix_name}
 
-            result = await self.comunicate_with_engine(action, action_uuid, engine_command)
+            await self.comunicate_with_engine(action, action_uuid, engine_command)
 
             await self.outgoing.put(json.dumps({"type": functionNameAsString(), "value": project_uuid}))
 
@@ -1662,7 +1663,7 @@ class CuemsWsUser():
 
             Logger.info("user {} update file data {}".format(id(self.websocket), file_uuid))
 
-            return_message = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.media.save, file_uuid, data)
+            await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.media.save, file_uuid, data)
             await self.notify_user(uuid=file_uuid, action=action)
         except Exception as e:
             Logger.error("error: {} {}".format(type(e), e))

@@ -178,7 +178,7 @@ def _xml(library):
 
 def test_update_refuses_a_media_less_cue_and_writes_nothing(library013):
     library = library013
-    mgr = _manager(library)
+    _manager(library)
     uuid = str(Project.get(Project.unix_name == 'proj1').uuid)
     database.close()
     # Link the fixture's media so the ProjectMedia snapshot is non-trivial.

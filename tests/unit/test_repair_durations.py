@@ -121,7 +121,7 @@ def test_skipped_invalid_xml_does_not_abort(library, canned_probe, capsys):
     # proj1 is still compared and listed despite proj2 being invalid
     assert {p for p, _m, _d in _needs_save(out)} == {'proj1'}
     assert any(line.startswith('[SKIPPED_INVALID] proj2') for line in
-               (l.strip() for l in out.splitlines()))
+               (raw.strip() for raw in out.splitlines()))
     assert library.durations()['file.ext'] == '00:01:23.456'
     assert rc == 1  # SKIPPED_INVALID (and the MISSING file) mark the run dirty
 
