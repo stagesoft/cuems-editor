@@ -130,10 +130,10 @@ merges into rename conflicts. Each phase says what it depends on.
 - [ ] T039 [US4] (red) Create `tests/data/released-builds.txt` (`0.1.0rc1-1` … `-7`, with an `excluded:` block naming `0.1.0rc1-5+nodeadopt2` and its reason) and `tests/test_changelog_complete.py` implementing the six invariants of contracts/changelog-completeness.md; it must fail now (FR-027, FR-025)
 - [ ] T040 [US4] (green) Resolve `debian/changelog`: absorb the released `0.1.0rc1-4` … `-7` entries **verbatim** from `origin/debian/bookworm` in dpkg order beneath `0.1.1-1`; replace the "NOT YET RECONCILED" bullet with "Reconciled with debian/bookworm at <sha> (0.1.0rc1-7)" listing rows 1–6 and the D1 outcome and the "upgrade together" statement; verify `dpkg-parsechangelog -l debian/changelog -S Version` prints `0.1.1-1` (FR-025, FR-032a)
 - [ ] T041 [US4] (green) `CHANGELOG.md`: keep `## 0.1.1` on top, rewrite its lead (nothing unreconciled), fold the bookworm `## Unreleased` into the `-5` sub-entry, and add one sub-entry per build `-1…-7` under `## 0.1.0rc1`, each with `<!-- source: debian/bookworm 0.1.0rc1-N (<sha>) -->` (FR-026, research R1)
-- [ ] T042 [P] [US4] `debian/control`, `debian/rules`, `pyproject.toml`: confirm the merged files carry exactly rows 11–14 of the 016 matrix and the `CACHEDIR.TAG` strip plus the SPDX headers; no new runtime dependency (FR-028, FR-030)
-- [ ] T043 [US4] Run `sh ../cuems-utils/specs/016-coordinated-minor-bump/tools/verdicts.sh`; record `evidence/relation-verdicts.txt` (expect 121 verdicts, 0 FAIL); never overwrite 016's files (FR-028, SC-004)
+- [X] T042 [P] [US4] `debian/control`, `debian/rules`, `pyproject.toml`: confirm the merged files carry exactly rows 11–14 of the 016 matrix and the `CACHEDIR.TAG` strip plus the SPDX headers; no new runtime dependency (FR-028, FR-030)
+- [X] T043 [US4] Run `sh ../cuems-utils/specs/016-coordinated-minor-bump/tools/verdicts.sh`; record `evidence/relation-verdicts.txt` (expect 121 verdicts, 0 FAIL); never overwrite 016's files (FR-028, SC-004)
 - [ ] T044 [US4] Build in the bookworm chroot with `tests/packaging/bookworm-build.sh` (never `debuild` on trixie); record `evidence/bookworm-build.md`: `Version: 0.1.1-1`, `home = /usr/bin`, `Depends`, and the result of `dpkg -c … | grep CACHEDIR` (FR-029, research R7)
-- [ ] T045 [US4] Fill the remaining disposition rows and the inventory proof table (pre-spec §4 rows 1–12, each with its named test) in `evidence/inventory-proofs.md` (FR-004)
+- [X] T045 [US4] Fill the remaining disposition rows and the inventory proof table (pre-spec §4 rows 1–12, each with its named test) in `evidence/inventory-proofs.md` (FR-004)
 
 ---
 
