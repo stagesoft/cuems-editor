@@ -176,10 +176,10 @@ merges into rename conflicts. Each phase says what it depends on.
 
 ## Phase 10: CI gate (US6)
 
-- [ ] T065 [US6] Write `.github/workflows/ci.yml` per contracts/ci-workflow.md: `workflow_dispatch` input `cuemsutils_ref`, push/PR triggers on `feat/xml-refactor` and `003-release-line-reconciliation`, jobs `lint`, `unit` (`pytest tests/unit tests/contract -n auto --cov`), `integration`, `coverage` (`--fail-under` set from a fresh baseline; 55 if unchanged), `gate-summary`; install cuemsutils from the cuems-utils git ref and check cuems-utils out beside the repository for the corpus test (FR-036)
-- [ ] T066 [US6] Restrict `.github/workflows/gh-pages.yml` so pushes and dispatches deploy only from `main`, `debian/bookworm` and `rc1` (FR-037)
-- [ ] T067 [US6] Validate both workflow files locally (YAML parse; `actionlint` if available) and re-measure combined coverage to set the threshold; record in `evidence/ci-local-validation.md` (SC-009)
-- [ ] T068 [US6] **Maintainer act (blocking)**: ask the maintainer to land `.github/workflows/ci.yml` alone on `main`; record the request in `evidence/ci-gate.md`. Until it is landed FR-038 is blocked, not waived
+- [X] T065 [US6] Write `.github/workflows/ci.yml` per contracts/ci-workflow.md: `workflow_dispatch` input `cuemsutils_ref`, push/PR triggers on `feat/xml-refactor` and `003-release-line-reconciliation`, jobs `lint`, `unit` (`pytest tests/unit tests/contract -n auto --cov`), `integration`, `coverage` (`--fail-under` set from a fresh baseline; 55 if unchanged), `gate-summary`; install cuemsutils from the cuems-utils git ref and check cuems-utils out beside the repository for the corpus test (FR-036)
+- [X] T066 [US6] Restrict `.github/workflows/gh-pages.yml` so pushes and dispatches deploy only from `main`, `debian/bookworm` and `rc1` (FR-037)
+- [X] T067 [US6] Validate both workflow files locally (YAML parse; `actionlint` if available) and re-measure combined coverage to set the threshold; record in `evidence/ci-local-validation.md` (SC-009)
+- [X] T068 [US6] **Maintainer act (blocking)**: ask the maintainer to land `.github/workflows/ci.yml` alone on `main`; record the request in `evidence/ci-gate.md`. Until it is landed FR-038 is blocked, not waived
 - [ ] T069 [US6] After T068, `gh workflow run ci.yml --ref 003-release-line-reconciliation -f cuemsutils_ref=xml-refactor-merge-candidate`; wait for a green run; record the run URL, the editor SHA, the cuemsutils ref and resolved commit, the summary and the strict-xfail list in `evidence/ci-gate.md` (FR-038, SC-009)
 
 ---

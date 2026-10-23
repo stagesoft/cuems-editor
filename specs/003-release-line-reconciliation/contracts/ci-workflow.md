@@ -22,15 +22,18 @@ The file name is fixed: `workflow_dispatch` runs only workflows present on the d
 | `lint` | — | `ruff check .` (whole tree, config in `pyproject.toml`) |
 | `unit` | lint | `pytest tests/unit tests/contract -n auto --cov`; no network at test time; uploads `.coverage.unit` |
 | `integration` | lint | `pytest tests/integration --cov`; in parallel with `unit`; uploads `.coverage.integration` |
-| `coverage` | unit, integration | `coverage combine`, `report --fail-under=<measured>` (55 initially) |
+| `coverage` | unit, integration | `coverage combine`, `report --fail-under=70` (measured 72 % combined, 2026-10-23) |
 | `gate-summary` | all | writes the job summary: editor SHA, `cuemsutils_ref` and its resolved commit, `cuemsutils.__version__`, pass / xfail counts, the strict-xfail list |
 
 ## Library and sibling inputs
 
-- `pip install "cuemsutils @ git+https://github.com/stagesoft/cuems-utils@${cuemsutils_ref}"` (rule 5: nothing
-  waits for PyPI). The resolved commit comes from `git ls-remote`.
-- cuems-utils is also checked out at `<ref>` beside the repository for the two tests that read
-  `../cuems-utils/tests/data/corpus`; the `../cuems-nodeconf` test skips by design.
+- cuems-utils is **checked out** at `cuemsutils_ref` beside the repository (`$GITHUB_WORKSPACE/cuems-utils`) and installed
+  with `pip install ./cuems-utils` before the editor (rule 5: nothing waits for PyPI). That one checkout is both the library
+  and the sibling the tests read (`../cuems-utils/tests/data/corpus`); the resolved commit and `cuemsutils.__version__` are
+  logged in the job and in the summary. (This replaces the `pip install git+https://…@ref` form of the first draft: the
+  checkout gives the library and the corpus from the same commit.)
+- `../cuems-nodeconf` is not checked out: the test that needs it skips by design.
+- The editor is checked out with `fetch-depth: 0` and tags, so the changelog byte-identity tests run against the release tags.
 
 ## Gating
 
