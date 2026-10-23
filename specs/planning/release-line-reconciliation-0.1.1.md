@@ -489,7 +489,7 @@ handled by §6.2 a) and the `stop_project` save path (W4, by §6.2 j). Nothing e
 9. Lint (§14.4): there is no lint config. Pick the tool and the baseline (ruff reports 369 findings, black
    would reformat 14 of 16 files, flake8 reports 946 at its defaults). Gate only on the files 003 touches?
 10. `tests/index.html` + `tests/static/` (680 K of vendored crypto-js): keep as a manual upload harness
-    under `scripts/dev/`, or delete?
+    under `dev/scripts/`, or delete?
 11. Should `pypi-publish.yml`'s `environment.url` (`…/project/cuemsutils/…`, a copy-paste from another
     repository) be corrected in 003? It is a publication hazard, not a publication.
 
@@ -533,7 +533,7 @@ delete or rewire, and the pass set stays the same. A "live reference" is a path-
 | Nine root-level packaging documents from bookworm (§4 row 9) | AI-era scaffolding for the dh-virtualenv migration; `MANIFEST.in` names a `setup.py` and a `static/` that do not exist and is ignored by hatch | `.packaging-summary.txt` 0, `QUICK-REFERENCE.md` 0, `STRUCTURE.md` 0, others 1–5 hits, all among themselves | **delete**, folding `BUILD-PACKAGE.md`'s still-true build steps into `CONTRIBUTORS.md` (Q7) |
 | `planning/documentation-prompt.md` | A generic doc-generation prompt for "any repository in the family", including "CI test + coverage workflow" | none | **delete** (outside `specs/`, not about this repo) |
 | `apache-conf/000-default-le-ssl.conf` | A reverse-proxy example | `tests/README.md` only | **move** to `docs/` (deployment reference) and fix the two references |
-| `tests/index.html`, `tests/static/` (90 files, 680 K, vendored crypto-js) | A manual upload harness, not a test | `tests/README.md` only | **move** to `scripts/dev/manual-ui/` or delete (Q10); a vendored library has no business under `tests/` |
+| `tests/index.html`, `tests/static/` (90 files, 680 K, vendored crypto-js) | A manual upload harness, not a test | `tests/README.md` only | **move** to `dev/scripts/manual-ui/` or delete (Q10); a vendored library has no business under `tests/` |
 | `tests/README.md` | Describes `test.py`, `test_db.py`, `test_nng.py`, `legacy/`: none exists | — | **rewrite** |
 | `tests/fixtures/` (`script_minimal.xml`, `script_minimal_013.xml`, `conf/`) | Live fixtures | `tests/conftest.py` and tests | **move** to `tests/data/` behind one `DATA_DIR` |
 | `.github/workflows/pypi-publish.yml` | Publishes on a release | its `environment.url` names `cuemsutils` | **keep**; fix the URL (Q11) |
