@@ -16,7 +16,7 @@ import cuemseditor
 
 # Not imported, with the reason. Anything listed here must also be imported by
 # no other module, or the exclusion would hide a real import failure.
-# (Empty since 003: the only entry, ``cuemseditor.db``, a pre-src/ scratch script with
+# (Empty since 003: the only entry, a pre-src/ scratch module named ``db``, with
 # import-time side effects, was deleted. Add a module here only with its reason.)
 NOT_IMPORTED = {}
 

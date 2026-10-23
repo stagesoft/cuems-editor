@@ -238,7 +238,7 @@ class CuemsWsServer():
             await self.unregister(user_session)
 
     #: The editor <-> UI wire version (not doc_version). +1 only, and only with
-    #: a bump row in tests/ws-command-responses.txt (test_payload_version).
+    #: a bump row in tests/data/ws-command-responses.txt (test_payload_version).
     PAYLOAD_VERSION = 1
 
     def payload_version_message(self):

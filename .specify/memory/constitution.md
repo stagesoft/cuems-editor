@@ -1,6 +1,14 @@
 <!--
 Sync Impact Report (scratch — remove before committing)
 =======================================================
+Amendment 1.0.0 -> 1.0.1 (2026-10-23), PATCH, wording only:
+  - The protocol reference moved from the root of tests/ into
+    tests/data/ws-command-responses.txt (feature 003-release-line-reconciliation: tests/ re-laid as
+    unit / integration / contract / support / data). Both mentions updated: Principle I, and
+    "Development Workflow & Quality Gates". No principle added, removed or redefined; no MUST changed.
+  - Templates: nothing to update (they read this file at runtime).
+
+Ratification report (1.0.0, 2026-10-01), kept for history:
 Version change: (unversioned template) → 1.0.0
 Bump rationale: first ratification; every placeholder replaced. MAJOR 1 because this is the
   initial adopted governance, not an amendment.
@@ -58,7 +66,7 @@ it sends to the engine over `/tmp/editor.ipc`.
   contract change, whatever the intent.
 - A contract change MUST be an **enumerated delta**. It names each changed message and key,
   the old and new form, and the consuming `cuems-frontend` file and line. It is recorded in
-  the feature's contract document and in `tests/ws-command-responses.txt`. "Byte-identical
+  the feature's contract document and in `tests/data/ws-command-responses.txt`. "Byte-identical
   except for the listed deltas" is the only acceptable form of the claim. Unconditional
   byte-identity MUST NOT be asserted once a delta is sanctioned. A claim that cannot be true
   is not a constraint.
@@ -209,7 +217,7 @@ here. The `create_script` import failure is the precedent.
   added or removed.
 - Every PR MUST satisfy the five Principle IV gates. The reviewer checks that the
   pre-change-failing tests actually fail against the old code, not only that they pass.
-- A contract change (Principle I) MUST update `tests/ws-command-responses.txt` and hand off
+- A contract change (Principle I) MUST update `tests/data/ws-command-responses.txt` and hand off
   to `cuems-frontend` by file and line in the same PR description.
 - Field knowledge that a future maintainer would need goes in `CLAUDE.md` "Field notes" in
   the same PR. That covers gotchas, restart requirements and deliberate non-validation (e.g.
@@ -239,4 +247,4 @@ two conflict, the conflict is raised upstream. It is not resolved locally.
   (the Constitution Check). Principle IV's direction-of-travel clause is re-read at each
   amendment.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-01
+**Version**: 1.0.1 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-23

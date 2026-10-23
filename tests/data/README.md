@@ -3,7 +3,13 @@ SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 SPDX-License-Identifier: GPL-3.0-or-later
 -->
 
-# Test fixtures
+# Test data
+
+Every non-test data file lives here (`tests/support/paths.py:DATA_DIR`). Besides the fixtures below: `ws-command-responses.txt`
+(the protocol reference, cited by the constitution), `released-builds.txt` (the manifest of shipped Debian builds), and
+`golden/` (the released `media_check_report` frames; its README names the source).
+
+## Fixtures
 
 | File | sha256 | Provenance |
 |---|---|---|
