@@ -143,7 +143,7 @@ merges into rename conflicts. Each phase says what it depends on.
 - [X] T047 [P] [US5] Write `upstream-reports/cuems-frontend.md`: the `media_check_report` contract, the consumer file and line on `origin/dev` (`media-check.service.ts`, `app.component.ts:54`), and the request that its reconciliation confirm both halves. Before writing it, check read-only how the frontend's `feat/xml-refactor` dispatches an unknown WebSocket frame type (ignored, logged, or an error) and record the answer and its file and line in the report; if it errors, say so as a blocker for landing the editor before the frontend (FR-031, constitution I)
 - [X] T048 [P] [US5] Write `upstream-reports/cuems-engine.md`: acknowledge W2 (`project_status` three states, where tested: T023) and W4 (`stop_project` save path: T020) (FR-031)
 - [X] T049 [US5] Update `CLAUDE.md` field notes: the media check is a projection of `media_staleness`; `loaded` is not "no answer"; atomic script writes belong to the library; `stop_project` needs the re-cut utils; the constitution "atomic save unverified" note is closed (plan Constitution III)
-- [ ] T050 [US1] Re-fetch (`git fetch --all --tags`); if the release line moved, merge the new commits the same way and loop through the affected phases; re-run the stray sweep (T004); run the suite as arms A and B, three interleaved runs, and record identical sets in `evidence/suite-final-runs.txt` (FR-005, SC-002)
+- [X] T050 [US1] Re-fetch (`git fetch --all --tags`); if the release line moved, merge the new commits the same way and loop through the affected phases; re-run the stray sweep (T004); run the suite as arms A and B, three interleaved runs, and record identical sets in `evidence/suite-final-runs.txt` (FR-005, SC-002)
 
 ---
 
