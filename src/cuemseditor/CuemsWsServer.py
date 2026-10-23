@@ -19,7 +19,6 @@ from cuemsutils.tools.ConfigManager import ConfigManager
 from cuemsutils.tools.NodeList import partition_by_adoption
 from websockets.asyncio.server import serve
 
-from cuemseditor.CuemsErrors import *
 from cuemseditor.CuemsProjectManager import CuemsDBManager
 from cuemseditor.CuemsUpload import CuemsUpload
 from cuemseditor.CuemsWsUser import CuemsWsUser

@@ -3,7 +3,20 @@
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 from cuemsutils.helpers import new_datetime
 from cuemsutils.log import Logger
-from peewee import *
+from peewee import (
+    JOIN,
+    BooleanField,
+    CharField,
+    DateTimeField,
+    ForeignKeyField,
+    IntegerField,
+    Model,
+    PrimaryKeyField,
+    SqliteDatabase,
+    TextField,
+    UUIDField,
+    fn,
+)
 
 database = SqliteDatabase(None, pragmas={
     'foreign_keys': 1,

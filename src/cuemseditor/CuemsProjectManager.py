@@ -4,12 +4,10 @@
 import os
 
 from cuemsutils.log import Logger
-from peewee import *
 
 from cuemseditor.CuemsDBMedia import CuemsDBMedia
 from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia, database, ensure_media_columns
 from cuemseditor.CuemsDBProject import CuemsDBProject
-from cuemseditor.CuemsErrors import *
 
 
 class CuemsDBManager():

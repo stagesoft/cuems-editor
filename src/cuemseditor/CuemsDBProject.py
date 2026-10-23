@@ -26,7 +26,7 @@ from cuemseditor.CuemsDBMedia import (
     video_index_state,
 )
 from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia
-from cuemseditor.CuemsErrors import *
+from cuemseditor.CuemsErrors import DocumentLoadFailed, NonExistentItemError, OriginalNotPreserved
 from cuemseditor.media_values import _md5, _positive_int, _valid
 
 

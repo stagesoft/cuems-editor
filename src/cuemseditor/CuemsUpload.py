@@ -11,7 +11,7 @@ import websockets as ws
 from cuemsutils.log import Logger
 from cuemsutils.tools.StringSanitizer import StringSanitizer
 
-from cuemseditor.CuemsErrors import *
+from cuemseditor.CuemsErrors import FileIntegrityError
 
 
 class CuemsUpload(StringSanitizer):

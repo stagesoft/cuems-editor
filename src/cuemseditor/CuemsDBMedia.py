@@ -15,10 +15,10 @@ from cuemsutils.log import Logger, logged
 from cuemsutils.tools.CopyMoveVersioned import CopyMoveVersioned
 from cuemsutils.tools.CTimecode import CTimecode
 from cuemsutils.tools.StringSanitizer import StringSanitizer
-from peewee import *
+from peewee import JOIN, Case, DoesNotExist, fn, prefetch
 
 from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia
-from cuemseditor.CuemsErrors import *
+from cuemseditor.CuemsErrors import NonExistentItemError, NotTimeCodeError
 from cuemseditor.media_values import _md5
 
 FFPROBE_TIMEOUT = 30  # seconds; local-disk probes finish in <1s, NFS/USB headroom
