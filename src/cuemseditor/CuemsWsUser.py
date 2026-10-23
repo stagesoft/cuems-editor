@@ -1291,6 +1291,17 @@ class CuemsWsUser():
         """``repair_save_refused`` for the project's outstanding report."""
         await self.outgoing.put(json.dumps({"type": "repair_save_refused", "value": {
             "project_uuid": state['project_uuid'], "report_id": state['report_id'], "reason": reason}}))
+    @staticmethod
+    def _error_text(e):
+        """What the client shows for a failed save.
+
+        A ``ValueError`` is a save-time gate speaking to the operator (fade
+        duration, media cue without a file): forward its text as is. Anything
+        else keeps the ``<class '…'>`` prefix the UI has always shown.
+        """
+        if isinstance(e, ValueError):
+            return str(e)
+        return str(type(e)) + str(e)
 
     async def received_new_project(self, data, action, unix_name):
         """Create a new project and notify the client and other users.
@@ -1311,7 +1322,7 @@ class CuemsWsUser():
             await self.server.notify_others_same_project(self, "project_modified", project_uuid)
         except Exception as e:
             Logger.error("error: {} {}".format(type(e), e))
-            await self.notify_error_to_user((str(type(e)) + str(e)), action="project_new")
+            await self.notify_error_to_user(self._error_text(e), action="project_new")
 
     async def received_project(self, data, action):
         """Save an edited project and notify the client and other users.
@@ -1385,7 +1396,7 @@ class CuemsWsUser():
             if preserve:
                 state['preserved'] = False
             Logger.error("error: {} {}".format(type(e), e))
-            await self.notify_error_to_user((str(type(e)) + str(e)), uuid=project_uuid, action=action)
+            await self.notify_error_to_user(self._error_text(e), uuid=project_uuid, action=action)
 
     async def rederive_gate(self, project_uuid):
         """Derive the project's gate from the script file on disk (FR-009, FR-009a).

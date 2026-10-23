@@ -32,3 +32,10 @@ debian/debhelper-build-stamp
 .venv/
 venv/
 *.egg-info/
+debian/*.deb
+debian/*.deb.*
+debian/*.build
+debian/*.buildinfo
+debian/*.changes
+debian/tmp/
+debian/cuems-editor.*.debhelper

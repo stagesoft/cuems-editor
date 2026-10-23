@@ -360,6 +360,64 @@ def _walk_fade_durations(contents, offenders):
                 )
 
 
+MEDIA_CUE_KEYS = ('AudioCue', 'VideoCue')
+
+
+def _walk_media_cues(contents, offenders, media_exists):
+    if not contents:
+        return
+    for item in contents:
+        if not isinstance(item, dict):
+            continue
+        if 'CueList' in item and isinstance(item['CueList'], dict):
+            _walk_media_cues(item['CueList'].get('contents', []), offenders, media_exists)
+        for key in MEDIA_CUE_KEYS:
+            if key not in item:
+                continue
+            cue_data = item[key]
+            if not isinstance(cue_data, dict):
+                continue
+            name, cue_id = cue_data.get('name'), cue_data.get('id')
+            media = cue_data.get('Media')
+            if not isinstance(media, dict) or not media.get('file_name'):
+                offenders.append((name, cue_id, 'no media file'))
+                continue
+            if 'id' not in media:
+                offenders.append((name, cue_id, 'media block has no id'))
+                continue
+            if media_exists is not None and not media_exists(media['file_name']):
+                offenders.append(
+                    (name, cue_id, f"media file '{media['file_name']}' does not exist")
+                )
+
+
+def validate_media_cues_in_contents(contents, media_exists=None):
+    """Reject any AudioCue/VideoCue without a usable media block.
+
+    Save-time gate, run BEFORE anything is written. A client that cannot
+    resolve a cue's file drops the whole ``Media`` block (the frontend did
+    so for files in the media trash); the shapes that then arrive are: no
+    ``Media`` key, ``None``, ``{}``, or a block with an empty ``file_name``
+    or no ``id``. Without this gate such a save died inside the atomic
+    block with a bare ``KeyError 'file_name'`` from ``CueList.get_media``
+    (cuems-utils < rc16) — and, had it not died, would have written an
+    empty ``<Media/>`` and lost the cue's media for good.
+
+    ``media_exists(file_name) -> bool`` lets the DB check that the file is
+    known (trashed is fine: it can be restored; deleted cannot). Collects
+    ALL offenders and raises a single ``ValueError`` whose text names them;
+    the WS layer forwards it to the client as is.
+    """
+    offenders = []
+    _walk_media_cues(contents, offenders, media_exists)
+    if offenders:
+        detail = '; '.join(
+            f"'{name or 'unnamed'}' (id {cue_id or 'unknown'}: {reason})"
+            for name, cue_id, reason in offenders
+        )
+        raise ValueError(f"Media cue without a usable media file: {detail}")
+
+
 def validate_fade_durations_in_contents(contents):
     """Reject any FadeCue whose duration is missing, unparseable, or <= 0.
 
@@ -380,6 +438,11 @@ def validate_fade_durations_in_contents(contents):
         raise ValueError(
             f"FadeCue duration must be greater than zero: {detail}"
         )
+
+
+#: Leftovers a project directory may hold that an export or a duplicate must not copy
+#: (a script being written, a backup of an earlier release's refresh).
+_NOT_COPIED = ('*.pre-refresh-*', '.*.tmp')
 
 
 class CuemsDBProject(StringSanitizer):
@@ -839,7 +902,8 @@ class CuemsDBProject(StringSanitizer):
                         candidate_unix = f"{base_unix}-{i:03d}"
                         candidate_display = f"{base_display} ({i})"
 
-                    shutil.copytree(project_path, os.path.join(self.projects_path, candidate_unix))
+                    shutil.copytree(project_path, os.path.join(self.projects_path, candidate_unix),
+                                    ignore=shutil.ignore_patterns(*_NOT_COPIED))
                     new_unix_name = candidate_unix
 
                     project.unix_name = new_unix_name
@@ -896,6 +960,12 @@ class CuemsDBProject(StringSanitizer):
                 tmp_media_path = os.path.join(tmp_project_path, 'media')
                 os.makedirs(tmp_media_path)
                 for media in project_medias:
+                    if media.media is None:
+                        # A file deleted for good, still named by the project
+                        # until it is re-uploaded (869fat84r D20).
+                        Logger.warning(f'project {unix_name} uses {media.media_filename}, which '
+                                       'is no longer in the library: not exported')
+                        continue
                     media_path = os.path.join(self.media_path, media.media.unix_name)
                     try:
                         shutil.copy(media_path, tmp_media_path)
@@ -1109,7 +1179,7 @@ class CuemsDBProject(StringSanitizer):
             for cue_uuid, media in matching_media_dict.items():
                 for media_uuid, media_filename in media.items():
                     if media_uuid != old_media_uuid:
-                        Logger.warning('found different media uuid for same media filename: {} in project {},  cue {}, using first found: {}'.format(project_uuid, cue_uuid, media_filename))
+                        Logger.warning('found different media uuid for same media filename: {} in project {},  cue {}, using first found: {}'.format(media_filename, project_uuid, cue_uuid, old_media_uuid))
             try:
                 self.update_existed_media_uuid(media_filename, old_media_uuid)
             except IntegrityError:
@@ -1156,7 +1226,11 @@ class CuemsDBProject(StringSanitizer):
             media_filename: ``unix_name`` to filter on.
         """
         Logger.debug('deleting missing media references for media filename: {}'.format(media_filename))
-        missing_media_project_refs = ProjectMedia.delete().where(ProjectMedia.media_filename == media_filename and ProjectMedia.media_id.is_null()).execute()
+        # Parenthesised: Python's ``&`` binds tighter than ``==``. (It was
+        # ``and``, which deleted every dangling row of every file.)
+        missing_media_project_refs = ProjectMedia.delete().where(
+            (ProjectMedia.media_filename == media_filename) & (ProjectMedia.media.is_null())
+        ).execute()
 
     def script_path(self, unix_name):
         """``<projects_path>/<unix_name>/<script_file_name>``."""
