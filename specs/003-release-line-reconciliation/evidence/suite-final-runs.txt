@@ -13,7 +13,7 @@ B3: 457 passed, 6 skipped, 5 xfailed, 2 warnings in 12.18s
 Pass sets identical across runs: arm A yes, arm B yes (sorted PASSED/FAILED/XFAIL/SKIPPED lines compared).
 Every test that passes on arm A passes on arm B: yes ('comm -23 passedA passedB' is empty).
 Failures on arm B that arm A lacks: none.
-Arm B extras: 186 tests (136 absorbed from the release line, minus the 2 retired, plus 003's own); 3 extra skips are the byte-identity checks for tags v0.1.0rc1-1..-3, which do not exist; 5 strict xfails are the stop_project / get_media markers (utils re-cut).
+Arm B has 186 more passing tests than arm A (the absorbed release-line tests, ported or passing as is, and 003's own). Its 3 extra skips are the byte-identity checks for the tags v0.1.0rc1-1..-3, which do not exist; its 5 strict xfails are the stop_project and get_media markers (utils re-cut).
 
 Library head (venv2, utils 387598e): the same suite; the only failures are the 5 strict xfails turning XPASS (the signal for the re-cut).
 

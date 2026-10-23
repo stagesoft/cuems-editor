@@ -16,12 +16,9 @@ import cuemseditor
 
 # Not imported, with the reason. Anything listed here must also be imported by
 # no other module, or the exclusion would hide a real import failure.
-NOT_IMPORTED = {
-    # A pre-src/ scratch script, not a module: at import it creates
-    # ./project-manager.db in the working directory and .get()s two hardcoded
-    # project UUIDs, so it raises on any library but the author's.
-    'cuemseditor.db': 'dev scratch script with import-time side effects',
-}
+# (Empty since 003: the only entry, ``cuemseditor.db``, a pre-src/ scratch script with
+# import-time side effects, was deleted. Add a module here only with its reason.)
+NOT_IMPORTED = {}
 
 
 def _module_names():
