@@ -234,3 +234,17 @@ def test_media_repairs_is_always_present(mlib, server):
 
     assert 'media_repairs' in report and report['media_repairs'] == []
     assert report['acknowledgment_required'] is False
+
+
+def test_an_absent_stored_value_reads_as_missing_not_as_unset(mlib):
+    """X-4 (cuems-utils 014 `Media.DECLARED_DEFAULTS`): a v2 script without
+    ``pixel_width`` / ``file_size`` reads them as absent (``key in media`` is false) and the attribute
+    as ``None``, never the library's ``Unset`` marker. The comparison above relies on that to treat a
+    merely missing value as "not stale" (Q6). Asserted on the installed library, loaded through
+    ``CuemsScript.load`` as the editor does; measured at cuemsutils ``4b336cd`` and ``387598e``."""
+    write_aligned(mlib)
+    script = load(mlib)
+    media = cues(script)[VIDEO_CUE]['Media']
+    for key in ('pixel_width', 'pixel_height', 'file_size', 'file_md5'):
+        assert key not in media
+        assert getattr(media, key) is None

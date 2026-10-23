@@ -44,9 +44,6 @@ from cuemseditor.CuemsDBProject import (
 from cuemseditor.CuemsWsUser import CuemsWsUser
 
 
-FIXTURE_013 = os.path.join(os.path.dirname(__file__), 'fixtures', 'script_minimal_013.xml')
-
-
 def _audio(media, name='A1', cue_id='a1-uuid'):
     cue = {'name': name, 'id': cue_id, 'class': 'audio'}
     if media is not mock.sentinel.absent:
@@ -71,13 +68,6 @@ def _media_cues_of(data):
 
     walk(data['CuemsScript']['CueList']['contents'])
     return found
-
-
-@pytest.fixture
-def library013(library):
-    """The temporary library with a version-2 (013) script as ``proj1``."""
-    shutil.copy(FIXTURE_013, os.path.join(library.projects_dir, 'proj1', 'script.xml'))
-    return library
 
 
 GOOD = {'file_name': 'file.ext', 'id': 'm-1', 'duration': '00:00:01.000', 'regions': []}

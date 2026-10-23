@@ -81,9 +81,9 @@ merges into rename conflicts. Each phase says what it depends on.
 **Goal**: the editor's `stop_project` save path is tested and the library behaviours of utils 017 are confirmed.
 **Independent test**: the tests exist and are strict xfail against the current candidate tag.
 
-- [ ] T020 [US5] (red) Add `tests/test_stop_project_save.py`: a project holding a `stop_project` cue with no target saves through `CuemsDBProject.update` and reopens (round trip); a `stop_project` cue with a leftover `action_target` is refused with the rule name `project_action_takes_no_target`; both `@pytest.mark.xfail(strict=True, reason="cuems-utils 4b336cd lacks stop_project; see upstream-reports/cuems-utils.md")` (FR-032)
-- [ ] T021 [P] [US5] Add the X-4 assertion to `tests/test_media_staleness.py`: for a v2-loaded script with absent `pixel_width`/`file_size`, `key in media` is false and the attribute reads `None` (not `Unset`), asserted on the installed library (research R9, spec edge case)
-- [ ] T022 [US5] Compatibility task: run T020's tests against the library that will be re-cut (a venv with cuems-utils head), record XPASS/PASS in `evidence/stop-project-compat.md`; only if both pass **and** the candidate tag has been re-cut by hand-off, remove the markers; otherwise keep them and note the tag message as owing (FR-032, clarification)
+- [X] T020 [US5] (red) Add `tests/test_stop_project_save.py`: a project holding a `stop_project` cue with no target saves through `CuemsDBProject.update` and reopens (round trip); a `stop_project` cue with a leftover `action_target` is refused with the rule name `project_action_takes_no_target`; both `@pytest.mark.xfail(strict=True, reason="cuems-utils 4b336cd lacks stop_project; see upstream-reports/cuems-utils.md")` (FR-032)
+- [X] T021 [P] [US5] Add the X-4 assertion to `tests/test_media_staleness.py`: for a v2-loaded script with absent `pixel_width`/`file_size`, `key in media` is false and the attribute reads `None` (not `Unset`), asserted on the installed library (research R9, spec edge case)
+- [X] T022 [US5] Compatibility task: run T020's tests against the library that will be re-cut (a venv with cuems-utils head), record XPASS/PASS in `evidence/stop-project-compat.md`; only if both pass **and** the candidate tag has been re-cut by hand-off, remove the markers; otherwise keep them and note the tag message as owing (FR-032, clarification)
 
 **Checkpoint**: sibling-facing tests present.
 

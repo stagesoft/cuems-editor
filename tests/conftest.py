@@ -113,6 +113,16 @@ def library(tmp_path):
         database.close()
 
 
+FIXTURE_013_XML = os.path.join(_here, 'fixtures', 'script_minimal_013.xml')
+
+
+@pytest.fixture
+def library013(library):
+    """The temporary library with a version-2 (013) script as ``proj1``."""
+    shutil.copy(FIXTURE_013_XML, os.path.join(library.projects_dir, 'proj1', 'script.xml'))
+    return library
+
+
 # Canned pixel sizes keyed by media unix_name (869fat84r): the repair tool's
 # Pass A re-probes video rows. Anything else probes as unknown.
 CANNED_DIMS = {
