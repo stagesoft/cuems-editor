@@ -1,0 +1,14 @@
+# Suite after the cleanup and the lint phase (T071) — 2026-10-23
+
+Arms A (a2431f0) and B (1d2e307), three interleaved runs, scratch worktrees, cuemsutils 0.1.1 @ 4b336cd.
+
+A1: 271 passed, 3 skipped, 1 warning in 7.41s
+B1: 463 passed, 6 skipped, 5 xfailed, 1 warning in 12.80s
+A2: 271 passed, 3 skipped, 1 warning in 7.01s
+B2: 463 passed, 6 skipped, 5 xfailed, 1 warning in 12.42s
+A3: 271 passed, 3 skipped, 1 warning in 7.05s
+B3: 463 passed, 6 skipped, 5 xfailed, 1 warning in 12.39s
+
+Every test that passes on arm A passes on arm B (compared by file name and test id; the files moved into unit/ integration/ contract/): yes, 0 missing.
+Pass sets identical across the three runs of each arm: yes.
+Before the cleanup (suite-final-runs.txt): 457 passed. After: 463 = those 457 + the 6 layout tests; the 7 video-indexer cases moved to integration/ unchanged.
