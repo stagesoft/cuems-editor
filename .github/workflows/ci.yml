@@ -1,0 +1,198 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# CI, and the pre-publication gate (003, FR-036). Run it by hand before anything is published:
+#
+#   gh workflow run ci.yml --ref <branch> -f cuemsutils_ref=<cuems-utils tag or SHA>
+#
+# workflow_dispatch only runs a workflow that exists on the default branch (main), so this file keeps its name
+# and is landed on main by the maintainer. cuemsutils 0.1.1 is not on PyPI (rule 5 of the coordinated release:
+# nothing waits for PyPI): it is installed from a checkout of cuems-utils at `cuemsutils_ref`, which also gives
+# the tests the sibling checkout they read (../cuems-utils/tests/data/corpus). Nothing here deploys or publishes.
+
+name: CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      cuemsutils_ref:
+        description: "cuems-utils tag, branch or SHA to install cuemsutils from (the release candidate)"
+        required: true
+        default: xml-refactor-merge-candidate
+        type: string
+  push:
+    branches: [main, feat/xml-refactor, 003-release-line-reconciliation]
+  pull_request:
+    branches: [main, feat/xml-refactor]
+
+permissions:
+  contents: read
+
+env:
+  CUEMSUTILS_REF: ${{ inputs.cuemsutils_ref || 'xml-refactor-merge-candidate' }}
+  COVERAGE_FLOOR: "70"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install ruff
+      - run: ruff check .
+
+  unit:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cuems-editor
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/checkout@v4
+        with:
+          repository: stagesoft/cuems-utils
+          ref: ${{ env.CUEMSUTILS_REF }}
+          path: cuems-utils
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install cuemsutils from the checkout, then the editor
+        run: |
+          python -m pip install ./cuems-utils
+          python -m pip install -e "./cuems-editor[dev]"
+          echo "cuems-utils $(git -C cuems-utils rev-parse HEAD) cuemsutils $(python -c 'import cuemsutils; print(cuemsutils.__version__)')"
+      - name: Unit and contract tests (no network at test time)
+        working-directory: cuems-editor
+        env:
+          COVERAGE_FILE: .coverage.unit
+        run: pytest tests/unit tests/contract -n auto --cov=cuemseditor --junitxml=junit-unit.xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unit
+          path: |
+            cuems-editor/.coverage.unit
+            cuems-editor/junit-unit.xml
+          include-hidden-files: true
+
+  integration:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cuems-editor
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/checkout@v4
+        with:
+          repository: stagesoft/cuems-utils
+          ref: ${{ env.CUEMSUTILS_REF }}
+          path: cuems-utils
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install cuemsutils from the checkout, then the editor
+        run: |
+          python -m pip install ./cuems-utils
+          python -m pip install -e "./cuems-editor[dev]"
+          echo "cuems-utils $(git -C cuems-utils rev-parse HEAD) cuemsutils $(python -c 'import cuemsutils; print(cuemsutils.__version__)')"
+      - name: Integration tests (real subprocesses and sockets)
+        working-directory: cuems-editor
+        env:
+          COVERAGE_FILE: .coverage.integration
+        run: pytest tests/integration --cov=cuemseditor --junitxml=junit-integration.xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: integration
+          path: |
+            cuems-editor/.coverage.integration
+            cuems-editor/junit-integration.xml
+          include-hidden-files: true
+
+  coverage:
+    needs: [unit, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cuems-editor
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*"
+          path: artifacts
+      - name: Combine and gate
+        working-directory: cuems-editor
+        run: |
+          python -m pip install coverage
+          cp ../artifacts/unit/.coverage.unit ../artifacts/integration/.coverage.integration .
+          coverage combine .coverage.unit .coverage.integration
+          coverage report --fail-under="$COVERAGE_FLOOR" --include='src/cuemseditor/*'
+
+  gate-summary:
+    needs: [lint, unit, integration, coverage]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cuems-editor
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/checkout@v4
+        with:
+          repository: stagesoft/cuems-utils
+          ref: ${{ env.CUEMSUTILS_REF }}
+          path: cuems-utils
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*"
+          path: artifacts
+      - name: Summary of the run (what was validated, against which library)
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python -m pip install ./cuems-utils
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import glob, os, subprocess, xml.etree.ElementTree as ET
+          import cuemsutils
+          utils = subprocess.run(["git", "-C", "cuems-utils", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+          print("## cuems-editor CI gate")
+          print()
+          print(f"- editor: `{os.environ['GITHUB_SHA']}` on `{os.environ['GITHUB_REF_NAME']}`")
+          print(f"- cuemsutils ref: `{os.environ['CUEMSUTILS_REF']}` = `{utils}` (cuemsutils {cuemsutils.__version__})")
+          totals, xfails = [0, 0, 0, 0], []
+          for path in sorted(glob.glob("artifacts/*/junit-*.xml")):
+              suite = ET.parse(path).getroot()
+              suite = suite if suite.tag == "testsuite" else suite[0]
+              for case in suite.iter("testcase"):
+                  totals[0] += 1
+                  if case.find("failure") is not None or case.find("error") is not None:
+                      totals[1] += 1
+                  skipped = case.find("skipped")
+                  if skipped is not None:
+                      if skipped.get("type") == "pytest.xfail":
+                          totals[3] += 1
+                          xfails.append(f"{case.get('classname')}::{case.get('name')}")
+                      else:
+                          totals[2] += 1
+          print(f"- tests: {totals[0]} run, {totals[1]} failed, {totals[2]} skipped, {totals[3]} expected failures")
+          import json
+          needs = {k: v["result"] for k, v in json.loads(os.environ["NEEDS"]).items()}
+          print("- jobs: " + ", ".join(f"{k}={v}" for k, v in needs.items()))
+          print()
+          print("### Strict expected failures (each turns red when what it waits for arrives)")
+          for name in xfails:
+              print(f"- `{name}`")
+          PY
