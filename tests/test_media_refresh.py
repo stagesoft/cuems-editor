@@ -743,7 +743,7 @@ class TestOpenAndSave:
         with mock.patch.object(p, 'probe_media', fake):
             _mgr(lib).update(_uuid(lib), data)
         assert fake.calls == ['file_video.ext']
-        assert all(mm['duration'] == tc(120.0) and mm['file_size'] == 11
+        assert all(str(mm['duration']) == tc(120.0) and mm['file_size'] == 11
                    for mm in _media_of(lib, 'file_video.ext'))
         mr = _report(_mgr(lib), _uuid(lib), 'save')
         assert mr['complete'] and mr['files'] == [] and mr['unverified'] == []
@@ -829,18 +829,23 @@ class TestProjectReady:
         assert user.server.send_to_project_sessions.await_args.kwargs.get('skip') is user
 
     def test_the_project_frame_goes_first_at_open(self):
+        from cuemseditor import CuemsWsUser as ws_user
         project_db = mock.Mock()
-        project_db.load.return_value = {'CuemsScript': {}}
+        # 002: a load is ``open`` (project, library report, md5, media_repairs, rows digest)
+        project_db.open.return_value = ({'CuemsScript': {}}, mock.Mock(), 'md5', [], 'digest')
         project_db.media_report.return_value = {'project_uuid': 'u1', 'context': 'open',
                                                 'complete': True, 'files': [], 'unverified': []}
         user = self._user(project_db)
         user.server.users = {}
         user.server.sessions = {'s': {}}
+        user.server.repair_gates = {}
         user.session_id = 's'
 
         async def run():
             user.server.event_loop = asyncio.get_running_loop()
-            await user.send_project('u1', 'project_load')
+            with mock.patch.object(ws_user, 'derive_gate', return_value={'report_id': 'r', 'media_repairs': []}), \
+                    mock.patch.object(ws_user, 'load_report_value', return_value={}):
+                await user.send_project('u1', 'project_load')
             await asyncio.sleep(0.3)                      # the background check
             frames = []
             while not user.outgoing.empty():
@@ -848,7 +853,8 @@ class TestProjectReady:
             return frames
 
         frames = asyncio.run(run())
-        assert [f['type'] for f in frames] == ['project', 'media_check_report']
+        # the library's load report (002) sits between the project frame and the media report
+        assert [f['type'] for f in frames] == ['project', 'document_load_report', 'media_check_report']
 
     def test_the_status_query_maps_the_engines_reply(self):
         user = self._user(mock.Mock())
@@ -979,15 +985,13 @@ class TestVideoIndexer:
 # ---------------------------------------------------------------------------
 
 class TestSaving:
-    def test_a_failed_write_leaves_the_old_file_and_no_temporary(self, lib):
-        mgr = _mgr(lib)
-        before = _bytes(lib)
-        obj = mock.Mock()
-        with mock.patch.object(p.XmlReaderWriter, 'write_from_object', side_effect=ValueError('bad')):
-            with pytest.raises(ValueError):
-                mgr.save_xml('proj1', obj)
-        assert _bytes(lib) == before
-        assert [f for f in os.listdir(os.path.dirname(_script(lib))) if f.endswith('.tmp')] == []
+    # Retired (003, FR-023): "a failed write leaves the old file and no temporary" and "an
+    # unwritable directory falls back to writing in place" tested the editor's own atomic writer
+    # (a temp file, os.replace, XmlReaderWriter). The script is now written by the library's
+    # CuemsScript.save, which owns atomicity, so the editor no longer carries that code. The first
+    # property is the library's (utils CuemsScript.save: "answers atomically"); the second is a
+    # behaviour that did not survive: the library raises when it cannot create its temporary file,
+    # where the released editor wrote in place. Reported to cuems-utils (upstream-reports).
 
     def test_a_save_keeps_the_old_mode(self, lib):
         _in_line(lib)
@@ -995,21 +999,6 @@ class TestSaving:
         data = _mgr(lib).load(_uuid(lib))
         _mgr(lib).update(_uuid(lib), data)
         assert stat.S_IMODE(os.stat(_script(lib)).st_mode) == 0o604
-
-    @pytest.mark.skipif(os.geteuid() == 0, reason='root ignores directory permissions')
-    def test_an_unwritable_directory_falls_back_to_writing_in_place(self, lib):
-        _in_line(lib)
-        data = _mgr(lib).load(_uuid(lib))
-        data['CuemsScript']['name'] = 'Saved In Place'
-        d = os.path.dirname(_script(lib))
-        os.chmod(_script(lib), 0o666)
-        os.chmod(d, 0o555)
-        try:
-            _mgr(lib).update(_uuid(lib), data)
-        finally:
-            os.chmod(d, 0o755)
-        saved = _mgr(lib).load(_uuid(lib))
-        assert saved['CuemsScript']['name'] == 'Saved In Place'
 
     def test_no_project_lock_and_no_backups_any_more(self):
         assert not hasattr(p.CuemsDBProject, 'project_lock')
@@ -1039,7 +1028,7 @@ class TestSaveVerifiesLegacyRows:
         row = _row(lib, 'file_video.ext')
         assert (row.duration, row.pixel_width, row.file_size) == (tc(90.0), 1280, 55)
         assert fake.calls == ['file_video.ext']
-        assert all(mm['duration'] == tc(90.0) for mm in _media_of(lib, 'file_video.ext'))
+        assert all(str(mm['duration']) == tc(90.0) for mm in _media_of(lib, 'file_video.ext'))
 
     def test_a_save_stops_verifying_at_the_deadline(self, lib):
         _write(lib, 'file_video.ext', 55)

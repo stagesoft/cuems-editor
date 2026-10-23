@@ -136,7 +136,10 @@ def test_the_report_is_the_media_repairs_grouped_by_file(lib):
     value = _report(mgr, _uuid(lib), 'open')
     grouped = {}
     for entry in repairs:
-        grouped.setdefault(entry['file_name'], []).append((entry['field'], entry['stored'], entry['current']))
+        found = grouped.setdefault(entry['file_name'], [])
+        item = (entry['field'], entry['stored'], entry['current'])
+        if entry['field'] not in {field for field, _s, _c in found}:     # two cues, one finding
+            found.append(item)
     reported = {f['file_name']: [(c['field'], c['stored'], c['current']) for c in f['changes']]
                 for f in value['files']}
     assert reported == grouped and reported

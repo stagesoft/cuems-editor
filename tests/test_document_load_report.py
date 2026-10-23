@@ -132,10 +132,14 @@ def _run(server, coro):
     return server.event_loop.run_until_complete(coro)
 
 
-def _drain(session):
+def _drain(session, media_reports=False):
+    """The frames queued for *session*. The informational ``media_check_report`` (003) is left out
+    unless asked for: these tests are about the project, the load report and the repair gate."""
     out = []
     while not session.outgoing.empty():
-        out.append(json.loads(session.outgoing.get_nowait()))
+        frame = json.loads(session.outgoing.get_nowait())
+        if media_reports or frame['type'] != 'media_check_report':
+            out.append(frame)
     return out
 
 
