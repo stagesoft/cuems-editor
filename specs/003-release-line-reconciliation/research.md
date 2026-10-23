@@ -111,6 +111,13 @@ Resolves the open items of the pre-spec §12 and the technical unknowns of the p
   wider selection (`UP`, `B`, `BLE`, `TRY`) gave 369 in `src/` alone. Narrow selection chosen so the polish
   phase is behaviour-free; fixes are lint-only commits. `black`/`flake8` are not adopted (black would reformat
   14 of 16 files).
+- **Amended at implementation (2026-10-23)**: the rule set is `E4, E7, E9, F, I, W`; **E501 (line length) is not enforced.** Whole
+  tree under that set: 474 findings at the start (113 unused imports, 79 names from star imports, 72 pytest fixture
+  imports, 56 unsorted imports, …) fixed to 0. E501 had 80 findings in the existing code, lines of 120–400 characters
+  (dict literals, logger calls, executor hops); with no formatter adopted, reflowing them would bury the reconciliation
+  in noise. The maintainer may turn E501 on later; `E501` alone reports 80. Two rules are handled by idiom, not by
+  rewriting: `F811` is ignored in test modules (a fixture imported by name and taken as an argument), and `E712` carries
+  a `noqa` on the 11 peewee queries (`Field == False` builds SQL; `not Field` would not).
 - **Alternatives**: lint touched files only (rejected by the clarification).
 
 ## R12 — Coverage gate
