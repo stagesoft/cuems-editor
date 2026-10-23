@@ -207,7 +207,7 @@ def _in_line(lib, video_seconds=90.0, video_size=10, audio_seconds=30.0, audio_s
 
 def _refresh(mgr, uuid, engine='none', clock=time.monotonic):
     async def engine_running():
-        return {'none': False, 'running': True, 'silent': None}[engine]
+        return {'none': False, 'loaded': False, 'running': True, 'silent': None}[engine]
     return asyncio.run(r.refresh_media_before_load(mgr, uuid, executor=None,
                                                    engine_running=engine_running, clock=clock))
 
