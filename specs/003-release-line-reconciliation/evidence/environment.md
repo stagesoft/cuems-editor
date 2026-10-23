@@ -8,3 +8,11 @@
 - `$S/cuems-utils` is a symlink to the exported tag, because `tests/test_config_round_trip.py` reads
   `../cuems-utils/tests/data/corpus/`. (For the head run the symlink still points at the tag corpus: indicative.)
 - Run: `PYTHONPATH=src $S/venv/bin/python -m pytest -q -p no:cacheprovider`.
+
+## Sibling checkouts change two results (found at T008)
+
+`tests/test_upstream_gates.py::test_nodeconf_engine_callback_accepts_node_set` skips when `../cuems-nodeconf` is absent
+(a scratch worktree) and **fails with the same `ModuleNotFoundError: No module named 'cuemsnodeconf.CuemsNodeConf'`
+on `a2431f0` itself** when run in a directory beside the sibling checkout (measured by a temporary worktree beside the
+siblings, removed afterwards). It is environmental and common to both arms. All arm comparisons therefore run in
+scratch worktrees, where it skips.

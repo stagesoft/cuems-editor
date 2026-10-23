@@ -1,0 +1,7 @@
+arm B: merge commit 74ec5fa, cuemsutils 0.1.1 @ 4b336cd, scratch worktree, 2026-10-23
+FAILED tests/test_validate_media_cues.py::test_update_refuses_a_media_less_cue_and_writes_nothing
+FAILED tests/test_validate_media_cues.py::test_update_refuses_a_deleted_media_file
+FAILED tests/test_validate_media_cues.py::test_update_accepts_a_trashed_media_file
+3 failed, 288 passed, 3 skipped, 1 warning in 7.59s
+
+Expected reds (US2 red tests, written by the bookworm tests against the pre-013 fixtures and the not-yet-wired update() gate): the three test_validate_media_cues cases. Everything else equals arm A (271 passed, 3 skipped) plus the independent absorbed tests (test_media +5, test_validate_media_cues 12 of 15 pass...)
