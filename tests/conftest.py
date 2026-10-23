@@ -27,11 +27,6 @@ except ImportError:
         sys.path.insert(0, _utils_src)
 
 
-# The deferred media-check half of 869fat84r (003 US3). These two released test
-# files drive the dict-era implementation; each is un-ignored by the task that
-# ports it to the object API (003 tasks T026; T025 ported test_media_refresh.py). Do not add other files here.
-collect_ignore = []
-
 FIXTURE_XML = os.path.join(_here, 'data', 'script_minimal.xml')
 
 # Canned durations keyed by media unix_name (seconds). Used to monkeypatch

@@ -167,10 +167,10 @@ merges into rename conflicts. Each phase says what it depends on.
 
 ## Phase 9: Polish — lint (US6, after all functionality)
 
-- [ ] T061 [US6] Add `[tool.ruff]` to `pyproject.toml` (`select = ["E","F","I","W"]`, `line-length = 120`) and `ruff` plus `pytest-xdist` to the dev extras; record the baseline (expect 269 in `src/`, 44 in `tests/`) in `evidence/lint-baseline.txt` (FR-036a, research R11)
-- [ ] T062 [US6] Apply `ruff check --fix` for the safe fixes in one lint-only commit, run the suite, confirm the pass set is unchanged (FR-036a)
-- [ ] T063 [US6] Fix the remaining findings by hand in lint-only commits, one per module group (`CuemsDB*`, `CuemsWs*`, the rest, `tests/`); no behaviour change; run the suite after each; finish with `ruff check .` reporting zero findings (FR-036a, SC-008)
-- [ ] T064 [P] [US6] Fix `.github/workflows/pypi-publish.yml` `environment.url` to name `cuemseditor` (research R8)
+- [X] T061 [US6] Add `[tool.ruff]` to `pyproject.toml` (`select = ["E","F","I","W"]`, `line-length = 120`) and `ruff` plus `pytest-xdist` to the dev extras; record the baseline (expect 269 in `src/`, 44 in `tests/`) in `evidence/lint-baseline.txt` (FR-036a, research R11)
+- [X] T062 [US6] Apply `ruff check --fix` for the safe fixes in one lint-only commit, run the suite, confirm the pass set is unchanged (FR-036a)
+- [X] T063 [US6] Fix the remaining findings by hand in lint-only commits, one per module group (`CuemsDB*`, `CuemsWs*`, the rest, `tests/`); no behaviour change; run the suite after each; finish with `ruff check .` reporting zero findings (FR-036a, SC-008)
+- [X] T064 [P] [US6] Fix `.github/workflows/pypi-publish.yml` `environment.url` to name `cuemseditor` (research R8)
 
 ---
 

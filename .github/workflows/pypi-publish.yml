@@ -45,7 +45,7 @@ jobs:
       id-token: write
     environment:
       name: pypi
-      url: https://pypi.org/project/cuemsutils/${{ github.event.release.name }}
+      url: https://pypi.org/project/cuemseditor/${{ github.event.release.name }}
 
     steps:
       - name: Retrieve release distributions

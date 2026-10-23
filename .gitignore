@@ -39,3 +39,5 @@ debian/*.buildinfo
 debian/*.changes
 debian/tmp/
 debian/cuems-editor.*.debhelper
+.venv-*/
+.ruff_cache/
