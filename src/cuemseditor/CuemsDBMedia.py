@@ -655,10 +655,31 @@ class CuemsDBMedia(StringSanitizer):
             except Exception as e:
                 Logger.error(f'error: {type(e)} {e}; trying to move {dest_path} back to {src_path}')
 
+    def _index_sidecars(self, unix_name, trash_state=False):
+        """The ``indexes/`` sidecars of a media file: the videocomposer's frame
+        index (``.idx``) and the loop period (``.period``, 869ejxng3 D14).
+
+        They live next to the file (``<dir>/indexes/<name>.<ext>``), in the media
+        directory or in the trash's, so they follow it on delete and restore and
+        go with it on a permanent delete (T7-13); a missing one is not an error.
+        """
+        file_path = self.get_file_path(unix_name, trash_state=trash_state)
+        return [media_sidecars.video_index_path(file_path), media_sidecars.sidecar_path(file_path)]
+
+    def _move_index_sidecars(self, unix_name, to_trash, moves):
+        """Move the existing ``indexes/`` sidecars of *unix_name* into or out of
+        the trash, logging each move in *moves* (undone with the rest)."""
+        for src, dst in zip(self._index_sidecars(unix_name, trash_state=not to_trash),
+                            self._index_sidecars(unix_name, trash_state=to_trash)):
+            if os.path.exists(src):
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                self._move_keeping_name(src, os.path.dirname(dst), moves)
+
     def delete(self, uuid):
         """Soft-delete a media file by moving it and its sidecars to the trash.
 
-        Moves the media file, thumbnail, and (for audio) waveform to the
+        Moves the media file, thumbnail, (for audio) waveform and the
+        ``indexes/`` sidecars (``.idx``, ``.period``) to the
         corresponding trash sub-directories via ``_move_keeping_name``, so
         ``unix_name`` stays valid.  Sets ``Media.in_trash = True``
         atomically.  Reverses filesystem moves on transaction rollback.
@@ -685,6 +706,7 @@ class CuemsDBMedia(StringSanitizer):
                         if os.path.exists(file_waveform_path):
                             self._move_keeping_name(file_waveform_path, self.waveform_trash_path, moves)
 
+                    self._move_index_sidecars(media.unix_name, True, moves)
                     self._move_keeping_name(self.get_file_path(media.unix_name), self.trash_path, moves)
                     media.in_trash = True
                     media.save()
@@ -739,6 +761,7 @@ class CuemsDBMedia(StringSanitizer):
                         if os.path.exists(file_waveform_path):
                             self._move_keeping_name(file_waveform_path, self.waveform_path, moves)
 
+                    self._move_index_sidecars(media_trash.unix_name, False, moves)
                     self._move_keeping_name(self.get_file_path(media_trash.unix_name, trash_state=True), self.media_path, moves)
                     media_trash.in_trash = False
                     media_trash.save()
@@ -755,7 +778,8 @@ class CuemsDBMedia(StringSanitizer):
         """Permanently delete a trashed media file and its sidecars.
 
         Removes the ``Media`` DB row (and its ``ProjectMedia`` join rows via
-        cascade) and deletes the media file, thumbnail, and waveform from the
+        cascade) and deletes the media file, thumbnail, waveform and the
+        ``indexes/`` sidecars (``.idx``, ``.period``) from the
         trash directories.
 
         Args:
@@ -780,6 +804,10 @@ class CuemsDBMedia(StringSanitizer):
                         file_waveform_path = self.get_waveform_path(media.unix_name, trash_state=True)
                         if os.path.exists(file_waveform_path):
                             os.remove(file_waveform_path)
+
+                    for sidecar in self._index_sidecars(media.unix_name, trash_state=True):
+                        if os.path.exists(sidecar):
+                            os.remove(sidecar)
 
                     media.delete_instance(recursive=True)
                     os.remove(file_path)
