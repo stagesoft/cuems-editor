@@ -1,3 +1,11 @@
+cuems-editor (0.1.0rc1-8~pre869ejxng3.2) bookworm; urgency=medium
+
+  * TEST BUILD, not a release: 869ejxng3 T7-13. Merges fix/869ejxng3-loop-varispeed
+    6783c0e: media delete/restore move the indexes/<name>.idx and .period
+    sidecars with the file; a permanent delete removes them.
+
+ -- Ion Reguera <ion@stagelab.coop>  Mon, 26 Oct 2026 19:24:23 +0100
+
 cuems-editor (0.1.0rc1-8~pre869ejxng3.1) bookworm; urgency=medium
 
   * TEST BUILD, not a release: 869ejxng3 + 1amfwm7e6cw Phase A (rig rows on
