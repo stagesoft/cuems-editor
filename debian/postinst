@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 set -e
 
 CUEMS_VENV="/usr/lib/cuems"
@@ -33,11 +36,16 @@ case "$1" in
                 systemctl enable cuems-editor || echo "WARNING: Failed to enable cuems-editor service" >&2
             fi
 
-            # $2 is the previously-configured version (set on upgrade, empty on fresh install)
+            # $2 is the previously-configured version (set on upgrade, empty on fresh install).
+            # The editor runs only on a controller (WantedBy=cuems-controller.target): never start
+            # it on a node (1amfwm7fr8f). Upgrade: restart only if running; fresh install: start
+            # only when the controller target is active.
             if [ -n "$2" ]; then
-                echo "Upgrade from $2 detected, restarting cuems-editor service..."
-                systemctl restart cuems-editor || echo "WARNING: Failed to restart cuems-editor service" >&2
-            else
+                if systemctl is-active --quiet cuems-editor; then
+                    echo "Upgrade from $2 detected, restarting cuems-editor service..."
+                fi
+                systemctl try-restart cuems-editor || echo "WARNING: Failed to restart cuems-editor service" >&2
+            elif systemctl is-active --quiet cuems-controller.target; then
                 systemctl start cuems-editor || echo "WARNING: Failed to start cuems-editor service" >&2
             fi
         fi
