@@ -38,15 +38,18 @@ case "$1" in
 
             # $2 is the previously-configured version (set on upgrade, empty on fresh install).
             # The editor runs only on a controller (WantedBy=cuems-controller.target): never start
-            # it on a node (1amfwm7fr8f). Upgrade: restart only if running; fresh install: start
-            # only when the controller target is active.
-            if [ -n "$2" ]; then
-                if systemctl is-active --quiet cuems-editor; then
-                    echo "Upgrade from $2 detected, restarting cuems-editor service..."
-                fi
-                systemctl try-restart cuems-editor || echo "WARNING: Failed to restart cuems-editor service" >&2
-            elif systemctl is-active --quiet cuems-controller.target; then
-                systemctl start cuems-editor || echo "WARNING: Failed to start cuems-editor service" >&2
+            # it on a node (1amfwm7fr8f). A running editor is restarted; one that is stopped or
+            # failed is started only when the controller target is up (or still starting, at boot).
+            if systemctl is-active --quiet cuems-editor; then
+                [ -n "$2" ] && echo "Upgrade from $2 detected, restarting cuems-editor service..."
+                systemctl restart cuems-editor || echo "WARNING: Failed to restart cuems-editor service" >&2
+            else
+                case "$(systemctl is-active cuems-controller.target 2>/dev/null)" in
+                    active|activating|reloading)
+                        systemctl reset-failed cuems-editor 2>/dev/null || true
+                        systemctl start cuems-editor || echo "WARNING: Failed to start cuems-editor service" >&2
+                        ;;
+                esac
             fi
         fi
         ;;
