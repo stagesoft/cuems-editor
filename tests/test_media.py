@@ -11,6 +11,7 @@ from cuemseditor.cli import get_settings
 from cuemseditor.CuemsDBMedia import CuemsDBMedia
 from cuemseditor.CuemsDBModel import Media, database
 from cuemseditor.CuemsErrors import NotTimeCodeError
+from cuemsutils.tools import media_sidecars
 
 
 def _media_mgr(library):
@@ -184,5 +185,96 @@ def test_delete_rolls_back_sidecars_when_media_file_is_missing(library):
         assert os.path.exists(mgr.get_waveform_path('gone.wav'))
         assert not os.path.exists(mgr.get_thumbnail_path('gone.wav', trash_state=True))
         assert not os.path.exists(mgr.get_waveform_path('gone.wav', trash_state=True))
+    finally:
+        database.close()
+
+
+# --- T7-13 (869ejxng3 step 7): the .idx and .period sidecars follow the file ----
+
+def _idx(mgr, name, trash=False):
+    return media_sidecars.video_index_path(mgr.get_file_path(name, trash_state=trash))
+
+
+def _period(mgr, name, trash=False):
+    return media_sidecars.sidecar_path(mgr.get_file_path(name, trash_state=trash))
+
+
+def test_delete_moves_the_index_and_period_sidecars_to_the_trash(library):
+    mgr = _sidecar_mgr(library)
+    try:
+        _touch(_idx(mgr, 'file_video.ext'), b'idx')
+        _touch(_period(mgr, 'file_video.ext'), b'{"period": 1}')
+        row = Media.get(Media.unix_name == 'file_video.ext')
+
+        mgr.delete(str(row.uuid))
+
+        assert not os.path.exists(_idx(mgr, 'file_video.ext'))
+        assert not os.path.exists(_period(mgr, 'file_video.ext'))
+        with open(_idx(mgr, 'file_video.ext', trash=True), 'rb') as f:
+            assert f.read() == b'idx'
+        with open(_period(mgr, 'file_video.ext', trash=True), 'rb') as f:
+            assert f.read() == b'{"period": 1}'
+    finally:
+        database.close()
+
+
+def test_restore_brings_the_index_and_period_sidecars_back(library):
+    mgr = _sidecar_mgr(library)
+    try:
+        _touch(_period(mgr, 'tone_c.wav', trash=True), b'{"period": 2}')
+        row = Media.get(Media.unix_name == 'tone_c.wav')
+
+        mgr.restore(str(row.uuid))
+
+        assert not os.path.exists(_period(mgr, 'tone_c.wav', trash=True))
+        with open(_period(mgr, 'tone_c.wav'), 'rb') as f:
+            assert f.read() == b'{"period": 2}'
+    finally:
+        database.close()
+
+
+def test_delete_from_trash_removes_the_index_and_period_sidecars(library):
+    mgr = _sidecar_mgr(library)
+    try:
+        _touch(_idx(mgr, 'tone_c.wav', trash=True), b'idx')
+        _touch(_period(mgr, 'tone_c.wav', trash=True), b'{}')
+        row = Media.get(Media.unix_name == 'tone_c.wav')
+
+        mgr.delete_from_trash(str(row.uuid))
+
+        assert not os.path.exists(_idx(mgr, 'tone_c.wav', trash=True))
+        assert not os.path.exists(_period(mgr, 'tone_c.wav', trash=True))
+        assert not os.path.exists(mgr.get_file_path('tone_c.wav', trash_state=True))
+    finally:
+        database.close()
+
+
+def test_sidecars_absent_never_raise(library):
+    # no .idx / .period anywhere (an image, or a library from before D14): delete,
+    # restore and delete_from_trash behave exactly as before
+    mgr = _sidecar_mgr(library)
+    try:
+        row = Media.get(Media.unix_name == 'pic.png')
+        mgr.delete(str(row.uuid))
+        mgr.restore(str(row.uuid))
+        mgr.delete(str(row.uuid))
+        mgr.delete_from_trash(str(row.uuid))
+        assert not Media.select().where(Media.unix_name == 'pic.png').exists()
+    finally:
+        database.close()
+
+
+def test_delete_rolls_back_the_index_sidecar_too(library):
+    # 'gone.wav' has no file: the main move fails after the sidecars moved
+    mgr = _sidecar_mgr(library)
+    try:
+        _touch(_period(mgr, 'gone.wav'), b'{}')
+        row = Media.get(Media.unix_name == 'gone.wav')
+
+        with pytest.raises(FileNotFoundError):
+            mgr.delete(str(row.uuid))
+
+        assert os.path.exists(_period(mgr, 'gone.wav'))
+        assert not os.path.exists(_period(mgr, 'gone.wav', trash=True))
     finally:
         database.close()
