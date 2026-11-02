@@ -17,6 +17,9 @@ from peewee import *
 from cuemsutils.tools.StringSanitizer import StringSanitizer
 from cuemsutils.tools.CopyMoveVersioned import CopyMoveVersioned
 from cuemsutils.tools.CTimecode import CTimecode
+from cuemsutils.tools import media_sidecars
+from cuemsutils.tools.media_sidecars import (  # noqa: F401  (re-exported: CuemsDBProject, tests)
+    INDEX_MISSING, INDEX_STALE, INDEX_VALID, video_index_path, video_index_state)
 from cuemsutils.log import logged, Logger
 from cuemsutils.helpers import new_datetime
 
@@ -195,48 +198,15 @@ def probe_media(file_path, timeout=DIMENSIONS_PROBE_TIMEOUT):
 INDEXED_VIDEO_EXTENSIONS = ('.mp4', '.mov', '.avi', '.mkv', '.mpg')
 VIDEO_INDEXER = 'cuems-videoindexer'
 VIDEO_INDEXER_TIMEOUT = 300  # seconds, as at upload
+LOOP_PERIOD_TIMEOUT = 300    # seconds, at upload and in the pre-load refresh's own deadline
 
-INDEX_VALID = 'valid'
-INDEX_STALE = 'stale'       # a readable header for another size or mtime
-INDEX_MISSING = 'missing'   # no index, unreadable, or a format we do not know
-
-# videocomposer VideoFileInput.cpp IdxHeader: magic, uint32 version, int64
-# video_size, int64 video_mtime (whole seconds), int64 frameCount, ...
-_IDX_HEAD = struct.Struct('<4sIqqq')
-_IDX_MAGIC = b'CXID'
-_IDX_VERSION = 1
+# INDEX_VALID / INDEX_STALE / INDEX_MISSING, video_index_path() and
+# video_index_state() live in cuemsutils.tools.media_sidecars (869ejxng3 D14),
+# next to the .idx caller the editor and the engine share; imported above.
 
 
 def is_indexed_video(file_name):
     return os.path.splitext(file_name)[1].lower() in INDEXED_VIDEO_EXTENSIONS
-
-
-def video_index_path(file_path):
-    """``/lib/media/a.mp4`` -> ``/lib/media/indexes/a.mp4.idx`` (the
-    videocomposer's ``getIndexPath``)."""
-    return os.path.join(os.path.dirname(file_path), 'indexes',
-                        os.path.basename(file_path) + '.idx')
-
-
-def video_index_state(file_path):
-    """Is the video's ``.idx`` the one the videocomposer would accept?
-
-    It compares what the videocomposer compares: magic, version, the video's
-    size and mtime (whole seconds), and a positive frame count. Fails closed:
-    anything it cannot read counts as missing.
-    """
-    try:
-        st = os.stat(file_path)
-        with open(video_index_path(file_path), 'rb') as f:
-            head = f.read(_IDX_HEAD.size)
-        magic, version, size, mtime, frames = _IDX_HEAD.unpack(head)
-    except (OSError, struct.error):
-        return INDEX_MISSING
-    if magic != _IDX_MAGIC or version != _IDX_VERSION or frames <= 0:
-        return INDEX_MISSING
-    if size != st.st_size or mtime != st.st_mtime_ns // 1_000_000_000:
-        return INDEX_STALE
-    return INDEX_VALID
 
 
 async def run_video_indexer(file_path, timeout=VIDEO_INDEXER_TIMEOUT):
@@ -429,6 +399,9 @@ class CuemsDBMedia(StringSanitizer):
                     Logger.error(f'could not generate {_type} thumbnail or waveform; error : {e}')
                     media_thumbnail_binary_data = None
 
+                if _type in (MediaType.MOVIE, MediaType.AUDIO):
+                    self.create_loop_period(dest_filename)   # never raises
+
                 # Stored like the duration (869fat84r): a movie's pixel size, so
                 # the engine does not probe the file when it arms a cue (a
                 # failed probe stores nothing; never fatal); and, for every
@@ -463,6 +436,10 @@ class CuemsDBMedia(StringSanitizer):
 
                 if os.path.exists(self.get_waveform_path(dest_filename)):
                     os.remove(self.get_waveform_path(dest_filename))
+
+                period_path = media_sidecars.sidecar_path(self.get_file_path(dest_filename))
+                if os.path.exists(period_path):
+                    os.remove(period_path)
 
                 raise e
 
@@ -678,10 +655,31 @@ class CuemsDBMedia(StringSanitizer):
             except Exception as e:
                 Logger.error(f'error: {type(e)} {e}; trying to move {dest_path} back to {src_path}')
 
+    def _index_sidecars(self, unix_name, trash_state=False):
+        """The ``indexes/`` sidecars of a media file: the videocomposer's frame
+        index (``.idx``) and the loop period (``.period``, 869ejxng3 D14).
+
+        They live next to the file (``<dir>/indexes/<name>.<ext>``), in the media
+        directory or in the trash's, so they follow it on delete and restore and
+        go with it on a permanent delete (T7-13); a missing one is not an error.
+        """
+        file_path = self.get_file_path(unix_name, trash_state=trash_state)
+        return [media_sidecars.video_index_path(file_path), media_sidecars.sidecar_path(file_path)]
+
+    def _move_index_sidecars(self, unix_name, to_trash, moves):
+        """Move the existing ``indexes/`` sidecars of *unix_name* into or out of
+        the trash, logging each move in *moves* (undone with the rest)."""
+        for src, dst in zip(self._index_sidecars(unix_name, trash_state=not to_trash),
+                            self._index_sidecars(unix_name, trash_state=to_trash)):
+            if os.path.exists(src):
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                self._move_keeping_name(src, os.path.dirname(dst), moves)
+
     def delete(self, uuid):
         """Soft-delete a media file by moving it and its sidecars to the trash.
 
-        Moves the media file, thumbnail, and (for audio) waveform to the
+        Moves the media file, thumbnail, (for audio) waveform and the
+        ``indexes/`` sidecars (``.idx``, ``.period``) to the
         corresponding trash sub-directories via ``_move_keeping_name``, so
         ``unix_name`` stays valid.  Sets ``Media.in_trash = True``
         atomically.  Reverses filesystem moves on transaction rollback.
@@ -708,6 +706,7 @@ class CuemsDBMedia(StringSanitizer):
                         if os.path.exists(file_waveform_path):
                             self._move_keeping_name(file_waveform_path, self.waveform_trash_path, moves)
 
+                    self._move_index_sidecars(media.unix_name, True, moves)
                     self._move_keeping_name(self.get_file_path(media.unix_name), self.trash_path, moves)
                     media.in_trash = True
                     media.save()
@@ -762,6 +761,7 @@ class CuemsDBMedia(StringSanitizer):
                         if os.path.exists(file_waveform_path):
                             self._move_keeping_name(file_waveform_path, self.waveform_path, moves)
 
+                    self._move_index_sidecars(media_trash.unix_name, False, moves)
                     self._move_keeping_name(self.get_file_path(media_trash.unix_name, trash_state=True), self.media_path, moves)
                     media_trash.in_trash = False
                     media_trash.save()
@@ -778,7 +778,8 @@ class CuemsDBMedia(StringSanitizer):
         """Permanently delete a trashed media file and its sidecars.
 
         Removes the ``Media`` DB row (and its ``ProjectMedia`` join rows via
-        cascade) and deletes the media file, thumbnail, and waveform from the
+        cascade) and deletes the media file, thumbnail, waveform and the
+        ``indexes/`` sidecars (``.idx``, ``.period``) from the
         trash directories.
 
         Args:
@@ -803,6 +804,10 @@ class CuemsDBMedia(StringSanitizer):
                         file_waveform_path = self.get_waveform_path(media.unix_name, trash_state=True)
                         if os.path.exists(file_waveform_path):
                             os.remove(file_waveform_path)
+
+                    for sidecar in self._index_sidecars(media.unix_name, trash_state=True):
+                        if os.path.exists(sidecar):
+                            os.remove(sidecar)
 
                     media.delete_instance(recursive=True)
                     os.remove(file_path)
@@ -975,30 +980,42 @@ class CuemsDBMedia(StringSanitizer):
             Logger.debug(f'waveform file not created for {filename}, output: {result.stdout.decode("utf8")}')
 
     def create_video_index(self, filename):
-        """Run ``cuems-videoindexer`` to pre-build the frame index sidecar (``.idx``) for a video file.
+        """Pre-build the frame index sidecar (``.idx``) of a video file.
 
         The ``.idx`` file is created in ``<media_path>/indexes/`` so that
         ``videocomposer`` can call ``loadCachedIndex`` on first arm instead of
-        building the index at playback time.
+        building the index at playback time. The caller is shared with the
+        engine (``cuemsutils.tools.media_sidecars.ensure_video_index``); never
+        raises.
 
         Args:
             filename: Filename of the video file inside ``<media_path>``.
         """
+        if not media_sidecars.ensure_video_index(self.get_file_path(filename),
+                                                  timeout_s=VIDEO_INDEXER_TIMEOUT):
+            Logger.debug(f'video index created for {filename}')
+
+    def create_loop_period(self, filename):
+        """Write the loop period sidecar (``indexes/<name>.period``) of a movie or
+        audio file (869ejxng3 + 1amfwm7e6cw, D14).
+
+        The engine reads it instead of probing the file inside a load; the load's
+        media sync carries it to the nodes. A failure is a WARNING and leaves no
+        sidecar (the nodes then compute the period themselves); never raises.
+
+        Returns:
+            The ``Period``, or ``None``.
+        """
         file_path = self.get_file_path(filename)
         try:
-            result = subprocess.run(
-                ['cuems-videoindexer', file_path],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                timeout=300
-            )
-            idx_dir = os.path.join(self.media_path, 'indexes')
-            idx_path = os.path.join(idx_dir, os.path.basename(file_path) + '.idx')
-            if os.path.exists(idx_path):
-                Logger.debug(f'video index created for {filename}')
-            else:
-                Logger.warning(f'video index not created for {filename}: {result.stdout.decode("utf8")}')
+            period = media_sidecars.loop_period(file_path, budget_s=LOOP_PERIOD_TIMEOUT)
+            media_sidecars.write_period(file_path, period)
         except Exception as e:
-            Logger.warning(f'video index failed for {filename}: {e}')
+            Logger.warning(f'loop period not written for {filename}: {type(e).__name__}: {e}')
+            return None
+        Logger.debug(f'loop period of {filename}: {period.num}/{period.den} = {period.ms:.3f} ms '
+                     f'({period.rule}, {period.probe_s} s)')
+        return period
 
     def get_file_path(self, filename, trash_state=False):
         """Return the absolute path for a media file in the live or trash directory.

@@ -16,6 +16,7 @@ from cuemsutils.xml.Parsers import CuemsParser
 from cuemsutils.xml.XmlReaderWriter import XmlReaderWriter
 from cuemsutils.helpers import new_datetime, new_uuid
 from cuemsutils.log import logged, Logger
+from cuemsutils.tools import media_sidecars
 
 
 from cuemseditor.CuemsErrors import *
@@ -392,6 +393,7 @@ def validate_fade_durations_in_contents(contents):
 #: Seconds a load (or a save) may spend probing files; the files not reached
 #: wait for the next load or save. A module constant, not a config key.
 REFRESH_DEADLINE_S = 20
+LOOP_PERIOD_LOAD_BUDGET_S = 10   # per file, as the engine's own load-time probe (§4.1)
 #: Files listed in one media_check_report (the rest are counted): some
 #: clients close a WebSocket on a frame over 1 MiB.
 REPORT_FILES_MAX = 20
@@ -403,6 +405,7 @@ REPORT_FILES_MAX = 20
 _FAILED_MARKS = set()
 _VERIFIED_MARKS = set()
 _INDEX_FAILED_MARKS = set()
+_PERIOD_FAILED_MARKS = set()   # (path, size, mtime_ns) whose loop period failed (D14)
 # Per project: files the last load did not reach before its deadline.
 _NOT_REACHED = {}
 
@@ -413,7 +416,8 @@ _NOT_COPIED = ('*.pre-refresh-*', '.*.tmp')
 
 def reset_refresh_marks():
     """Forget every in-memory mark (tests)."""
-    for marks in (_FAILED_MARKS, _VERIFIED_MARKS, _INDEX_FAILED_MARKS, _NOT_REACHED):
+    for marks in (_FAILED_MARKS, _VERIFIED_MARKS, _INDEX_FAILED_MARKS, _PERIOD_FAILED_MARKS,
+                  _NOT_REACHED):
         marks.clear()
 
 
@@ -430,6 +434,52 @@ def mark_index_failed(path):
     key = _file_key(path)
     if key:
         _INDEX_FAILED_MARKS.add(key)
+
+
+def mark_period_failed(path):
+    """Do not try *path*'s loop period again until the file changes (D14)."""
+    key = _file_key(path)
+    if key:
+        _PERIOD_FAILED_MARKS.add(key)
+
+
+def write_loop_periods(paths, deadline, clock=time.monotonic):
+    """Write the ``.period`` sidecar of each file in *paths*, one at a time, each
+    within what is left before *deadline* (a *clock* value), at most
+    ``LOOP_PERIOD_LOAD_BUDGET_S`` per file (869ejxng3 + 1amfwm7e6cw, D14).
+
+    A file whose period cannot be computed is marked and not retried until it
+    changes; a file not reached, or cut by the deadline, is tried at the next
+    load. The nodes compute what is missing themselves. Never raises.
+
+    Returns:
+        ``dict``: ``periods`` written, ``period_failed``, ``period_not_reached``.
+    """
+    out = {'periods': 0, 'period_failed': 0, 'period_not_reached': 0}
+    for i, path in enumerate(paths):
+        left = deadline - clock()
+        if left <= 0.5:
+            out['period_not_reached'] = len(paths) - i
+            Logger.info(f'{len(paths) - i} loop period(s) left for the next load (time limit); '
+                        'the nodes compute them at arm meanwhile')
+            break
+        try:
+            p = media_sidecars.loop_period(path, budget_s=min(left, LOOP_PERIOD_LOAD_BUDGET_S))
+            media_sidecars.write_period(path, p)
+            out['periods'] += 1
+            Logger.info(f'loop period of {os.path.basename(path)}: {p.num}/{p.den} = '
+                        f'{p.ms:.3f} ms ({p.rule}, {p.probe_s} s)')
+        except media_sidecars.PeriodTimeout:
+            out['period_not_reached'] = len(paths) - i
+            Logger.info(f'the loop period of {os.path.basename(path)} did not fit the time '
+                        'limit; left for the next load')
+            break
+        except Exception as e:
+            out['period_failed'] += 1
+            mark_period_failed(path)
+            Logger.warning(f'loop period of {os.path.basename(path)} failed '
+                           f'({type(e).__name__}: {e}); the nodes compute it at arm')
+    return out
 
 
 _LIGHT_KEYS = ('file_name', 'duration') + STORED_KEYS
@@ -534,9 +584,11 @@ class MediaFileCheck:
         self.state = 'unchanged'
         self.index = None            # None: not a video the sync carries
         self.needs_index = False
+        self.needs_period = False    # a movie/audio file without a valid .period (D14)
 
     def __repr__(self):
-        return f'MediaFileCheck({self.file_name!r}, {self.state}, index={self.index})'
+        return (f'MediaFileCheck({self.file_name!r}, {self.state}, index={self.index}, '
+                f'period={"missing" if self.needs_period else "ok"})')
 
 
 class RefreshPlan:
@@ -563,10 +615,14 @@ class RefreshPlan:
         return [c for c in self.checks if c.needs_index]
 
     @property
+    def to_period(self):
+        return [c for c in self.checks if c.needs_period]
+
+    @property
     def has_work(self):
-        """Files to measure or to index. Stale values alone are reported, not
-        work: they cost no engine query and no probe."""
-        return bool(self.to_verify or self.to_index)
+        """Files to measure, to index or to give a loop period. Stale values
+        alone are reported, not work: they cost no engine query and no probe."""
+        return bool(self.to_verify or self.to_index or self.to_period)
 
 
 class CuemsDBProject(StringSanitizer):
@@ -1305,6 +1361,15 @@ class CuemsDBProject(StringSanitizer):
             check.state = 'changed'     # same size, but not the file the index was made for
         check.needs_index = (check.index is not None and check.index != INDEX_VALID
                              and check.state != 'skipped' and key not in _INDEX_FAILED_MARKS)
+        # The loop period sidecar (869ejxng3 D14): written at upload; a file from
+        # before that, or replaced by hand, gets it here, before the load's media
+        # sync carries it to the nodes. A file whose period failed is not retried
+        # until it changes.
+        check.needs_period = (row.media_type in ('MOVIE', 'AUDIO') and not row.in_trash
+                              and os.path.splitext(row.unix_name)[1].lower()
+                              in media_sidecars.MOVIE_EXTS + media_sidecars.AUDIO_EXTS
+                              and check.state != 'skipped' and key not in _PERIOD_FAILED_MARKS
+                              and media_sidecars.read_period(path) is None)
         return check
 
     def verify_media_files(self, plan, deadline, clock=time.monotonic):
