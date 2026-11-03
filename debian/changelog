@@ -1,3 +1,16 @@
+cuems-editor (0.1.0rc1-8) bookworm; urgency=medium
+
+  * Merge rc1 into debian/bookworm (0.1.0rc1-8, 869ejxng3 batch, PR #12):
+    media upload writes the .period / .idx sidecars through
+    cuemsutils.tools.media_sidecars; depends on cuems-utils >= 0.1.0rc18.
+  * postinst never starts cuems-editor on a node (1amfwm7fr8f, PR #13): the
+    role comes from cuems-controller.target; a running editor is restarted
+    as before, a stopped or failed one is started only where the controller
+    target is up. A node still running a stray editor from the old postinst
+    keeps it (never auto-stopped): stop it by hand.
+
+ -- Ion Reguera <ion@stagelab.coop>  Tue, 03 Nov 2026 00:28:47 +0100
+
 cuems-editor (0.1.0rc1-7) bookworm; urgency=medium
 
   * Merge rc1 into debian/bookworm.
