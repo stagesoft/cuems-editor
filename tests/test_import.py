@@ -1093,6 +1093,12 @@ def _one(name, data=b'x' * 4000):
     return export_entries(script=script_bytes([name], {name: data}), media={name: data})
 
 
+def _names(*names):
+    """An archive whose script names each of ``names``, each carried with bytes of its own."""
+    media = {n: os.urandom(3000) for n in names}
+    return export_entries(script=script_bytes(names, media), media=media)
+
+
 #: (id, build(env) -> zip path, needle that the reason must contain, or None)
 HOSTILE = [
     ('dotdot', lambda e: e.zip(_base() + [(f'{TOP}/media/../../evil.mp4', b'x')]), 'evil.mp4'),
@@ -1115,8 +1121,15 @@ HOSTILE = [
                                       + [(f'media/{n}', b) for n, b in MEDIA.items()]), None),
     ('top_the_sanitiser_changes', lambda e: e.zip(_base(top='Show A')), 'Show A'),
     ('no_script', lambda e: e.zip([x for x in _base() if not x[0].endswith('script.xml')]), None),
-    ('media_name_upper_case', lambda e: e.zip(_one('Clip.mp4')), 'Clip.mp4'),
-    ('media_name_dotted_capital_i', lambda e: e.zip(_one('İ.wav')), None),
+    # Ion, 2026-11-25: a capital is not refused, the sanitiser names it (TestSanitisedNames);
+    # what is refused is two used names that become one, or a name that becomes nothing.
+    ('media_names_that_sanitise_to_one', lambda e: e.zip(_names('A.wav', 'a.wav')),
+     "'A.wav' and 'a.wav'"),
+    # The sanitiser drops every '?' and keeps nothing; '€' goes and '.' stays (read on .111).
+    ('media_name_that_sanitises_to_empty', lambda e: e.zip(_one('???')),
+     "'???' is refused (empty once sanitised)"),
+    ('media_name_that_sanitises_to_a_dot', lambda e: e.zip(_one('€.')),
+     "'€.' is refused ('.' or '..' once sanitised)"),
     ('media_name_tab', lambda e: e.zip(_one('a\tb.mp4')), None),
     ('media_name_slash', lambda e: e.zip(_one('sub/clip.mp4')), 'sub/clip.mp4'),
     ('media_name_backslash', lambda e: e.zip(_one('a\\b.mp4')), None),
@@ -1226,6 +1239,77 @@ except MemoryError:
         assert {n for n, d in noise if d is not None} <= set(report['ignored'])
         assert env.row('unused.wav') is None
         assert not os.path.exists(os.path.join(env.media_dir, 'unused.wav'))
+
+
+#: (name in the archive, the name the library holds): what the upload's sanitiser
+#: makes of it, read on .111 (``İ`` lowers to ``i`` + the combining dot U+0307).
+SANITISED = [('İ.wav', 'i\u0307.wav'), ('Clip.MP4', 'clip.mp4')]
+
+
+class TestSanitisedNames:
+    """(9) Ion, 2026-11-25 (D7): a used media name that
+    ``StringSanitizer.sanitize_file_name`` changes is accepted, as the upload
+    accepts it (``CuemsUpload.py:129``): registered under the sanitised name,
+    reported as a rename like D8's, the script following. ``new()`` does not
+    sanitise, so the importer must: nothing with a capital reaches ``media/``.
+    Two used names that sanitise to one, or a name that sanitises to nothing,
+    are refused (HOSTILE)."""
+
+    @pytest.mark.parametrize('name, lib', SANITISED, ids=['dotted_capital_i', 'capital_clip'])
+    def test_9_a_name_the_sanitiser_changes_is_added_under_the_sanitised_name(self, env, name,
+                                                                               lib):
+        data = os.urandom(2000)
+        report = env.run(env.zip(_one(name, data)))
+        assert report['media']['added'] == [lib]
+        assert report['media']['renamed'] == [{'from': name, 'to': lib}]
+        assert open(os.path.join(env.media_dir, lib), 'rb').read() == data
+        assert not os.path.exists(os.path.join(env.media_dir, name))
+        assert [n for n in os.listdir(env.media_dir) if n != n.lower()] == []
+        row = env.row(lib)
+        assert row is not None
+        ids = media_ids_in(env.script_of(TOP))
+        assert name not in ids and ids[lib] == str(row.uuid)        # file_name and id remapped
+        assert env.links(report['project']['uuid']) == {lib: str(row.uuid)}
+
+    def test_9_the_same_archive_again_reuses_the_sanitised_file(self, env):
+        data = os.urandom(2000)
+        path = env.zip(_one('Clip.MP4', data))
+        env.run(path)
+        report = env.run(path)
+        assert report['media']['added'] == []
+        assert report['media']['reused'] == ['clip.mp4']
+        assert report['media']['renamed'] == [{'from': 'Clip.MP4', 'to': 'clip.mp4'}]
+        assert not os.path.exists(os.path.join(env.media_dir, 'clip-001.mp4'))
+
+    def test_9_the_sanitised_name_taken_by_another_file_goes_on_to_001(self, env):
+        env.put_media('clip.mp4', os.urandom(1500))
+        data = os.urandom(2000)
+        report = env.run(env.zip(_one('Clip.MP4', data)))
+        assert report['media']['added'] == ['clip-001.mp4']
+        assert report['media']['renamed'] == [{'from': 'Clip.MP4', 'to': 'clip-001.mp4'}]
+        assert open(os.path.join(env.media_dir, 'clip-001.mp4'), 'rb').read() == data
+        ids = media_ids_in(env.script_of(TOP))
+        assert ids == {'clip-001.mp4': str(env.row('clip-001.mp4').uuid)}
+
+    def test_9_a_missing_name_is_remapped_to_the_name_an_upload_would_give_it(self, env):
+        names = list(MEDIA) + ['Lost.WAV']                   # named, not carried
+        report = env.run(env.zip(export_entries(script=script_bytes(names, MEDIA))))
+        assert report['media']['missing'] == ['lost.wav']
+        assert report['media']['renamed'] == [{'from': 'Lost.WAV', 'to': 'lost.wav'}]
+        links = env.links(report['project']['uuid'])
+        assert 'Lost.WAV' not in links and links['lost.wav'] is None
+        ids = media_ids_in(env.script_of(TOP))
+        assert 'Lost.WAV' not in ids and ids['lost.wav'] == media_id('Lost.WAV')  # its id kept
+
+    def test_9_a_name_new_makes_keeps_its_hyphen(self, env):
+        """``<base>-NNN<ext>`` is a library name (``new()`` makes it, N2) that the
+        sanitiser would change, ``-`` to ``_``: an archive of that library carries
+        it and it is imported as it is, so a second import can reuse it."""
+        data = os.urandom(2000)
+        report = env.run(env.zip(_one('clip-001.mp4', data)))
+        assert report['media']['added'] == ['clip-001.mp4']
+        assert report['media']['renamed'] == []
+        assert not os.path.exists(os.path.join(env.media_dir, 'clip_001.mp4'))
 
 
 class TestTheScript:

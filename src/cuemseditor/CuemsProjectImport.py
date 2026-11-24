@@ -333,9 +333,11 @@ def _top_folder(infos):
 
 
 def media_name_problem(name):
-    """What the rule of D7 refuses in a media name, or ``None`` (rev 3, round
-    2, row 5): it says only what is refused, so ``cançó.wav`` and what the
-    sanitiser stores for ``İ.wav`` (``i`` + U+0307) pass."""
+    """What the rule of D7 refuses in a media name as the archive writes it,
+    or ``None`` (rev 3, round 2, row 5): it says only what is refused, so
+    ``cançó.wav`` passes. A capital is not refused (Ion, 2026-11-25): the
+    name is then sanitised (:func:`library_name`), and what the sanitiser
+    leaves is asked again here: empty, ``.`` or ``..`` is refused."""
     if not isinstance(name, str) or not name:
         return 'empty'
     if name in ('.', '..'):
@@ -349,9 +351,31 @@ def media_name_problem(name):
             return 'more than 255 bytes in UTF-8'
     except UnicodeError:
         return 'a character that is not UTF-8'
-    if name != name.lower():
-        return 'it differs from its lower-case form'
     return None
+
+
+#: What a library's media names are made of: what the sanitiser keeps
+#: (alphanumerics, ``.``, ``_``), lower-cased, which adds U+0307 (lower-casing
+#: ``İ`` leaves it; no other alphanumeric lowers to a character the sanitiser
+#: drops, checked over all of Unicode on .111), and the ``-`` of ``new()``'s
+#: ``<base>-NNN<ext>`` (N2).
+_LIBRARY_EXTRA = '._-\u0307'
+
+
+def library_name(name):
+    """The name the library holds for the archive's media name *name* (D7, Ion
+    2026-11-25). A name already made only of what a library name is made of
+    (:data:`_LIBRARY_EXTRA`) and lower-case is kept: the sanitiser is not a
+    fixed point on the library's own names (``clip-001.mp4`` would become
+    ``clip_001.mp4``, the ``i`` + U+0307 it makes of ``İ`` would lose its
+    dot), so sanitising an archive of a library again would rename its files
+    and defeat D8's reuse. Any other name gets what the upload stores,
+    ``StringSanitizer.sanitize_file_name`` (``CuemsUpload.py:129``; ``new()``
+    itself does not sanitise): ``Clip.MP4`` is ``clip.mp4``, ``İ.wav`` is
+    ``i`` + U+0307 ``.wav``."""
+    if name == name.lower() and all(c.isalnum() or c in _LIBRARY_EXTRA for c in name):
+        return name
+    return StringSanitizer.sanitize_file_name(name)
 
 
 # --- Reading entries ------------------------------------------------------
@@ -463,6 +487,7 @@ class _Plan:
         self.data = None
         self.source_name = None  # the script's name, before the free pair (D10)
         self.names = []          # every file the script names, in order
+        self.library = {}        # name -> the name the library holds for it (D7)
         self.entries = {}        # name -> ZipInfo, for the names the archive carries
         self.md5 = {}            # name -> MD5 of its entry
         self.reuse = {}          # archive name -> library name (D8)
@@ -509,21 +534,34 @@ def _read_script_entry(zf, by_name, db, staging, plan, report):
 
 
 def _match_media(by_name, db, plan):
-    """The names the script lists against ``<top>/media/`` (D7, D9)."""
+    """The names the script lists against ``<top>/media/`` (D7, D9), each with
+    the name the library will hold for it (:func:`library_name`): from here on
+    a file is looked up, registered and remapped under that name, and one that
+    differs from the archive's is reported as a rename, as D8's are."""
     for block in _media_blocks(plan.data):
         if block['file_name'] not in plan.names:
             plan.names.append(block['file_name'])
+    owner = {}
     for name in plan.names:
         problem = media_name_problem(name)
         if problem:
             raise _refused(f'the media name {_q(name)} is refused ({problem})')
+        lib = library_name(name)
+        problem = media_name_problem(lib)
+        if problem:
+            raise _refused(f'the media name {_q(name)} is refused ({problem} once sanitised)')
+        if lib in owner:
+            raise _refused(f'the media names {_q(owner[lib])} and {_q(name)} are both '
+                           f'{_q(lib)} once sanitised')
+        owner[lib] = name
+        plan.library[name] = lib
         entries = by_name.get(f'{plan.top}/media/{name}', [])
         if len(entries) > 1:
             raise _refused(f'entry {_q(entries[0].filename)} is in it twice')
         if not entries:
             plan.missing.append(name)
             continue
-        if db.media.get_type(name) is None:
+        if db.media.get_type(lib) is None:
             raise _refused(f'the media file {_q(name)} has no known media type')
         plan.entries[name] = entries[0]
 
@@ -571,12 +609,13 @@ def _same_file(row, path, size, md5_hex):
 
 
 def _decide(db, plan, report):
-    """D8 per file: the name, then ``<base>-NNN<ext>`` as ``new()`` would try
-    them, up to the first free one. A live file of the same content on the
-    way is reused; the trash is never taken from; else the file is added."""
+    """D8 per file: its library name (D7), then ``<base>-NNN<ext>`` as
+    ``new()`` would try them, up to the first free one. A live file of the
+    same content on the way is reused; the trash is never taken from; else
+    the file is added."""
     for name, info in plan.entries.items():
-        base, ext = os.path.splitext(name)
-        candidate, i = name, 0
+        base, ext = os.path.splitext(plan.library[name])
+        candidate, i = plan.library[name], 0
         while True:
             row = Media.get_or_none(Media.unix_name == candidate)
             path = os.path.join(db.media.media_path, candidate)
@@ -703,7 +742,7 @@ def _register(zf, db, plan, staging, report, status, accept_loaded, progress, li
             progress('media', i, len(plan.add), name)
         staged = os.path.join(staging, f'media-{i}')
         _extract(zf, plan.entries[name], staged, plan.md5[name])
-        lib_name = db.media.new(staged, name, plan.md5[name])
+        lib_name = db.media.new(staged, plan.library[name], plan.md5[name])
         plan.reuse[name] = lib_name
         report['media']['added'].append(lib_name)
         if lib_name != name:
@@ -720,10 +759,11 @@ def _register(zf, db, plan, staging, report, status, accept_loaded, progress, li
 
 def _remap(plan):
     """D10: each Media block names the library's file and carries its row's
-    uuid, read back by name after every relink (N1); a missing file keeps the
-    archive's id."""
+    uuid, read back by name after every relink (N1); a missing file is named
+    as the library would hold it (D7) and keeps the archive's id."""
     for block in _media_blocks(plan.data):
-        lib_name = plan.reuse.get(block['file_name'], block['file_name'])
+        name = block['file_name']
+        lib_name = plan.reuse.get(name, plan.library.get(name, name))
         block['file_name'] = lib_name
         row = Media.get_or_none(Media.unix_name == lib_name)
         if row is not None:
@@ -733,12 +773,18 @@ def _remap(plan):
 def _note_not_carried(plan, project_uuid, report):
     """D9, after the creation: a file the script names and the archive lacks
     is ``missing`` (a row with no media) or ``from_library`` (linked to the
-    library's file of that name). When ``new()`` gave one of this import's
-    files that very name, it is a warning instead (D8)."""
+    library's file of that name), under the name the library would hold
+    (D7), with a rename when that differs from the script's. When ``new()``
+    gave one of this import's files that very name, it is a warning instead
+    (D8)."""
     registered = set(report['media']['added'])
     links = {r.media_filename: r.media_id for r in
              ProjectMedia.select().where(ProjectMedia.project == project_uuid)}
-    for name in plan.missing:
+    for source in plan.missing:
+        name = plan.library[source]
+        if name != source:
+            report['media']['renamed'].append({'from': source, 'to': name})
+            Logger.info(f'import: renamed {source} to {name}')
         if name in registered:
             report['warnings'].append(
                 f'{name}: the script names it for a file the archive does not carry, and a file '
