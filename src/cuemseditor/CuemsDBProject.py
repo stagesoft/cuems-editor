@@ -40,6 +40,8 @@ EXPORT_RESERVE_FRACTION = 10
 EXPORT_CONF_PATH = '/etc/apache2/conf-enabled/cuems-exports.conf'
 
 _GIB = 1024 ** 3
+#: The longest name a script may carry (``script.xsd``, 1 to 60 characters, N3).
+SCRIPT_NAME_MAX = 60
 #: Exports running in this process: token -> [bytes to write, its .part path].
 #: They take room the filesystem has not yet lost, so the refusal counts them.
 _exports_lock = threading.Lock()
@@ -1201,6 +1203,71 @@ class CuemsDBProject(StringSanitizer):
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
 
+    def import_project(self, data, unix_name, name):
+        """Create the project of an imported archive (1amfwm7kcjp, D10, D11).
+
+        *data* is the archive's script as read and checked by
+        ``CuemsProjectImport``, its Media blocks already pointing at the
+        library's files; *unix_name* is the archive's top folder and *name*
+        the script's name. Unlike :meth:`new`, a taken pair is not an error:
+        the first free one of ``<unix_name>-NNN`` / ``<name> (N)`` is taken, as
+        :meth:`duplicate` does, the name cut to fit the script's 60 characters
+        (N3). The project gets a new uuid and the dates of now; the save gates
+        are not applied (the importer reports what they would refuse), and a
+        file the library does not have is a relation with no media (D9).
+
+        The duration fill and its probes run first, with no transaction open,
+        as in :meth:`new`; then one short transaction holds the pair, the
+        row, the folder, the relations and the script (round 2, row 3).
+
+        Returns:
+            ``(uuid, unix_name, name)`` of the project created.
+        """
+        if not unix_name or StringSanitizer.sanitize_dir_permit_increment(unix_name) != unix_name:
+            raise ValueError(f'not a project folder name: {unix_name!r}')
+        project_uuid = str(new_uuid())
+        now = new_datetime()
+        script = data['CuemsScript']
+        script['id'] = project_uuid
+        script['created'] = now
+        script['modified'] = now
+        self._fix_media_durations(data)
+
+        folder = None
+        with self.db.atomic() as transaction:
+            try:
+                unix_name, name = self._free_import_pair(unix_name, name)
+                script['name'] = name
+                project_object = CuemsParser(data).parse()
+                project = Project.create(uuid=project_uuid, unix_name=unix_name, name=name,
+                                         description=StringSanitizer.sanitize_text_size(script.get('description')),
+                                         created=now, modified=now)
+                os.mkdir(os.path.join(self.projects_path, unix_name))
+                folder = os.path.join(self.projects_path, unix_name)
+                self.add_media_relations(project, project_object, allow_missing=True)
+                self.save_xml(unix_name, project_object)
+                return project_uuid, unix_name, name
+            except Exception as e:
+                transaction.rollback()
+                Logger.error("error: {} {}; trying to import a project, rolling back database insert".format(type(e), e))
+                if folder is not None and os.path.isdir(folder):
+                    shutil.rmtree(folder)
+                raise e
+
+    def _free_import_pair(self, unix_name, name):
+        """The first ``(unix_name, name)`` free on disk and in the database
+        (trash included): as given, then ``-NNN`` and `` (N)`` together, as
+        :meth:`duplicate` does; the name cut to :data:`SCRIPT_NAME_MAX` (D10)."""
+        candidate_unix, candidate_name = unix_name, name
+        i = 0
+        while (os.path.lexists(os.path.join(self.projects_path, candidate_unix))
+               or not self._is_name_available(candidate_unix, candidate_name)):
+            i += 1
+            suffix = f' ({i})'
+            candidate_unix = f'{unix_name}-{i:03d}'
+            candidate_name = name[:SCRIPT_NAME_MAX - len(suffix)].rstrip() + suffix
+        return candidate_unix, candidate_name
+
     def export(self, uuid):
         """Write a project and its media into one stored zip in the exports folder.
 
@@ -1632,17 +1699,25 @@ class CuemsDBProject(StringSanitizer):
             'total_files': total,
         }
 
-    def add_media_relations(self, project, project_object):
+    def add_media_relations(self, project, project_object, allow_missing=False):
         """Create ``ProjectMedia`` join rows for all media referenced by *project_object*.
 
         Args:
             project: ``Project`` ORM instance.
             project_object: ``CuemsScript`` object whose ``get_media_filenames()``
                 returns the set of ``unix_name`` strings to link.
+            allow_missing: ``True`` (the import, 1amfwm7kcjp D9): a file the
+                library does not know gets a row with no media and its name,
+                the state a delete for good leaves, healed by a later upload
+                of that name. ``False`` (default): such a file raises, as
+                before.
         """
         media_filenames_list = project_object.get_media_filenames()
         for media_name in media_filenames_list:
-            media = Media.get(Media.unix_name == media_name)
+            if allow_missing:
+                media = Media.get_or_none(Media.unix_name == media_name)
+            else:
+                media = Media.get(Media.unix_name == media_name)
             ProjectMedia.create(project=project, media=media, media_filename=media_name)
 
     def update_media_relations(self, project, project_object):

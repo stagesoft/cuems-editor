@@ -34,6 +34,23 @@ class ExportError(CuemsWsServerError):
     """
 
 
+class ProjectImportError(CuemsWsServerError):
+    """Raised when a project import is refused or interrupted (1amfwm7kcjp).
+
+    The ``str()`` is one line shown to the operator as it is: one of the
+    texts I1 to I9 of the import (``cuemseditor.CuemsProjectImport``).
+    ``report`` is the import's report so far (what was added, reused, ...)
+    when the failure came after something was written, else ``None``.
+
+    Never named ``ImportError``: this module is star-imported, and that name
+    would hide Python's own.
+    """
+
+    def __init__(self, text, report=None):
+        super().__init__(text)
+        self.report = report
+
+
 class NotTimeCodeError(CuemsWsServerError):
     """Raised when a string cannot be parsed as a valid CueMS timecode.
 

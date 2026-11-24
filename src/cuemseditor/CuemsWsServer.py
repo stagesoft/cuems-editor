@@ -13,6 +13,7 @@ import signal
 from random import randint  #TODO: clean unused
 from hashlib import md5
 import re
+import secrets
 
 from cuemsutils.log import logged, Logger
 
@@ -21,10 +22,79 @@ from cuemseditor.CuemsWsUser import CuemsWsUser
 from cuemseditor.CuemsUpload import CuemsUpload
 from cuemseditor.CuemsErrors import *
 
+from cuemseditor import CuemsProjectImport
+
 from cuemsutils.tools.CommunicatorServices import Communicator
 from cuemsutils.tools.ConfigManager import ConfigManager
 from cuemsutils.xml import NetworkMap
 from cuemsutils.create_script import create_script, new_uuid
+
+#: The clock of the import tickets (tests replace it).
+import_clock = time.monotonic
+
+
+class ImportTicket:
+    """What the guard of an import left in the slot (1amfwm7kcjp, D3, D5)."""
+
+    def __init__(self, ticket, size, accept_loaded, owner, stamp):
+        self.ticket = ticket
+        self.size = size
+        self.accept_loaded = accept_loaded
+        self.owner = owner              # the user session that passed the guard
+        self.stamp = stamp              # import_clock() when it was taken
+
+
+class ImportSlot:
+    """The one import slot of the editor (D5: one import at a time).
+
+    ``take`` gives a ticket of 32 hex characters, or raises I1 while the slot
+    is held; ``claim`` hands the record to the ``/upload`` session that
+    brings that ticket and the announced size, once; an unclaimed ticket
+    older than ``CuemsProjectImport.TICKET_TTL_S`` is void and frees the
+    slot; a claimed one holds it until ``release``. Used from the event loop
+    only.
+    """
+
+    def __init__(self):
+        self._record = None
+        self._claimed = False
+
+    def _expire(self):
+        if (self._record is not None and not self._claimed
+                and import_clock() - self._record.stamp >= CuemsProjectImport.TICKET_TTL_S):
+            Logger.info('import ticket expired unused: the slot is free')
+            self._record = None
+
+    @property
+    def busy(self):
+        self._expire()
+        return self._record is not None
+
+    def take(self, size, accept_loaded, owner):
+        if self.busy:
+            raise ProjectImportError(CuemsProjectImport.I1)
+        ticket = secrets.token_hex(16)
+        self._record = ImportTicket(ticket, size, accept_loaded, owner, import_clock())
+        self._claimed = False
+        return ticket
+
+    def claim(self, ticket, size):
+        """The record for *ticket* and *size*, once; ``None`` when the ticket
+        is unknown, used or expired, or the size is another (D1, I6)."""
+        self._expire()
+        record = self._record
+        if (record is None or self._claimed or not isinstance(ticket, str)
+                or not secrets.compare_digest(ticket.encode('ascii', 'replace'),
+                                              record.ticket.encode('ascii'))
+                or type(size) is not int or size != record.size):
+            return None
+        self._claimed = True
+        return record
+
+    def release(self, ticket):
+        if self._record is not None and self._record.ticket == ticket:
+            self._record = None
+            self._claimed = False
 
 
 class CuemsWsServer():
@@ -82,6 +152,7 @@ class CuemsWsServer():
         self.engine_messages = list()
         self.users = dict()
         self.sessions = dict()
+        self.import_slot = ImportSlot()   # 1amfwm7kcjp: one import at a time
         self.settings_dict = settings_dict
         self.mappings_dict = mappings_dict
         self.initital_template = create_script()

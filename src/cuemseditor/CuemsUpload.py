@@ -13,6 +13,7 @@ from cuemsutils.log import logged, Logger
 from cuemsutils.tools.StringSanitizer import StringSanitizer
 
 from cuemseditor.CuemsErrors import *
+from cuemseditor.CuemsProjectImport import ImportSession, is_project_upload
 
 
 class CuemsUpload(StringSanitizer):
@@ -46,6 +47,7 @@ class CuemsUpload(StringSanitizer):
     bytes_received = 0
     filesize = 0
     file_handle = None
+    import_ended = False
 
     def __init__(self, server, websocket):
         """Bind the upload session to *server* and *websocket*.
@@ -72,6 +74,8 @@ class CuemsUpload(StringSanitizer):
                 message = await self.websocket.recv()
                 if isinstance(message, str):
                     await self.process_upload_message(message)
+                    if self.import_ended:
+                        break    # an import's socket serves one import only
                 elif isinstance(message, bytes):
                     await self.process_upload_packet(message)
             except (ws.exceptions.ConnectionClosed, ws.exceptions.ConnectionClosedOK, ws.exceptions.ConnectionClosedError):
@@ -105,6 +109,12 @@ class CuemsUpload(StringSanitizer):
         if 'action' not in data:
             return False
         if data['action'] == 'upload':
+            if is_project_upload(data.get('value')):
+                # A project archive (1amfwm7kcjp, D1): the import session owns
+                # the socket from here to its end; the media path is not used.
+                await ImportSession(self.server, self.websocket).run(data['value'])
+                self.import_ended = True
+                return
             await self.set_upload(file_info=data["value"])
 
     async def set_upload(self, file_info):

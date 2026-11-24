@@ -10,8 +10,12 @@ import sys
 
 from cuemsutils.log import logged, Logger
 
-from cuemseditor.CuemsErrors import EngineError, NonExistentItemError
+from cuemseditor.CuemsErrors import EngineError, NonExistentItemError, ProjectImportError
 from cuemseditor.CuemsMediaRefresh import check_media_on_open, refresh_media_before_load
+from cuemseditor import CuemsProjectImport
+# The rule of D3 (1amfwm7kcjp), one function for the guard and every later
+# check; it lives beside the import's texts and is named here as well.
+from cuemseditor.CuemsProjectImport import import_refusal
 
 TIMEOUT = 25  # TODO: make it configurable, or get from settings
 
@@ -126,6 +130,7 @@ class CuemsWsUser():
                     "project_list": lambda: self.list_project(action),
                     "project_duplicate": lambda: self.request_duplicate_project(value, action),
                     "project_export": lambda: self.request_export_project(value, action, data.get("accept_loaded")),
+                    "project_import": lambda: self.request_import_project(value, action, data.get("accept_loaded")),
                     "file_list": lambda: self.list_file(action),
                     "project_trash_list": lambda: self.list_project_trash(action),
                     "file_trash_list": lambda: self.list_file_trash(action),
@@ -815,6 +820,55 @@ class CuemsWsUser():
         except Exception as e:
             Logger.error("error: {} {}".format(type(e), e))
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
+
+    async def request_import_project(self, value, action, accept_loaded=None):
+        """The guard of a project import (1amfwm7kcjp, D3, D5, D6): asked before
+        a byte is uploaded; its answer is a one-use ticket for ``/upload``.
+
+        *value* is ``{"size": <bytes of the zip>, "name": <file name, for the
+        journal only>}``. The show is protected always: the engine is asked
+        its status and the rule of D3 applied (:func:`import_refusal`);
+        nothing is stopped, unloaded or touched. Then the zip must fit in the
+        staging folder with the reserve to spare (D6), and the one import slot
+        must be free (I1). Every refusal is an action error with its text.
+        """
+        try:
+            size = value.get('size') if isinstance(value, dict) else None
+            if type(size) is not int or size <= 0:
+                outcome = 'Import refused: the size of the archive is not a positive number of bytes'
+            else:
+                outcome = await self._import_guard(size, accept_loaded)
+            if isinstance(outcome, str):
+                Logger.warning(f'import refused: {outcome}')
+                await self.notify_error_to_user(outcome, action=action)
+                return
+            status, ticket = outcome
+            if status == 'loaded':
+                Logger.warning('import accepted while a project is loaded')
+            Logger.info(f"user {id(self.websocket)} importing {value.get('name')!r}, {size} bytes")
+            await self.outgoing.put(json.dumps({"type": action, "value": {
+                "ticket": ticket, "expires_s": CuemsProjectImport.TICKET_TTL_S}}))
+        except Exception as e:
+            Logger.error("error: {} {}".format(type(e), e))
+            await self.notify_error_to_user(str(e), action=action)
+
+    async def _import_guard(self, size, accept_loaded):
+        """The refusal text, or ``(status, ticket)`` when the import may start."""
+        status = await self._engine_status()
+        refusal = import_refusal(status, accept_loaded)
+        if refusal is not None:
+            return refusal
+        try:
+            root = CuemsProjectImport.ensure_staging_root(self.server.settings_dict)
+        except ProjectImportError as e:
+            return str(e)
+        refusal = CuemsProjectImport.space_refusal(root, size)
+        if refusal is not None:
+            return refusal
+        try:
+            return status, self.server.import_slot.take(size, accept_loaded is True, self)
+        except ProjectImportError as e:
+            return str(e)
 
     async def request_restore_project(self, project_uuid, action):
         """Restore a trashed project and notify the client and other users.

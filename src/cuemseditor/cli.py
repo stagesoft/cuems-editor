@@ -20,6 +20,9 @@ import os
 import uuid
 import json
 import argparse
+import re
+import shutil
+import stat
 
 # Add src directory to path for development (when not installed)
 if __name__ == '__main__' and __package__ is None:
@@ -57,6 +60,9 @@ def get_settings():
     settings_dict['export_folder_name'] = 'exports'
     # Present only while apache serves /exports; export() refuses without it.
     settings_dict['export_conf_path'] = '/etc/apache2/conf-enabled/cuems-exports.conf'
+    # The import's staging folder, <library_path>/.import: on the library's
+    # filesystem, 0700, emptied at start (1amfwm7kcjp, D5 (b)).
+    settings_dict['import_folder_name'] = '.import'
     return settings_dict
 
 
@@ -78,6 +84,48 @@ def ensure_directories(settings_dict):
         Logger.error(f"Error creating tmp folder: {type(e).__name__}: {e}")
         raise
     sweep_export_parts(settings_dict)
+    sweep_import_staging(settings_dict)
+
+
+#: The folders an import makes in the staging root (``CuemsProjectImport.make_staging``).
+_IMPORT_FOLDER = re.compile(r'import-[0-9a-f]+')
+
+
+def sweep_import_staging(settings_dict):
+    """Make the import's staging root 0700 and remove what an import that died
+    left in it (1amfwm7kcjp, D5 (b), review row 9).
+
+    The root is ``lstat``-ed: a link (or anything but a folder) in its place is
+    left alone and logged, and the editor still starts; imports are then
+    refused. Only children named ``import-<hex>`` are removed, each logged; a
+    child that is a link is unlinked, never followed, and ``shutil.rmtree``
+    does not follow the links inside a folder. Never raises.
+    """
+    root = os.path.join(settings_dict['library_path'], settings_dict['import_folder_name'])
+    try:
+        try:
+            st = os.lstat(root)
+        except FileNotFoundError:
+            os.mkdir(root, 0o700)
+            os.chmod(root, 0o700)
+            Logger.info(f"Created the import staging folder: {root}")
+            return
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+            Logger.error(f"The import staging folder {root} is not a folder (a link or a file): "
+                         "left alone; imports are refused until it is removed")
+            return
+        if stat.S_IMODE(st.st_mode) != 0o700:
+            os.chmod(root, 0o700)
+        with os.scandir(root) as entries:
+            leftovers = [e for e in entries if _IMPORT_FOLDER.fullmatch(e.name)]
+        for entry in leftovers:
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path)
+            else:
+                os.unlink(entry.path)
+            Logger.info(f"Removed an unfinished import: {entry.path}")
+    except Exception as e:
+        Logger.error(f"Error sweeping the import staging folder {root}: {type(e).__name__}: {e}")
 
 
 def sweep_export_parts(settings_dict):
