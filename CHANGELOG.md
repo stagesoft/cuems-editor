@@ -4,6 +4,18 @@
 
 # Changelog
 
+## Unreleased — project import (1amfwm7kcjp)
+
+Project import: the counterpart of the export (ClickUp 1amfwm7kcjp). Released together with the export (1amfwm7kana), whose archive it reads; the contract is `docs/project-archive.md`, section 8.
+
+### Added
+- `project_import` (the guard) and the `/upload` first frame with `"type": "PROJECT"` and a one-use ticket: the browser uploads the zip that Export made and the editor recreates the project and its media in the library. The show is protected always: a running show refuses, a loaded project needs `"accept_loaded": true`, and the rule is asked again when the upload ends, before each file and before the project is created.
+- `CuemsProjectImport`: checks the archive with no write to the library (the zip's directory bounded in bytes, the script through the defused parser and the box's schema, every entry read to its CRC), registers each media file through `CuemsDBMedia.new` (reusing a file of the same size and MD5, renaming on another content, taking a capital name to the library name as the upload does), creates the project under a new uuid and a free name, and answers with progress frames and a report. An import only adds; a failure keeps what was added and says so (I9).
+- `CuemsDBProject.import_project`, `add_media_relations(allow_missing=True)` (a file the library does not have becomes a relation with no media, healed by a later upload), `CuemsWsServer.ImportSlot` (one import at a time), `ProjectImportError`, and a staging folder `<library>/.import/` made 0700 and swept at start.
+
+### Known limit
+- `CuemsDBMedia.new` holds one database transaction across a file's sidecars (ClickUp 1amfwm7kcwk): a save from another session that lands in that window makes the registration fail, as it already does for an upload. Measured on .111, 1.05 GB: a 4.7 s window.
+
 ## Unreleased — project export (1amfwm7kana)
 
 Project export reaches the browser on an installed controller (ClickUp 1amfwm7kana). Released together with cuems-common, which creates, serves (`Alias /exports`) and cleans (one day) `/var/lib/cuems/exports`; the editor does not work without it.

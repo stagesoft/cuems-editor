@@ -45,6 +45,16 @@ Commands 													 ->	Responses
 	  not enough room                  -> "No space to export \"<name>\": needs <X> GiB, <Y> GiB free in <folder>, <R> GiB kept in reserve"  (R = the larger of 5 GiB and a tenth of the filesystem)
 	  a media file changed while zipped-> "Media file <name> changed while it was exported: export again"
 
+{"action" : "project_import", "value" : {"size": zip_bytes, "name": "file.zip"}}	->  {"type": "project_import", "value": {"ticket": "<32 hex>", "expires_s": 60}}   (1amfwm7kcjp)
+{"action" : "project_import", "value" : {...}, "accept_loaded" : true}	->  the same; "accept_loaded" is optional, only the JSON true accepts
+	The guard of an import, before a byte is uploaded: the engine is asked, nothing is stopped or unloaded. Errors are {"type": "error", "action": "project_import", "value": text}:
+	  running                          -> "A show is running: stop it before importing a project"  (with or without accept_loaded)
+	  the engine does not answer       -> "Cannot check whether a show is running (the engine does not answer): nothing was imported"
+	  loaded, no accept_loaded: true   -> "A project is loaded and waiting for GO: an import writes the whole project to disk and builds its previews, and can make the next GO late. Accept the warning in the import dialog to go on"
+	  another import in progress       -> "Another import is in progress: wait for it to end"
+	  no room (the export's reserve)   -> "No space to import: needs <X> GiB, <Y> GiB free in <folder>, <R> GiB kept in reserve"
+	The ticket is used on /upload, below. The whole contract (checks, report, texts I1 to I9): docs/project-archive.md, section 8.
+
 {"action" : "file_list"}  										->  {"type": "file_list", "value": "file_list_json"}
 {"action" : "file_load_meta", "value" : "file_uuid"}  			->  {"type": "file_load_meta", "value": "file_metadata_json"}
 {"action" : "file_load", "value" : "file_uuid"}  				->  { Binary Message }
@@ -158,3 +168,13 @@ media_check_report (869fat84r D20, cuems-RELATIONS Plans/2026-10-01-engine-late-
 SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
 SPDX-License-Identifier: GPL-3.0-or-later
 SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
+
+/upload   (1amfwm7kcjp: an import of a project archive; the media upload above is unchanged)
+
+{"action" : "upload", "value" : {"name": "file.zip", "size": zip_bytes, "type": "PROJECT", "ticket": "<32 hex>"}}	->  {"ready": true}
+	binary frames (at most 500 000 bytes), each answered {"ready": true}; then {"action": "finished", "value": "<md5 hex of the whole zip>"}
+	while it works:  {"progress": {"phase": "check|media|project", "done": n, "total": n, "name": "file"}}  at least every 5 s
+	at the end:      {"imported": report}  then  {"close": true}   (the success is "imported", not "finished")
+	a failure:       {"error": text, "fatal": true}, with a "report" key beside it once something was written; no or a bad ticket: "Import refused: start it again from the project list"
+	report = {"project": {"uuid", "name", "unix_name", "renamed"}, "media": {"added", "reused", "renamed": [{"from","to"}], "missing", "from_library"}, "sidecars_failed": [{"name","what"}], "relinked": [{"project","name"}], "ignored", "warnings"}
+	The other sessions get {"type": "list_update", "value": "file_list"} after each file registered and "project_list" at the end.

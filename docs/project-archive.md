@@ -11,7 +11,7 @@ also listed in `tests/ws-command-responses.txt`.
 | Part | Owner | State |
 |---|---|---|
 | 1 to 7 (the archive, its messages, what is frozen) | the export (ClickUp 1amfwm7kana) | written from the code and measured on rigs on 2026-11-24 |
-| 8 (what the importer needs and how it reads) | the import (ClickUp 1amfwm7kcjp) | **to be written by that task**; its plan is `cuems-RELATIONS/Plans/2026-11-24-project-import-from-zip.md` |
+| 8 (what the importer checks, reads and does; its messages) | the import (ClickUp 1amfwm7kcjp) | written from the code of the import branch, 2026-11-25; its plan is `cuems-RELATIONS/Plans/2026-11-24-project-import-from-zip.md` |
 
 **Evidence tags.** `[code]` read in this repo at the symbol named; `[rig]` measured on rig .111 or `test` on 2026-11-24
 (logs in `cuems-RELATIONS/baselines/1amfwm7kana/runs/`); `[casas]` measured on the workstation; `[infiero]` inferred, not verified.
@@ -96,11 +96,103 @@ Refusals and failures arrive as `{"type":"error","uuid":"<project uuid>","action
 
 | Wire | Producer (code) | Consumer (code) |
 |---|---|---|
-| The archive | `CuemsDBProject.export`, `_zip_add_file` | `CuemsProjectImport` (task 1amfwm7kcjp; to be filled in by it) |
+| The archive | `CuemsDBProject.export`, `_zip_add_file` | `CuemsProjectImport.open_archive`, `import_archive` (section 8) |
 | `project_export` request and answer | `CuemsWsUser.request_export_project`, dispatch line `"project_export"` | cuems-frontend `src/app/services/media/export.service.ts` (`exportProject`, `processServerResponse`) |
 | The refusal texts E1 to E6 | `CuemsDBProject.export` (E1, E2, E6), `CuemsWsUser.request_export_project` (E3, E4, E5) | `src/app/services/websocket.service.ts` and the app-level error handler show them as they are |
-| `_engine_status()` | `CuemsWsUser._engine_status` | the import's guard handshake (task 1amfwm7kcjp) |
+| `_engine_status()` | `CuemsWsUser._engine_status` | the import's guard (`CuemsWsUser._import_guard`) and every later check (`CuemsProjectImport.ImportSession._status`, `import_archive`) |
+| `project_import` request and answer (the guard) | cuems-frontend `import.service.ts` (step 4 of the import plan) | `CuemsWsUser.request_import_project`, dispatch line `"project_import"`; the ticket from `CuemsWsServer.ImportSlot` |
+| `/upload`, first frame with `type: "PROJECT"`, then the archive's bytes | cuems-frontend `import.service.ts` | `CuemsUpload.process_upload_message` hands the socket to `CuemsProjectImport.ImportSession.run` |
+| `progress`, `imported` and the fatal `error` with a `report`, on that socket | `CuemsProjectImport.ImportSession` | cuems-frontend `import.service.ts` |
 
 ## 8. Import requirements (the reader's side)
 
-To be written by the import task (1amfwm7kcjp): what the reader checks in the archive, how it reads Stored and Deflated entries and zip64, what it does with missing media, a uuid or name that already exists, and a failed import; and the code that reads, for the rows of section 7.
+Written from the code of the import branch (ClickUp 1amfwm7kcjp); `[code]` below means the symbol named, in
+`cuemseditor/CuemsProjectImport.py` unless another file is given. Design and decisions D1 to D18 are in the plan.
+
+**Principles.** The show is protected always (a running show is never touched); nothing is written to the library until
+the whole archive has been checked; an import only **adds** (it never deletes, overwrites or moves a file or a row that
+existed, and takes nothing out of the trash); a failure leaves what was added and says so.
+
+### 8.1 The two steps on the wire
+
+1. **The guard**, on the user's session: `{"action":"project_import","value":{"size":<bytes of the zip>,"name":"<file name>"},"accept_loaded":true}`
+   (`accept_loaded` optional; only the JSON `true` accepts) `[code]` `CuemsWsUser.request_import_project`. The editor
+   asks the engine (`_engine_status()`, the export's, unchanged) and applies the rule of D3 (`import_refusal`):
+   `running` is refused (also with the acceptance), no usable answer is refused, `loaded` needs `accept_loaded: true`,
+   `none` goes on. Then it checks the space (`space_refusal`: the staging folder's filesystem keeps the export's
+   reserve, the larger of 5 GiB and a tenth) and takes the one import slot (`CuemsWsServer.ImportSlot.take`). Answer:
+   `{"type":"project_import","value":{"ticket":"<32 hex>","expires_s":60}}`; a refusal is the existing action error
+   `{"type":"error","action":"project_import","value":<text>}`.
+2. **The upload**, on `/upload`: first frame `{"action":"upload","value":{"name","size","type":"PROJECT","ticket"}}`
+   (`size` equal to the guard's, `ticket` one use, void unused after 60 s; without `type` the frame is a media upload as
+   always) `[code]` `CuemsUpload.process_upload_message` → `ImportSession.run`. Then, as for a media upload: the editor
+   answers `{"ready": true}`, each binary frame (at most 500 000 bytes, the socket's limit being 1 048 576) is answered
+   `{"ready": true}`, and `{"action":"finished","value":"<md5 hex of the whole zip>"}` ends the transfer. The editor
+   compares the size and the MD5 (I7), asks the rule of D3 again (D4), and imports.
+
+While it works the editor sends `{"progress":{"phase","done","total","name"}}` (`phase` is `check` in bytes, `media` in
+files or `project`) at least every 5 s (`HEARTBEAT_S`, a timer of the session's own). It ends with
+`{"imported":<report>}` then `{"close": true}`. A failure is `{"error":<text>,"fatal":true}`, with a `"report"` key beside
+it once something was written. The socket serves one import and is closed after it. A frontend must treat `imported`,
+not `finished`, as the success.
+
+### 8.2 What the reader checks (no write to the library up to the end of this list)
+
+All of it is `import_archive` → `_check` and what it calls; a refusal is I8a (`Not a project archive made by Export:
+<reason>`), the script's schema being I8b.
+
+| Check | Rule | `[code]` |
+|---|---|---|
+| The zip's directory | the byte size the end record gives (`MAX_DIRECTORY_BYTES`, 4 MiB) and the real number of records (`MAX_ENTRIES`, 10 000) are bounded **before** `ZipFile` builds anything, whatever count the end record declares | `open_archive`, `_read_directory`, `_count_records` |
+| Entries | one top folder named as the library's sanitiser would keep it; `<top>/script.xml` once; `<top>/media/<name>` for each name the script lists; a name with `..`, an absolute name or a backslash, a symlink, an encrypted entry or a method other than Stored (0) or Deflated (8) refuses the whole archive; sizes that overlap or add up to more than the zip, and a CRC32 that fails (every used entry is read to its end), refuse it | `_check_entry`, `_check_sizes`, `_top_folder`, `_copy_entry` |
+| Ignored, and listed in the report | directory entries, `__MACOSX/`, `.DS_Store`, `Thumbs.db` and any entry the script does not name | `_is_noise`, `report["ignored"]` |
+| The script | one file, at most `MAX_SCRIPT_BYTES` (64 MiB), read through the defused parser (a `DOCTYPE` or an entity is I8a), validated by the box's schema (cuems-utils; a schema failure is I8b with the version and the reason), parsed and serialised once; the save-time gates (zero fade, media cue without a file) are **not** applied: what they would refuse is listed under `warnings` | `_read_script`, `_gate_warnings` |
+| Media names | refused: empty, `.`, `..`, a separator, a control character, more than 255 bytes in UTF-8, or a name with no known media type. A name with capitals is **accepted** and taken to the name the library holds (as the upload does: `CuemsUpload.py:129`), reported as a rename; a name already lower-case and made of alphanumerics, `.`, `_`, `-` and U+0307 is kept. The archive is refused if the library name is empty, `.` or `..`, or if two used names share one (`A.wav` + `a.wav`) | `media_name_problem`, `library_name`, `_match_media` |
+| Space | the exact bytes to be added against the library's filesystem and the reserve (I2) | `_check_space` |
+
+### 8.3 What it does
+
+Per media file named by the script (`_decide`, D8; `_register`):
+
+| Case | Result | Report |
+|---|---|---|
+| the archive carries it and the library has no file of that name | registered through `CuemsDBMedia.new` (moved into `media/`, sidecars built, row created) | `media.added` |
+| the library has a live file of that name with the same size and MD5 (or, under that name with the `-NNN` that `new()` adds) | reused, nothing written; a row with no `file_md5` is compared by hashing the library's file once, read only | `media.reused` |
+| the library has another file of that name, or the name is only in the trash | registered under the free name `new()` picks; the script's `file_name` and `id` follow | `media.added` and `media.renamed` `{from, to}` |
+| the script names it and the archive does not carry it | the project gets a relation with **no media** (the state a delete for good leaves, healed by a later upload of that name); if the library has a file of that name it is linked | `media.missing`, `media.from_library` |
+
+Then the project (`CuemsDBProject.import_project`, D10): a **new uuid**, the dates of now, and the first free pair
+`<unix_name>` / `<name>` (a taken pair gets `-NNN` and ` (N)`, the name cut to the schema's 60 characters); the probes
+that fill the media durations run before the one short transaction that writes the row, the folder, the relations and
+`script.xml`. Other projects whose dangling relation a new file satisfies are relinked first, best effort, as an upload
+does (`_relink`, `report.relinked`). The other sessions get `list_update` for `file_list` after each registration and
+for `project_list` at the end (and after a relink changed a project).
+
+**The report**, in `{"imported": ...}` and beside a fatal error:
+`{"project":{"uuid","name","unix_name","renamed"},"media":{"added":[],"reused":[],"renamed":[{"from","to"}],"missing":[],"from_library":[]},"sidecars_failed":[{"name","what"}],"relinked":[{"project","name"}],"ignored":[],"warnings":[]}`;
+`what` is one of `thumbnail`, `waveform`, `index`, `period`; `project.renamed` is a boolean.
+
+### 8.4 A failure
+
+The staging folder (`<library>/.import/import-<hex>/`, 0700, on the library's filesystem) is removed in a `finally` and
+swept at editor start (`cli.sweep_import_staging`); the slot is freed in a `finally`. A failure after the first file was
+registered is I9 with the report so far: **what was added stays** (the files, their rows and sidecars) and the project is
+not created; importing the same archive again reuses what was added. A show that starts, or a project that is loaded
+without the operator's acceptance, between two files stops the import at the next check (D4). A hard kill of the editor
+in the move-to-row window of `CuemsDBMedia.new` leaves a file with no row (the documented limit of ClickUp 1amfwm7kcwk):
+the next import stores it again as `<base>-001<ext>`.
+
+### 8.5 The texts
+
+| Code | When | Text (symbol) |
+|---|---|---|
+| I1 | another import holds the slot | `Another import is in progress: wait for it to end` (`I1`) |
+| I2 | the reserve would be broken, at the guard or after the checks | `No space to import: needs <X> GiB, <Y> GiB free in <folder>, <R> GiB kept in reserve` (`no_space_text`) |
+| I3 | the engine says `running` | `A show is running: stop it before importing a project` (`I3`) |
+| I4 | the engine does not answer | `Cannot check whether a show is running (the engine does not answer): nothing was imported` (`I4`) |
+| I5 | `loaded` and no `accept_loaded: true` | `A project is loaded and waiting for GO: an import writes the whole project to disk and builds its previews, and can make the next GO late. Accept the warning in the import dialog to go on` (`I5`) |
+| I6 | no valid ticket on `/upload` | `Import refused: start it again from the project list` (`I6`) |
+| I7 | the upload is not what was announced | `The upload is not complete or does not match: import again` (`I7`) |
+| I8a | the archive is refused | `Not a project archive made by Export: <reason>` (`I8A`, `_refused`) |
+| I8b | the script is refused by the schema | `This project's script is not valid for this controller (cuems-utils <version>): <reason>. If the archive comes from a newer version, update this controller first` (`schema_text`) |
+| I9 | a later check refuses, or a failure while adding | `Import interrupted: <the text of I3, I4 or I5, or the failure>. Nothing that existed was changed; media added: <names, or none>` (`interrupted_text`) |
