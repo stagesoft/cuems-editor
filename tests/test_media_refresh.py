@@ -99,6 +99,9 @@ def _settings(library):
     settings['library_path'] = library.root
     settings['tmp_path'] = os.path.join(library.root, 'tmp')
     settings['html_root_path'] = os.path.join(library.root, 'www')
+    # the apache conf that serves /exports (D21, 1amfwm7kana): a file stands for it
+    settings['export_conf_path'] = os.path.join(library.root, 'cuems-exports.conf')
+    open(settings['export_conf_path'], 'w').close()
     return settings
 
 
@@ -1104,4 +1107,7 @@ class TestReupload:
         _dangling(library, 'proj1', 'gone-forever.wav')
         os.makedirs(os.path.join(library.root, 'www', 'exports'), exist_ok=True)
         os.makedirs(os.path.join(library.root, 'tmp'), exist_ok=True)
-        assert _mgr(library).export(_uuid(library)).endswith('.zip')
+        # the refusal for want of room (D14) is not under test here
+        roomy = type('usage', (), {'total': 2 ** 40, 'used': 0, 'free': 2 ** 40})
+        with mock.patch.object(p.shutil, 'disk_usage', return_value=roomy):
+            assert _mgr(library).export(_uuid(library)).endswith('.zip')

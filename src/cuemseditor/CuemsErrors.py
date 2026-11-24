@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 class CuemsWsServerError(Exception):
     """Base exception for all cuems-editor errors.
 
@@ -19,6 +22,15 @@ class NonExistentItemError(CuemsWsServerError):
 
     Example:
         >>> raise NonExistentItemError("item with uuid: 1234-... does not exist")
+    """
+
+
+class ExportError(CuemsWsServerError):
+    """Raised when a project export is refused or cannot be completed.
+
+    The ``str()`` is one line shown to the operator as it is: the exports
+    folder or its apache conf is missing (E1), the disk would keep less than
+    the reserve (E2), or a media file changed while it was zipped (E6).
     """
 
 

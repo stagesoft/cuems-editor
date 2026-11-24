@@ -125,7 +125,7 @@ class CuemsWsUser():
                     "project_trash_delete": lambda: self.request_delete_project_trash(value, action),
                     "project_list": lambda: self.list_project(action),
                     "project_duplicate": lambda: self.request_duplicate_project(value, action),
-                    "project_export": lambda: self.request_export_project(value, action),
+                    "project_export": lambda: self.request_export_project(value, action, data.get("accept_loaded")),
                     "file_list": lambda: self.list_file(action),
                     "project_trash_list": lambda: self.list_project_trash(action),
                     "file_trash_list": lambda: self.list_file_trash(action),
@@ -373,6 +373,24 @@ class CuemsWsUser():
             return None
         status = result.get('status') if isinstance(result, dict) else None
         return {'running': True, 'none': False}.get(status)
+
+    async def _engine_status(self):
+        """The engine's ``project_status`` word: ``'running'``, ``'loaded'`` or
+        ``'none'``; ``None`` when it does not answer or says anything else.
+
+        ``_engine_running`` maps ``loaded`` to ``None`` (the media check treats
+        it as "no answer", 1amfwm7kc5g); the export guard needs the word.
+        """
+        action_uuid = str(new_uuid())
+        command = {"action": "project_status", "action_uuid": action_uuid}
+        try:
+            result = await self.comunicate_with_engine('project_status', action_uuid, command,
+                                                       query_mode=True)
+        except Exception as e:
+            Logger.info(f'project_status before an export: {e}')
+            return None
+        status = result.get('status') if isinstance(result, dict) else None
+        return status if status in ('running', 'loaded', 'none') else None
 
     async def hw_discovery(self, action):
         """Ask the engine to run a hardware discovery scan.
@@ -763,8 +781,34 @@ class CuemsWsUser():
             Logger.error("error: {} {}".format(type(e), e))
             await self.notify_error_to_user(str(e), uuid=project_uuid, action=action)
 
-    async def request_export_project(self, project_uuid, action):
+    async def request_export_project(self, project_uuid, action, accept_loaded=None):
+        """Export a project to a zip, unless a show would be put at risk.
+
+        The show is protected always (1amfwm7kana, D17, D20): the engine is
+        asked its status first, and nothing is stopped, unloaded or touched.
+        ``running`` is refused; ``loaded`` (armed, waiting for GO) is refused
+        unless the request carries ``accept_loaded: true`` (only the JSON
+        ``true``), which the UI sends after the operator accepts the warning;
+        no usable answer is refused; ``none`` goes on.
+        """
         try:
+            status = await self._engine_status()
+            refusal = None
+            if status == 'running':
+                refusal = 'A show is running: stop it before exporting a project'
+            elif status is None:
+                refusal = ('Cannot check whether a show is running (the engine does not '
+                           'answer): nothing was exported')
+            elif status == 'loaded' and accept_loaded is not True:
+                refusal = ('A project is loaded and waiting for GO: an export reads the whole '
+                           'project from disk and can make the next GO late. Accept the warning '
+                           'in the export dialog to go on')
+            if refusal is not None:
+                Logger.warning("export of {} refused: {}".format(project_uuid, refusal))
+                await self.notify_error_to_user(refusal, uuid=project_uuid, action=action)
+                return
+            if status == 'loaded':
+                Logger.warning("export of {} accepted while a project is loaded".format(project_uuid))
             Logger.info("user {} exporting project: {}".format(id(self.websocket), project_uuid))
             exported_file_url = await self.server.event_loop.run_in_executor(self.server.executor, self.server.db.project.export, project_uuid)
             await self.outgoing.put(json.dumps({"type": action, "value": exported_file_url}))
