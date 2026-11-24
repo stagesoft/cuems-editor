@@ -6,7 +6,7 @@
 
 ``CuemsDBProject.export`` writes the zip straight from the library into the
 exports folder, stored, under a private ``.<unix_name>.XXXX.part`` name, and
-publishes it with ``os.link``. ``CuemsWsUser.request_export_project`` asks the
+replaces the project's previous export with it (``os.replace``). ``CuemsWsUser.request_export_project`` asks the
 engine first: ``running`` is refused, ``loaded`` needs the operator's
 ``accept_loaded: true``, no answer is refused, ``none`` goes on.
 
@@ -20,6 +20,7 @@ writer only, ``cuemseditor.CuemsDBProject._copy_stream(src, dst)``.
 import asyncio
 import collections
 import errno
+import io
 import json
 import os
 import re
@@ -232,16 +233,15 @@ def _two_at_once(env, monkeypatch, seam, name):
 class TestTwoAtOnce:
     def test_2_two_exports_meeting_at_prefetch_both_complete(self, env, monkeypatch):
         values = _two_at_once(env, monkeypatch, 'prefetch', 'prefetch')
-        assert sorted(values) == ['exports/proj1-001.zip', 'exports/proj1.zip']
-        assert env.listing() == ['proj1-001.zip', 'proj1.zip']
-        for n in env.listing():
-            _assert_complete(os.path.join(env.folder, n), env)
+        assert values == ['exports/proj1.zip', 'exports/proj1.zip']
+        assert env.listing() == ['proj1.zip']
+        _assert_complete(os.path.join(env.folder, 'proj1.zip'), env)
 
     def test_2b_two_exports_held_in_mid_copy_both_complete(self, env, monkeypatch):
         values = _two_at_once(env, monkeypatch, '_copy_stream', '_copy_stream')
-        assert sorted(values) == ['exports/proj1-001.zip', 'exports/proj1.zip']
-        for n in env.listing():
-            _assert_complete(os.path.join(env.folder, n), env)
+        assert values == ['exports/proj1.zip', 'exports/proj1.zip']
+        assert env.listing() == ['proj1.zip']
+        _assert_complete(os.path.join(env.folder, 'proj1.zip'), env)
         assert _leftovers(env.folder) == []
 
 
@@ -402,7 +402,7 @@ class TestReserve:
             finally:
                 release.set()
             first_value = fut.result(timeout=30)
-        assert sorted([first_value, second]) == ['exports/proj1-001.zip', 'exports/proj1.zip']
+        assert [first_value, second] == ['exports/proj1.zip', 'exports/proj1.zip']
         # nothing stays booked once both are done
         disk.free = need + reserve
         assert env.export().startswith('exports/proj1')
@@ -420,53 +420,62 @@ class TestReserve:
 
 
 # ---------------------------------------------------------------------------
-# (6) naming, (8) no link, (12) rows, (13) a file that changes
+# (6) an export replaces the previous one, (12) rows, (13) a file that changes
 # ---------------------------------------------------------------------------
 
 class TestPublishing:
-    def test_6_the_next_free_name_is_taken(self, env):
+    def test_6_an_export_replaces_the_previous_zip_of_the_project(self, env):
         for n in ('proj1.zip', 'proj1-001.zip'):
             with open(os.path.join(env.folder, n), 'wb') as f:
                 f.write(b'older')
-        assert env.export() == 'exports/proj1-002.zip'
-        assert open(os.path.join(env.folder, 'proj1.zip'), 'rb').read() == b'older'
+        assert env.export() == 'exports/proj1.zip'
+        _assert_complete(os.path.join(env.folder, 'proj1.zip'), env)
+        # a name that is not this project's current zip is not this export's
+        # business: the tmpfiles rule ages it out
         assert open(os.path.join(env.folder, 'proj1-001.zip'), 'rb').read() == b'older'
-        _assert_complete(os.path.join(env.folder, 'proj1-002.zip'), env)
-
-    def test_6_sixteen_threads_publishing_get_sixteen_names_each_intact(self, env):
-        with ThreadPoolExecutor(16) as pool:
-            values = [f.result(timeout=60) for f in [pool.submit(env.export) for _ in range(16)]]
-        assert len(set(values)) == 16
-        names = env.listing()
-        assert len(names) == 16 and _leftovers(env.folder) == []
-        for n in names:
-            _assert_complete(os.path.join(env.folder, n), env)
-
-    def test_8_without_hard_links_a_name_is_still_never_overwritten(self, env, monkeypatch):
-        with open(os.path.join(env.folder, 'proj1.zip'), 'wb') as f:
-            f.write(b'older')
-
-        def refuse(*a, **kw):
-            raise OSError(errno.EPERM, 'no hard links here')
-
-        monkeypatch.setattr(os, 'link', refuse)
-        assert env.export() == 'exports/proj1-001.zip'
-        assert open(os.path.join(env.folder, 'proj1.zip'), 'rb').read() == b'older'
-        path = os.path.join(env.folder, 'proj1-001.zip')
-        _assert_complete(path, env)
-        assert stat.S_IMODE(os.stat(path).st_mode) == 0o644
+        assert env.listing() == ['proj1-001.zip', 'proj1.zip']
         assert _leftovers(env.folder) == []
 
-    def test_8_without_hard_links_sixteen_threads_still_get_sixteen_names(self, env, monkeypatch):
-        def refuse(*a, **kw):
-            raise OSError(errno.EOPNOTSUPP, 'no hard links here')
+    def test_6_a_second_export_leaves_one_zip_and_it_is_complete(self, env):
+        assert env.export() == 'exports/proj1.zip'
+        assert env.export() == 'exports/proj1.zip'
+        assert env.listing() == ['proj1.zip']
+        _assert_complete(os.path.join(env.folder, 'proj1.zip'), env)
 
-        monkeypatch.setattr(os, 'link', refuse)
+    def test_6_a_download_in_flight_keeps_the_file_it_opened(self, env):
+        env.export()
+        path = os.path.join(env.folder, 'proj1.zip')
+        with open(path, 'rb') as reader:
+            head = reader.read(1024)
+            old_inode = os.fstat(reader.fileno()).st_ino
+            env.export()                                   # replaces the name while it reads
+            assert os.stat(path).st_ino != old_inode       # a new file now owns the name
+            tail = reader.read()                           # the open handle still reads the old file whole
+        assert zipfile.is_zipfile(io.BytesIO(head + tail))
+        _assert_complete(path, env)
+
+    def test_6_sixteen_threads_exporting_one_project_leave_one_complete_zip(self, env):
         with ThreadPoolExecutor(16) as pool:
             values = [f.result(timeout=60) for f in [pool.submit(env.export) for _ in range(16)]]
-        assert len(set(values)) == 16
-        for n in env.listing():
-            _assert_complete(os.path.join(env.folder, n), env)
+        assert set(values) == {'exports/proj1.zip'}
+        assert env.listing() == ['proj1.zip'] and _leftovers(env.folder) == []
+        _assert_complete(os.path.join(env.folder, 'proj1.zip'), env)
+
+    def test_6_the_replace_is_atomic_the_name_never_points_at_a_partial_zip(self, env, monkeypatch):
+        env.export()
+        path = os.path.join(env.folder, 'proj1.zip')
+        seen = []
+        real_replace = os.replace
+
+        def spy(src, dst):
+            # at the instant of the replace the name still holds the whole old zip
+            seen.append(zipfile.is_zipfile(path))
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(os, 'replace', spy)
+        env.export()
+        assert seen == [True]
+        _assert_complete(path, env)
 
     def test_the_info_line_names_the_file_its_size_and_the_seconds(self, env):
         with mock.patch.object(p.Logger, 'info') as info:

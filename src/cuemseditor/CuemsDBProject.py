@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import contextlib
-import errno
 import os
 import tempfile
 import threading
@@ -72,38 +71,19 @@ def _zip_add_file(zf, path, arcname, size):
             return _copy_stream(src, dst)
 
 
-def _take_name(part, dest):
-    """Give the finished ``part`` the name ``dest`` without ever replacing a file.
-
-    ``os.link`` fails with ``FileExistsError`` when the name is taken, so two
-    exports cannot meet on one name (no lock, N5). A filesystem without hard
-    links (``EPERM``, ``EOPNOTSUPP``) takes the name with ``O_EXCL`` and then
-    replaces it with the part: for an instant the name exists as an empty file,
-    whose URL has not been sent yet.
-    """
-    try:
-        os.link(part, dest)
-    except FileExistsError:
-        raise
-    except OSError as e:
-        if e.errno not in (errno.EPERM, errno.EOPNOTSUPP, errno.ENOTSUP):
-            raise
-        os.close(os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
-        os.replace(part, dest)
-    else:
-        os.unlink(part)
-
-
 def _publish(part, folder, unix_name):
-    """Take ``<unix_name>.zip``, or ``-001``, ``-002``... when it exists; return the name."""
-    n = 0
-    while True:
-        name = f'{unix_name}.zip' if n == 0 else f'{unix_name}-{n:03d}.zip'
-        try:
-            _take_name(part, os.path.join(folder, name))
-            return name
-        except FileExistsError:
-            n += 1
+    """Give the finished ``part`` the name ``<unix_name>.zip``, replacing the project's previous export; return the name.
+
+    ``os.replace`` is atomic on one filesystem (the part lives in the exports
+    folder), so the name always points at a complete zip. A download that
+    already has the old file open keeps reading it (the old inode lives until
+    it is closed). Two exports of one project at once both complete and the
+    last one to finish owns the name. One zip per project, no ``-001``, ``-002``:
+    Ion, 2026-11-24, "an export replaces the previous one" (1amfwm7kana).
+    """
+    name = f'{unix_name}.zip'
+    os.replace(part, os.path.join(folder, name))
+    return name
 
 
 class DurationFixStats:
@@ -1226,9 +1206,9 @@ class CuemsDBProject(StringSanitizer):
 
         One pass, from the library straight to ``<exports>/.<unix_name>.XXXX.part``
         (``mkstemp``, ``0600`` while written), then ``0644`` and published with
-        ``os.link`` as ``<unix_name>.zip`` (``-001``, ``-002``... when taken).
-        Nothing is copied to ``tmp_path`` and each run has its own file, so two
-        exports of one project at once both complete (1amfwm7kana).
+        ``os.replace`` as ``<unix_name>.zip``, which replaces the project's
+        previous export. Nothing is copied to ``tmp_path`` and each run has its
+        own file, so two exports of one project at once both complete (1amfwm7kana).
 
         Returns:
             ``exports/<file>.zip``: relative to the site root, no leading slash.
@@ -1313,11 +1293,11 @@ class CuemsDBProject(StringSanitizer):
                                             'export again')
 
             os.chmod(part, 0o644)
+            size = os.path.getsize(part)
             dest_filename = _publish(part, folder, unix_name)
             result = os.path.join(self.settings_dict['export_folder_name'], dest_filename)
             Logger.info('exported {} -> {} ({} bytes, {:.1f} s)'.format(
-                unix_name, result, os.path.getsize(os.path.join(folder, dest_filename)),
-                time.monotonic() - started))
+                unix_name, result, size, time.monotonic() - started))
             return result
         except ExportError:
             raise                      # already logged, with its text

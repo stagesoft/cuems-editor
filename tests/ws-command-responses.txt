@@ -32,8 +32,8 @@ Commands 													 ->	Responses
 {"action" : "project_duplicate", "value" : "project_uuid"}		->  {"type": "project_duplicate", "value": {"uuid": "project_uuid", "new_uuid": "duplicated_project_uuid" }}
 {"action" : "project_export", "value" : "project_uuid"}			->  {"type": "project_export", "value": exported_file_url}
 {"action" : "project_export", "value" : "project_uuid", "accept_loaded" : true}	->  the same; "accept_loaded" is optional (1amfwm7kana)
-	exported_file_url = "exports/<file>.zip": relative to the site root, no leading slash, file name opaque
-	(<unix_name>.zip, then <unix_name>-001.zip ...). apache serves /exports from /var/lib/cuems/exports (cuems-common).
+	exported_file_url = "exports/<file>.zip": relative to the site root, no leading slash. The name is always <unix_name>.zip:
+	a new export of a project REPLACES the previous one (atomic replace; a download already reading the old file finishes it). apache serves /exports from /var/lib/cuems/exports (cuems-common).
 	The engine is asked first; nothing is stopped or unloaded. Errors are {"type": "error", "uuid": project_uuid, "action": "project_export", "value": text}:
 	  running                          -> "A show is running: stop it before exporting a project"  (with or without accept_loaded)
 	  loaded, no accept_loaded == true -> "A project is loaded and waiting for GO: an export reads the whole project from disk and can make the next GO late. Accept the warning in the export dialog to go on"

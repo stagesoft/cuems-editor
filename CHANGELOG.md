@@ -10,8 +10,8 @@ Project export reaches the browser on an installed controller (ClickUp 1amfwm7ka
 
 ### Fixed
 - The export wrote its zip under `/var/www/cuems/exports`, which nothing creates and the `cuems` user cannot create, and nothing served. `html_root_path` is now `/var/lib/cuems` (the parent of the exports folder, no longer a web root).
-- Two exports of one project at once collided in `<tmp>/<unix_name>`: the second's cleanup removed the first's files and the first published a valid but incomplete zip, with no error. Each export now writes its own file and takes its name with `os.link`, so both complete (`<name>.zip`, `<name>-001.zip`).
-- Export is one pass instead of three: the zip is written stored (no deflate), straight from the library into `.<unix_name>.XXXX.part` in the exports folder (`0600`, 1 MiB chunks, zip64 when needed), then `0644` and published. Nothing is copied to `/tmp`. The answer to the UI is unchanged (`exports/<file>.zip`).
+- Two exports of one project at once collided in `<tmp>/<unix_name>`: the second's cleanup removed the first's files and the first published a valid but incomplete zip, with no error. Each export now writes its own file and publishes it with an atomic `os.replace`, so both complete and the last one owns the name.
+- Export is one pass instead of three: the zip is written stored (no deflate), straight from the library into `.<unix_name>.XXXX.part` in the exports folder (`0600`, 1 MiB chunks, zip64 when needed), then `0644` and published as `<unix_name>.zip`, **replacing the project's previous export** (one zip per project, no `-001`, `-002`; a download already reading the old file finishes it). Nothing is copied to `/tmp`. The answer to the UI is unchanged (`exports/<file>.zip`).
 
 ### Added
 - Refusals with one-line texts (the UI shows them as they are): the exports folder missing or not writable, or the apache conf `/etc/apache2/conf-enabled/cuems-exports.conf` not enabled (the editor creates neither); less than the reserve left on the exports filesystem (the larger of 5 GiB and a tenth of it, counting exports in progress); a media file whose size changed while it was zipped.
