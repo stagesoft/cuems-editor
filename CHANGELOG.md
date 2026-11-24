@@ -1,6 +1,25 @@
+<!-- SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-FileContributor: Ion Reguera <ion@stagelab.coop> -->
+
 # Changelog
 
-## Unreleased
+## Unreleased — project export (1amfwm7kana)
+
+Project export reaches the browser on an installed controller (ClickUp 1amfwm7kana). Released together with cuems-common, which creates, serves (`Alias /exports`) and cleans (one day) `/var/lib/cuems/exports`; the editor does not work without it.
+
+### Fixed
+- The export wrote its zip under `/var/www/cuems/exports`, which nothing creates and the `cuems` user cannot create, and nothing served. `html_root_path` is now `/var/lib/cuems` (the parent of the exports folder, no longer a web root).
+- Two exports of one project at once collided in `<tmp>/<unix_name>`: the second's cleanup removed the first's files and the first published a valid but incomplete zip, with no error. Each export now writes its own file and takes its name with `os.link`, so both complete (`<name>.zip`, `<name>-001.zip`).
+- Export is one pass instead of three: the zip is written stored (no deflate), straight from the library into `.<unix_name>.XXXX.part` in the exports folder (`0600`, 1 MiB chunks, zip64 when needed), then `0644` and published. Nothing is copied to `/tmp`. The answer to the UI is unchanged (`exports/<file>.zip`).
+
+### Added
+- Refusals with one-line texts (the UI shows them as they are): the exports folder missing or not writable, or the apache conf `/etc/apache2/conf-enabled/cuems-exports.conf` not enabled (the editor creates neither); less than the reserve left on the exports filesystem (the larger of 5 GiB and a tenth of it, counting exports in progress); a media file whose size changed while it was zipped.
+- The show is protected always: `project_export` asks the engine first. `running` is refused; `loaded` is refused unless the request carries `"accept_loaded": true` (sent by the UI after the operator accepts a warning); no usable answer is refused; `none` goes on. Nothing is stopped or unloaded. New `CuemsWsUser._engine_status()`; `_engine_running()` keeps its answers.
+- A media file listed twice for one project gives one zip entry. `ExportError`.
+- At start the editor removes the `*.part` files an export killed in mid-write left in the exports folder; it never creates the folder.
+
+## Unreleased — save-time gate for media cues (869fej07m)
 
 Save-time gate for media cues without a usable media block (closes ClickUp 869fej07m).
 
