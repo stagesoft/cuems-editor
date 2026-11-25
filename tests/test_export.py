@@ -581,6 +581,11 @@ class TestSweep:
         s = get_settings()
         s['tmp_path'] = str(tmp_path / 'tmp-upload')
         s['html_root_path'] = str(tmp_path / 'varlib')
+        # ensure_directories also sweeps the import's staging folder under the
+        # library: without this the test made <real library>/.import as whoever
+        # ran the suite (1amfwm7kcjp, found on .111 on 2026-11-25).
+        s['library_path'] = str(tmp_path / 'lib')
+        os.makedirs(s['library_path'], exist_ok=True)
         return s
 
     def test_10_removes_part_files_dotted_or_not_and_creates_nothing(self, tmp_path):

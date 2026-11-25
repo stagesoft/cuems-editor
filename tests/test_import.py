@@ -1605,6 +1605,26 @@ class TestSweep:
         assert (target / 'import-00' / 'precious').read_bytes() == b'keep me'
         assert any(str(lib / '.import') in str(c.args[0]) for c in error.call_args_list)
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason='root can write to any folder')
+    def test_19_an_unwritable_staging_root_is_refused_at_the_guard(self, tmp_path):
+        """A staging folder the editor cannot write to (another owner, a wrong
+        mode) is refused with a text of its own, not given a ticket (found on
+        .111, 2026-11-25: the folder had been made by another user)."""
+        import cuemseditor.CuemsProjectImport as imp      # lazy, as every test here
+        from cuemseditor.CuemsErrors import ProjectImportError
+        s, lib = self._settings(tmp_path)
+        root = lib / '.import'
+        root.mkdir(mode=0o700)
+        os.chmod(root, 0o500)
+        try:
+            with mock.patch.object(imp.Logger, 'error') as error:
+                with pytest.raises(ProjectImportError) as e:
+                    imp.ensure_staging_root(s)
+            assert 'cannot write to' in str(e.value) and str(root) in str(e.value)
+            assert any(str(root) in str(c.args[0]) for c in error.call_args_list)
+        finally:
+            os.chmod(root, 0o700)
+
     def test_19_no_link_is_followed(self, tmp_path):
         s, lib = self._settings(tmp_path)
         root = lib / '.import'

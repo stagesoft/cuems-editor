@@ -172,6 +172,14 @@ def ensure_staging_root(settings_dict):
                      'imports are refused until it is removed')
         raise ProjectImportError(f'Import is not available on this controller: {root} is not '
                                  'a folder (see the editor journal)')
+    if not os.access(root, os.W_OK | os.X_OK):
+        # A folder the editor cannot write to (made by another user, a wrong mode):
+        # the guard must say so now, not hand out a ticket whose import dies on its
+        # first write (found on .111, 2026-11-25).
+        Logger.error(f'import staging folder {root} is not writable by the editor: '
+                     'imports are refused until its owner and mode are fixed')
+        raise ProjectImportError(f'Import is not available on this controller: the editor cannot '
+                                 f'write to {root} (see the editor journal)')
     return root
 
 
