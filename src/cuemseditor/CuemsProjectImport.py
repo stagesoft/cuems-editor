@@ -32,10 +32,13 @@ import os
 import shutil
 import stat
 import struct
+import subprocess
+import threading
 import unicodedata
 import uuid
 import zipfile
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 
 import websockets as ws
 import xmlschema
@@ -65,6 +68,15 @@ MAX_DIRECTORY_BYTES = 4 * 1024 ** 2
 MAX_ENTRIES = 10_000
 #: A ``progress`` frame at least this often while the editor works (review row 7).
 HEARTBEAT_S = 5
+#: D19: how often the engine is asked while the zip is received and checked, so
+#: that a GO does not wait for the end of a long upload.
+WATCH_S = 5
+#: D19: the import's own work, and the programs it starts, run at the lowest
+#: priority: CPU niceness 19, and the last level of the best-effort I/O class
+#: (not ``idle``: a starved builder runs into its timeout and leaves a media
+#: without its sidecars).
+NICE = 19
+IONICE = ('-c', '2', '-n', '7')
 #: No frame from the browser for this long during the upload: I7.
 UPLOAD_STALL_S = 120
 #: A ticket not used within this many seconds is void and frees the slot.
@@ -973,6 +985,8 @@ def import_archive(zip_path, db, staging, *, status, accept_loaded=False, progre
                 held = _claim_space(db, plan, staging, landed)
             except ProjectImportError:
                 raise
+            except _Stop as e:
+                raise _interrupted(str(e), report)
             except Exception as e:
                 Logger.error(f'import: the check failed: {type(e).__name__}: {e}')
                 raise ProjectImportError(interrupted_text(f'{type(e).__name__}: {e}', []))
@@ -1008,6 +1022,31 @@ def is_project_upload(value):
     return isinstance(value, dict) and value.get('type') == 'PROJECT'
 
 
+def _lowest_priority():
+    """For the calling thread only: Linux keeps the niceness and the I/O
+    priority per thread, and what the thread starts inherits both. A thread
+    without privileges cannot raise them again, so it must die with its import.
+    A failure is logged and the import runs at the usual priority."""
+    tid = threading.get_native_id()
+    try:
+        os.setpriority(os.PRIO_PROCESS, tid, NICE)
+        subprocess.run(['ionice', *IONICE, '-p', str(tid)], check=True, capture_output=True,
+                       timeout=5)
+    except (OSError, subprocess.SubprocessError) as e:
+        Logger.warning(f'import: the priority was not lowered ({type(e).__name__}: {e})')
+
+
+def _then_close_db(work):
+    """*work*, then the database connection this thread opened for itself
+    (peewee keeps one per thread, and this thread ends here)."""
+    try:
+        return work()
+    finally:
+        database = Media._meta.database
+        if not database.is_closed():
+            database.close()
+
+
 class ImportSession:
     """The ``/upload`` socket of one import, from its first frame to its end.
 
@@ -1018,8 +1057,11 @@ class ImportSession:
     runs in the executor, every later check going through the server's
     communicator with no socket of the user's (N9), while a timer of the
     session's own sends a ``progress`` frame at least every
-    :data:`HEARTBEAT_S` seconds (review row 7). The slot is freed and the
-    staging removed whatever happens.
+    :data:`HEARTBEAT_S` seconds (review row 7). While the zip is received and
+    checked the engine is also asked every :data:`WATCH_S` seconds, so a GO
+    stops the import there too; :func:`import_archive` runs in a thread of its
+    own at the lowest priority (D19). The slot is freed and the staging
+    removed whatever happens.
     """
 
     def __init__(self, server, websocket):
@@ -1030,6 +1072,7 @@ class ImportSession:
         self.ended = False
         self.latest = None
         self._last_key = None
+        self.halt = None        # the refusal seen while receiving or checking (D19)
 
     async def run(self, value):
         self.loop = asyncio.get_running_loop()
@@ -1066,32 +1109,73 @@ class ImportSession:
         Logger.info(f'import of {name!r} ({record.size} bytes) started')
         zip_path = _zip_path(staging)
         await self._send({'ready': True})
-        if not await self._receive(zip_path, record.size):
-            return
-        self.latest = {'progress': {'phase': 'check', 'done': 0, 'total': 0, 'name': ''}}
-        heartbeat = asyncio.ensure_future(self._heartbeat())
+        watch_over = asyncio.Event()
+        watcher = asyncio.ensure_future(self._watch(record, watch_over))
+        heartbeat = None
         try:
+            if not await self._receive(zip_path, record.size):
+                return
+            self.latest = {'progress': {'phase': 'check', 'done': 0, 'total': 0, 'name': ''}}
+            heartbeat = asyncio.ensure_future(self._heartbeat())
             # D4: asked again when the upload ends, before anything is read.
             refusal = import_refusal(await record.owner._engine_status(), record.accept_loaded)
             if refusal is not None:
                 raise ProjectImportError(interrupted_text(refusal, []))
-            report = await self.loop.run_in_executor(self.server.executor, functools.partial(
+            report = await self._at_lowest_priority(functools.partial(
                 import_archive, zip_path, self.server.db, staging, status=self._status,
                 accept_loaded=record.accept_loaded, progress=self._progress,
                 list_update=self._list_update))
         finally:
-            heartbeat.cancel()
+            watch_over.set()
+            if heartbeat is not None:
+                heartbeat.cancel()
+            await watcher
         Logger.info(f'import report: {json.dumps(report, default=str)}')
         self.ended = True
         await self._send({'imported': report})
         await self._send({'close': True})
+
+    async def _watch(self, record, over):
+        """D19: asks the engine while the upload and the archive's check go on,
+        and keeps the first refusal in :attr:`halt`; from the first media on,
+        :func:`import_archive` asks before each write. No answer stops nothing
+        here: the next check asks again. Ended by *over*, never cancelled in
+        the middle of a question."""
+        while True:
+            try:
+                await asyncio.wait_for(over.wait(), WATCH_S)
+                return
+            except asyncio.TimeoutError:
+                pass
+            if self.latest is not None and self.latest['progress']['phase'] != 'check':
+                return
+            try:
+                status = await record.owner._engine_status()
+            except Exception as e:
+                Logger.warning(f'import: no answer from the engine ({type(e).__name__}: {e})')
+                continue
+            if status is not None:
+                self.halt = import_refusal(status, record.accept_loaded)
+                if self.halt is not None:
+                    return
+
+    async def _at_lowest_priority(self, work):
+        """*work* in a thread made for it, at the lowest priority (D19); the
+        editor's other threads keep theirs."""
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='import',
+                                      initializer=_lowest_priority)
+        try:
+            return await self.loop.run_in_executor(executor, _then_close_db, work)
+        finally:
+            executor.shutdown(wait=False)
 
     async def _receive(self, path, size):
         """The zip, frame by frame, each answered ``ready``; ``True`` once
         ``finished`` brought the MD5 of what was received, ``False`` when the
         socket closed before (the import is dropped). I7 on more bytes than
         announced, fewer, another MD5, a text frame that is not ``finished``,
-        or no frame for :data:`UPLOAD_STALL_S`."""
+        or no frame for :data:`UPLOAD_STALL_S`; I9 as soon as the watcher saw a
+        refusal (D19)."""
         digest = hashlib.md5()
         got = 0
         with open(path, 'xb') as sink:
@@ -1103,6 +1187,8 @@ class ImportSession:
                 except ws.exceptions.ConnectionClosed:
                     Logger.warning('import dropped: the upload socket closed before the end')
                     return False
+                if self.halt is not None:
+                    raise ProjectImportError(interrupted_text(self.halt, []))
                 if isinstance(message, bytes):
                     got += len(message)
                     if got > size:
@@ -1155,6 +1241,8 @@ class ImportSession:
             return None
 
     def _progress(self, phase, done, total, name):
+        if phase == 'check' and self.halt is not None:      # D19: in the import's thread
+            raise _Stop(self.halt)
         frame = {'progress': {'phase': phase, 'done': int(done or 0), 'total': int(total or 0),
                               'name': name or ''}}
         self.latest = frame

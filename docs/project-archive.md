@@ -134,6 +134,16 @@ existed, and takes nothing out of the trash); a failure leaves what was added an
    frame during the transfer is I7 (`_receive`). The editor compares the size and the MD5 (I7), asks the rule of D3 again
    (D4), and imports.
 
+**A GO stops the import at any stage** (D19). While the zip is received and checked the editor asks the engine every 5 s
+(`WATCH_S`, `_watch`): a show running, or a project loaded without the operator's acceptance, ends the import there with
+I9 (in the middle of the upload the answer to a frame is the fatal error); no answer from the engine stops nothing at
+this stage. From the first media on, the question is asked before each write (D4). The file being registered at that
+moment is finished, not cut: a builder killed half way would leave a media without its sidecars. Nothing after it starts.
+
+**Lowest priority** (D19). `import_archive` runs in a thread made for each import, at CPU niceness 19 and the last level
+of the best-effort I/O class (`_at_lowest_priority`); `ffmpeg`, `ffprobe`, `audiowaveform` and the video indexer
+inherit both. The editor's other threads, media uploads included, keep their priority.
+
 While it works the editor sends `{"progress":{"phase","done","total","name"}}` (`phase` is `check` in bytes, `media` in
 files or `project`) at least every 5 s (`HEARTBEAT_S`, a timer of the session's own). It ends with
 `{"imported":<report>}` then `{"close": true}`. A failure is `{"error":<text>,"fatal":true}`, with a `"report"` key beside
@@ -197,7 +207,8 @@ registered is I9 with the report so far: **what was added stays** (the files, th
 not created; importing the same archive again reuses what was added. Once the project is created
 (`import_project` committed) the import is a success: a failure in what follows (the report of the files not carried,
 `project_list`, the last progress frame) is logged and listed under `warnings` (`_after_creation`). A show that starts, or a project that is loaded
-without the operator's acceptance, between two files stops the import at the next check (D4). A hard kill of the editor
+without the operator's acceptance, between two files stops the import at the next check (D4; during the upload and the
+archive's check, within `WATCH_S`, D19). A hard kill of the editor
 in the move-to-row window of `CuemsDBMedia.new` leaves a file with no row (the documented limit of ClickUp 1amfwm7kcwk):
 the next import stores it again as `<base>-001<ext>`.
 

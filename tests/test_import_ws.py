@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import re
+import subprocess
 import threading
 import time
 import types
@@ -698,6 +699,150 @@ class TestLaterChecks:
         assert len(asked_after) >= len(MEDIA)                # files 2 and 3, and the project
         assert all(r['action'] == 'project_status' for r in server.engine_requests)
         owner.websocket.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# (D19) a GO stops the import also during the upload and the check, and the
+# import works at the lowest priority
+# ---------------------------------------------------------------------------
+
+class SaysNow(FakeOwner):
+    """An engine whose word the test changes while the session runs."""
+
+    def __init__(self, word='none'):
+        super().__init__(word)
+        self.word = word
+        self.said = []
+
+    async def _engine_status(self):
+        self.calls += 1
+        self.said.append(self.word)
+        return self.word
+
+
+def _watching(monkeypatch, every=0.05):
+    imp = _imp()
+    monkeypatch.setattr(imp, 'WATCH_S', every)
+    return imp
+
+
+async def _asked_again(owner):
+    seen = owner.calls
+    await until(lambda: owner.calls >= seen + 2, 10)
+
+
+class TestStopsOnGo:
+    def test_d19_the_engine_is_asked_every_few_seconds(self):
+        assert 0 < _imp().WATCH_S <= 5
+
+    @pytest.mark.parametrize('word,accept,reason', [('running', False, I3), ('running', True, I3),
+                                                    ('loaded', False, I5)],
+                             ids=['go', 'go_though_loaded_was_accepted', 'loaded_not_accepted'])
+    def test_d19_a_show_during_the_upload_stops_it_without_waiting_for_its_end(
+            self, env, monkeypatch, word, accept, reason):
+        _watching(monkeypatch)
+        data = the_zip(env)
+        parts = chunks(data, 1000)
+        before = env.state()
+
+        async def go(server, sock, owner):
+            await sock.wait(lambda f: f == {'ready': True}, 10)
+            owner.word = word
+            await until(lambda: word in owner.said, 10)       # asked while the upload goes on
+            await asyncio.sleep(0.1)
+            sock.put(parts[1])                                # no ``finished`` ever comes
+
+        server, sock, owner = run_upload(
+            env, lambda t: [first_frame(len(data), t), parts[0]], size=len(data),
+            owner=SaysNow(), accept_loaded=accept, after=go, wait_s=20)
+        errs = errors(sock)
+        assert len(errs) == 1 and errs[0]['fatal'] is True
+        assert i9_parts(errs[0]['error']) == (reason, [])
+        assert env.state() == before
+        assert os.listdir(env.staging_root) == []
+        assert not server.import_slot.busy
+
+    @pytest.mark.parametrize('word,accept', [(None, False), ('loaded', True), ('none', False)],
+                             ids=['no_answer', 'loaded_and_accepted', 'nothing_loaded'])
+    def test_d19_these_answers_during_the_upload_stop_nothing(self, env, monkeypatch, word, accept):
+        _watching(monkeypatch)
+        data = the_zip(env)
+        parts = chunks(data, 1000)
+
+        async def go_on(server, sock, owner):
+            await sock.wait(lambda f: f == {'ready': True}, 10)
+            owner.word = word
+            await _asked_again(owner)
+            owner.word = 'loaded' if accept else 'none'       # the checks after the upload
+            sock.put(*parts[1:], finished(md5(data)))
+
+        server, sock, owner = run_upload(
+            env, lambda t: [first_frame(len(data), t), parts[0]], size=len(data),
+            owner=SaysNow(), accept_loaded=accept, after=go_on)
+        assert errors(sock) == []
+        assert Project.get(Project.unix_name == TOP)
+
+    def test_d19_a_show_during_the_check_of_the_archive_stops_it(self, env, monkeypatch):
+        imp = _watching(monkeypatch)
+        real_check = imp._check
+        owner = SaysNow()
+        before = env.state()
+
+        def check(*a, **kw):
+            owner.word = 'running'
+            deadline = time.monotonic() + 10
+            while 'running' not in owner.said:
+                assert time.monotonic() < deadline, 'nobody asks the engine during the check'
+                time.sleep(0.02)
+            time.sleep(0.05)
+            return real_check(*a, **kw)
+
+        monkeypatch.setattr(imp, '_check', check)
+        data = the_zip(env)
+        before = env.state()
+        server, sock, _ = run_upload(
+            env, lambda t: [first_frame(len(data), t), *chunks(data), finished(md5(data))],
+            size=len(data), owner=owner, wait_s=30)
+        errs = errors(sock)
+        assert len(errs) == 1
+        assert i9_parts(errs[0]['error']) == (I3, [])
+        assert env.state() == before
+        assert os.listdir(env.staging_root) == []
+
+
+def _priority_of(tid):
+    io = subprocess.run(['ionice', '-p', str(tid)], capture_output=True, text=True).stdout.strip()
+    return os.getpriority(os.PRIO_PROCESS, tid), io
+
+
+class TestLowestPriority:
+    def test_d19_the_registration_and_its_programs_run_at_the_lowest_priority(self, env, monkeypatch):
+        mine = _priority_of(threading.get_native_id())
+        seen = []
+        real_new = env.media.new
+
+        def new(*a, **kw):
+            child = subprocess.run(['sh', '-c', 'nice; ionice -p $$'], capture_output=True, text=True)
+            seen.append((_priority_of(threading.get_native_id()), child.stdout.split('\n')[:2],
+                         threading.current_thread()))
+            return real_new(*a, **kw)
+
+        monkeypatch.setattr(env.media, 'new', new)
+        data = the_zip(env)
+        server, sock, owner = run_upload(
+            env, lambda t: [first_frame(len(data), t), *chunks(data), finished(md5(data))],
+            size=len(data))
+        assert errors(sock) == []
+        assert len(seen) == len(MEDIA)
+        for own, child, thread in seen:
+            assert own == (19, 'best-effort: prio 7')
+            assert child == ['19', 'best-effort: prio 7']
+        # the editor's own threads keep theirs, and the niced thread does not outlive the import
+        assert _priority_of(threading.get_native_id()) == mine
+        threads = {thread for _, _, thread in seen}
+        for thread in threads:
+            thread.join(10)
+            assert not thread.is_alive()
 
 
 # ---------------------------------------------------------------------------
