@@ -11,13 +11,14 @@ Project export reaches the browser on an installed controller (ClickUp 1amfwm7ka
 ### Fixed
 - The export wrote its zip under `/var/www/cuems/exports`, which nothing creates and the `cuems` user cannot create, and nothing served. `html_root_path` is now `/var/lib/cuems` (the parent of the exports folder, no longer a web root).
 - Two exports of one project at once collided in `<tmp>/<unix_name>`: the second's cleanup removed the first's files and the first published a valid but incomplete zip, with no error. Each export now writes its own file and publishes it with an atomic `os.replace`, so both complete and the last one owns the name.
-- Export is one pass instead of three: the zip is written stored (no deflate), straight from the library into `.<unix_name>.XXXX.part` in the exports folder (`0600`, 1 MiB chunks, zip64 when needed), then `0644` and published as `<unix_name>.zip`, **replacing the project's previous export** (one zip per project, no `-001`, `-002`; a download already reading the old file finishes it). Nothing is copied to `/tmp`. The answer to the UI is unchanged (`exports/<file>.zip`).
+- Export is one pass instead of three: the zip is written stored (no deflate), straight from the library into `.<unix_name>.XXXX.part` (name cut to 200 bytes, locked while written) in the exports folder (`0600`, 1 MiB chunks, zip64 when needed), then `0644` and published as `<unix_name>.zip`, **replacing the project's previous export** (one zip per project, no `-001`, `-002`; a download already reading the old file finishes it). Nothing is copied to `/tmp`. The answer to the UI is unchanged (`exports/<file>.zip`).
 
 ### Added
 - Refusals with one-line texts (the UI shows them as they are): the exports folder missing or not writable, or the apache conf `/etc/apache2/conf-enabled/cuems-exports.conf` not enabled (the editor creates neither); less than the reserve left on the exports filesystem (the larger of 5 GiB and a tenth of it, counting exports in progress); a media file whose size changed while it was zipped.
 - The show is protected always: `project_export` asks the engine first. `running` is refused; `loaded` is refused unless the request carries `"accept_loaded": true` (sent by the UI after the operator accepts a warning); no usable answer is refused; `none` goes on. Nothing is stopped or unloaded. New `CuemsWsUser._engine_status()`; `_engine_running()` keeps its answers.
 - A media file listed twice for one project gives one zip entry. `ExportError`.
-- At start the editor removes the `*.part` files an export killed in mid-write left in the exports folder; it never creates the folder.
+- At start the editor removes the `*.part` files an export killed in mid-write left in the exports folder, not one a running editor still holds; it never creates the folder.
+- An export writes no more than it measured for the free-space check, and fails if the project script or a medium changes size while it is zipped.
 
 ## Unreleased — save-time gate for media cues (869fej07m)
 

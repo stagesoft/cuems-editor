@@ -63,12 +63,13 @@ From the released code (`shutil.copy` into `<tmp>/<unix_name>/`, then `shutil.ma
 | Downloading across a replace | Only **one continuous `GET`** is promised to give one whole zip. A resumed or multi-range download that spans a replace can join bytes of two zips: with `If-Range` apache should answer `200` with the whole new file (inferred, not tested on a rig), without it the ranges come from whatever owns the name. A client that resumes sends `If-Range`, or starts again |
 | Served at | `/exports/<unix_name>.zip`, HTTP 80 and HTTPS 443, `application/zip`, ranges honoured (`206`). A missing file is `404`, the folder listing `403`, an unfinished `.<name>.XXXX.part` `403` `[rig]` |
 | Kept | removed by a systemd-tmpfiles rule after one day (a zip goes one to two days after it was last touched); cuems-common installs the folder, the rule and the apache snippet; the editor refuses to export without them (E1) |
-| Written how | one pass from the library, under a private `.<unix_name>.XXXX.part` (mode `0600`), then `0644` and the replace |
+| Written how | one pass from the library, under a private `.<unix_name>.XXXX.part` (mode `0600`; the name cut to 200 bytes; locked while its export runs, so another editor's start-up sweep leaves it), then `0644` and the replace. A script or medium whose size changes meanwhile fails the export, and never more is written than was measured |
 
 ## 5. The WebSocket messages (editor, `:9092`, through apache `/ws`)
 
 Request: `{"action":"project_export","value":"<project uuid>"}`, with the optional top-level key `"accept_loaded": true` (only the JSON `true` counts).
 Answer: `{"type":"project_export","value":"exports/<unix_name>.zip"}`: a path relative to the site root, no leading slash (the UI puts a `/` in front).
+Neither the answer nor the error carries a request id, so a client keeps **one export in flight per connection** and waits for it: the answer comes on the connection that asked, however long the export takes. A client that gives up and asks again for the same project cannot tell the two answers apart.
 
 Refusals and failures arrive as `{"type":"error","uuid":"<project uuid>","action":"project_export","value":"<one line>"}` `[code]`:
 

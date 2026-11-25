@@ -15,7 +15,7 @@ Design: cuems-RELATIONS Plans/2026-11-24-project-export-served-and-cleaned-1amfw
 
 Seams used by the tests: ``cuemseditor.CuemsDBProject.prefetch`` (called by the
 old and the new ``export()`` before the media is touched) and, for the new
-writer only, ``cuemseditor.CuemsDBProject._copy_stream(src, dst)``.
+writer only, ``cuemseditor.CuemsDBProject._copy_stream(src, dst, size)``.
 """
 import asyncio
 import collections
@@ -255,11 +255,11 @@ class TestNothingLeftBehind:
         real = p._copy_stream
         calls = []
 
-        def boom(src, dst):
+        def boom(src, dst, size):
             calls.append(src.name)
             if len(calls) == 2:
                 raise OSError(errno.EIO, 'disk error')
-            return real(src, dst)
+            return real(src, dst, size)
 
         monkeypatch.setattr(p, '_copy_stream', boom)
         with pytest.raises(OSError):
@@ -272,12 +272,12 @@ class TestNothingLeftBehind:
         real = p._copy_stream
         seen = []
 
-        def look(src, dst):
+        def look(src, dst, size):
             parts = [n for n in os.listdir(env.folder) if n.endswith('.part')]
             assert len(parts) == 1
             assert re.fullmatch(r'\.proj1\..+\.part', parts[0])
             seen.append(stat.S_IMODE(os.stat(os.path.join(env.folder, parts[0])).st_mode))
-            return real(src, dst)
+            return real(src, dst, size)
 
         monkeypatch.setattr(p, '_copy_stream', look)
         env.export()
@@ -374,11 +374,11 @@ class TestReserve:
         real = p._copy_stream
         holder = []
 
-        def hold(src, dst):
+        def hold(src, dst, size):
             if threading.get_ident() in holder:
                 entered.set()
                 assert release.wait(20)
-            return real(src, dst)
+            return real(src, dst, size)
 
         monkeypatch.setattr(p, '_copy_stream', hold)
 
@@ -422,6 +422,35 @@ class TestReserve:
 # ---------------------------------------------------------------------------
 # (6) an export replaces the previous one, (12) rows, (13) a file that changes
 # ---------------------------------------------------------------------------
+
+class TestReserveOrderAndNames:
+    def test_5_bytes_another_export_writes_while_free_is_read_are_not_lost(self, env, disk, monkeypatch):
+        need = env.need()
+        reserve = 5 * GIB
+        other_part = os.path.join(env.folder, '.other.x.part')
+        open(other_part, 'wb').close()
+        disk.total = 20 * GIB
+        disk.free = need + reserve + 1000      # fits alone, not beside the other one
+        monkeypatch.setitem(p._exports_running, 'other', [need, other_part])
+
+        def read_then_the_other_writes(path):
+            answer = disk(path)                # the free space as it is now ...
+            os.truncate(other_part, need)      # ... and right after, the other one's bytes land
+            return answer
+
+        monkeypatch.setattr(p.shutil, 'disk_usage', read_then_the_other_writes)
+        with pytest.raises(Exception) as ei:
+            env.export()
+        assert str(ei.value).startswith('No space to export')
+
+    @pytest.mark.parametrize('name', ['x' * 245, '\u00e9' * 124], ids=['245-ascii', '248-bytes-of-accents'])
+    def test_a_name_whose_zip_fits_also_gets_its_part(self, env, name):
+        projects = os.path.dirname(os.path.dirname(env.script))
+        os.rename(os.path.join(projects, 'proj1'), os.path.join(projects, name))
+        Project.update(unix_name=name).where(Project.uuid == env.uuid).execute()
+        assert env.export() == f'exports/{name}.zip'
+        assert env.listing() == [f'{name}.zip']
+
 
 class TestPublishing:
     def test_6_an_export_replaces_the_previous_zip_of_the_project(self, env):
@@ -544,10 +573,10 @@ class TestAFileThatChanges:
     def _wrapped(self, monkeypatch, name, before):
         real = p._copy_stream
 
-        def wrapper(src, dst):
+        def wrapper(src, dst, size):
             if os.path.basename(src.name) == name:
                 before(src.name)
-            return real(src, dst)
+            return real(src, dst, size)
 
         monkeypatch.setattr(p, '_copy_stream', wrapper)
 
@@ -588,6 +617,36 @@ class TestAFileThatChanges:
         assert str(ei.value) == E6('file.ext')
         assert env.listing() == []
 
+    def test_13_a_file_that_grows_is_never_written_past_what_was_booked(self, env, monkeypatch):
+        booked = os.path.getsize(os.path.join(env.media_dir, 'file.ext'))
+        real = p._copy_stream
+        written = []
+
+        def grow_and_count(src, dst, size):
+            if os.path.basename(src.name) != 'file.ext':
+                return real(src, dst, size)
+            with open(src.name, 'ab') as f:
+                f.write(b'z' * (3 * p.EXPORT_CHUNK))
+            return real(src, mock.Mock(write=lambda chunk: written.append(len(chunk)) or dst.write(chunk)), size)
+
+        monkeypatch.setattr(p, '_copy_stream', grow_and_count)
+        with pytest.raises(Exception) as ei:
+            env.export()
+        assert str(ei.value) == E6('file.ext')
+        assert sum(written) == booked
+
+    @pytest.mark.parametrize('change', [lambda path: open(path, 'ab').write(b'<!-- saved again -->' * 100),
+                                        lambda path: os.truncate(path, 10)], ids=['grows', 'shrinks'])
+    def test_13_a_script_that_changes_publishes_nothing(self, env, monkeypatch, change):
+        original = open(env.script, 'rb').read()
+        self._wrapped(monkeypatch, 'script.xml', change)
+        with pytest.raises(Exception) as ei:
+            env.export()
+        assert str(ei.value) == 'The project script changed while it was exported: export again'
+        assert env.listing() == []
+        with open(env.script, 'wb') as f:
+            f.write(original)
+
     def test_13_a_file_replaced_by_name_ends_with_the_old_file(self, env, monkeypatch):
         def replace(path):
             new = path + '.new'
@@ -627,6 +686,33 @@ class TestSweep:
         ensure_directories(s)
         assert sorted(os.listdir(folder)) == ['.hidden', 'notes.txt', 'proj1.part.zip', 'proj1.zip']
         assert set(os.listdir(tmp_path / 'varlib')) == before
+
+    def test_10_another_editors_sweep_leaves_a_running_export_alone(self, env, tmp_path, monkeypatch):
+        entered, release = threading.Event(), threading.Event()
+        real = p._copy_stream
+
+        def hold(src, dst, size):
+            entered.set()
+            assert release.wait(20)
+            return real(src, dst, size)
+
+        monkeypatch.setattr(p, '_copy_stream', hold)
+        stale = os.path.join(env.folder, '.stale.x.part')
+        open(stale, 'wb').close()
+        settings = self._settings(tmp_path)
+        settings['html_root_path'] = os.path.dirname(env.folder)
+        with ThreadPoolExecutor(1) as pool:
+            fut = pool.submit(env.export)
+            assert entered.wait(20)
+            try:
+                running = [n for n in _leftovers(env.folder) if n != '.stale.x.part']
+                assert len(running) == 1
+                ensure_directories(settings)
+                assert _leftovers(env.folder) == running      # the stale one went, this one stayed
+            finally:
+                release.set()
+            assert fut.result(timeout=30) == 'exports/proj1.zip'
+        assert env.listing() == ['proj1.zip']
 
     def test_10_never_creates_the_exports_folder(self, tmp_path):
         s = self._settings(tmp_path)
