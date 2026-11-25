@@ -1286,10 +1286,17 @@ class CuemsDBProject(StringSanitizer):
                 _exports_running[token] = [need, None]
 
             stem = unix_name.encode()[:EXPORT_PART_NAME_BYTES].decode('utf-8', 'ignore')
-            part_lock, part = tempfile.mkstemp(dir=folder, prefix='.{}.'.format(stem), suffix='.part')
-            # Held until this export ends: the start-up sweep of another editor
-            # (one started by hand) leaves a locked .part alone.
-            fcntl.flock(part_lock, fcntl.LOCK_EX)
+            # Locked until this export ends: the start-up sweep of another editor
+            # (one started by hand) leaves a locked .part alone. A sweep may take
+            # the file before the lock does: then make another one.
+            while True:
+                part_lock, part = tempfile.mkstemp(dir=folder, prefix='.{}.'.format(stem),
+                                                   suffix='.part')
+                fcntl.flock(part_lock, fcntl.LOCK_EX)
+                if os.fstat(part_lock).st_nlink:
+                    break
+                os.close(part_lock)
+                part_lock = None
             _exports_running[token][1] = part
             Logger.debug('exporting project {} to {}'.format(unix_name, part))
 

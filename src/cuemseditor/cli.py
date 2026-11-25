@@ -112,6 +112,8 @@ def _remove_unfinished_export(path):
             Logger.info(f"Removed unfinished export: {path}")
         finally:
             os.close(fd)
+    except FileNotFoundError:
+        pass                       # its export published or removed it meanwhile
     except BlockingIOError:
         Logger.info(f"Export still being written by another editor, left alone: {path}")
     except OSError as e:

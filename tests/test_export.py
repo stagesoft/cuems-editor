@@ -714,6 +714,52 @@ class TestSweep:
             assert fut.result(timeout=30) == 'exports/proj1.zip'
         assert env.listing() == ['proj1.zip']
 
+    def test_10_a_part_swept_before_it_was_locked_is_made_again(self, env, tmp_path, monkeypatch):
+        real_flock, real_copy = p.fcntl.flock, p._copy_stream
+        settings = self._settings(tmp_path)
+        settings['html_root_path'] = os.path.dirname(env.folder)
+        taken, after_sweep = [], []
+
+        def swept_first(fd, how):
+            if not taken:                       # another editor's sweep got there first
+                taken.extend(_leftovers(env.folder))
+                os.remove(os.path.join(env.folder, taken[0]))
+            return real_flock(fd, how)
+
+        def sweep_in_mid_copy(src, dst, size):
+            if not after_sweep:
+                before = _leftovers(env.folder)
+                monkeypatch.setattr(p.fcntl, 'flock', real_flock)     # the module is shared with cli
+                ensure_directories(settings)
+                after_sweep.append((before, _leftovers(env.folder)))
+            return real_copy(src, dst, size)
+
+        monkeypatch.setattr(p.fcntl, 'flock', swept_first)
+        monkeypatch.setattr(p, '_copy_stream', sweep_in_mid_copy)
+        assert env.export() == 'exports/proj1.zip'
+        before, after = after_sweep[0]
+        assert len(before) == 1 and before != taken
+        assert after == before                  # the one being written is locked: it stayed
+        assert env.listing() == ['proj1.zip']
+
+    def test_10_a_part_gone_during_the_sweep_is_not_an_error(self, tmp_path, monkeypatch):
+        s = self._settings(tmp_path)
+        folder = tmp_path / 'varlib' / 'exports'
+        folder.mkdir(parents=True)
+        (folder / '.gone.x.part').write_bytes(b'x')
+        import cuemseditor.cli as cli
+        real_open = os.open
+
+        def published_meanwhile(path, *args, **kwargs):
+            if str(path).endswith('.gone.x.part'):
+                os.remove(path)
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(cli.os, 'open', published_meanwhile)
+        with mock.patch.object(cli.Logger, 'error') as error:
+            ensure_directories(s)
+        assert error.call_args_list == []
+
     def test_10_never_creates_the_exports_folder(self, tmp_path):
         s = self._settings(tmp_path)
         ensure_directories(s)
