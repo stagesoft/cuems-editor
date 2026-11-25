@@ -849,6 +849,31 @@ class TestRoundTrip:
             if e in ('new', 'project'):
                 assert events[i - 1] == 'ask', events     # each write right after a question
 
+    def test_17_a_show_that_starts_while_a_file_is_extracted_stops_before_its_registration(
+            self, env, monkeypatch):
+        """Change review R1: the rule is asked again after the extraction, right
+        before ``new()``: a show that starts while a big file is extracted gets
+        no registration of that file (I9)."""
+        imp = _imp()
+        words = ['none']
+        real_extract = imp._extract
+        extracted = []
+
+        def extract(zf, info, path, md5_hex):
+            real_extract(zf, info, path, md5_hex)
+            extracted.append(info.filename)
+            words[0] = 'running'                             # GO pressed during the extraction
+
+        monkeypatch.setattr(imp, '_extract', extract)
+        before = env.state()
+        error, text = env.refused(env.zip(export_entries()), status=lambda: words[0])
+        reason, added = i9_parts(text)
+        assert (reason, added) == (I3, [])
+        assert len(extracted) == 1
+        assert error.report['media']['added'] == []
+        assert env.state() == before                         # no file, no row, no project
+        assert env.lists == []
+
 
 # ---------------------------------------------------------------------------
 # (2) the released form (0.1.0rc1-8): Deflated, and no media/ without media
@@ -1015,6 +1040,43 @@ class TestMissing:
         pic = env.row('pic.png')
         assert env.links(report['project']['uuid'])['pic.png'] == str(pic.uuid)
         assert media_ids_in(env.script_of(TOP))['pic.png'] == str(pic.uuid)
+
+    def test_7_missing_in_the_archive_and_only_in_the_trash_is_linked_but_reported_missing(
+            self, env):
+        """Change review R4 (Ion, 2026-11-25): the link to the trashed row is kept,
+        as a delete of a used media leaves it (a restore heals the project), but
+        the report says the truth: ``missing``, not ``from_library``, and a
+        warning that the file is in the media trash."""
+        trashed = os.urandom(900)
+        trashed_uuid = env.put_media('faded.wav', trashed, trash=True)
+        names = list(MEDIA) + ['faded.wav']                   # named, not carried
+        report = env.run(env.zip(export_entries(script=script_bytes(names, MEDIA))))
+        assert report['media']['missing'] == ['faded.wav']
+        assert report['media']['from_library'] == []
+        warned = [w for w in report['warnings'] if 'faded.wav' in w]
+        assert len(warned) == 1 and 'trash' in warned[0] and 'restor' in warned[0], warned
+        proj = report['project']['uuid']
+        assert env.links(proj)['faded.wav'] == trashed_uuid  # the link is kept
+        assert media_ids_in(env.script_of(TOP))['faded.wav'] == trashed_uuid
+        assert env.row('faded.wav').in_trash is True         # nothing is taken out of the trash
+        assert env.sha('faded.wav', trash=True) == hashlib.sha256(trashed).hexdigest()
+
+        env.media.restore(trashed_uuid)                      # the operator restores it: healed
+        assert open(os.path.join(env.media_dir, 'faded.wav'), 'rb').read() == trashed
+        assert env.row('faded.wav').in_trash is False
+        assert env.links(proj)['faded.wav'] == trashed_uuid
+
+    def test_7_a_live_and_a_trashed_row_cannot_share_a_name(self, env):
+        """Change review R4, the live + trashed case: ``name`` and ``unix_name``
+        are unique in the library (a trashed row keeps both), so a name has at
+        most one row and the live-only case is test 7 above."""
+        import peewee
+        env.put_media('both.wav', os.urandom(300))
+        with pytest.raises(peewee.IntegrityError):
+            env.put_media('both.wav', os.urandom(300), trash=True)
+        indexes = {i.name: (i.columns, i.unique) for i in database.get_indexes('media')}
+        assert indexes['media_unix_name'] == (['unix_name'], True)
+        assert indexes['media_name'] == (['name'], True)
 
 
 # ---------------------------------------------------------------------------
@@ -1221,6 +1283,23 @@ except MemoryError:
         assert result['error'] == 'ProjectImportError', result
         assert result['text'].startswith(I8A), result
 
+    def test_9_a_nul_in_an_entry_name_refuses_the_archive(self, env):
+        """Change review R9: ``zipfile`` cuts ``ZipInfo.filename`` at the first
+        NUL (``orig_filename`` keeps it), and zipfile cannot write such a name:
+        the bytes of the written archive are patched, in the local header and
+        in the directory alike."""
+        path = env.zip(_base() + [(f'{TOP}/notes#evil.txt', b'n')])
+        buf = open(path, 'rb').read()
+        assert buf.count(b'notes#evil') == 2
+        open(path, 'wb').write(buf.replace(b'notes#evil', b'notes\x00evil'))
+        with zipfile.ZipFile(path) as z:
+            info = z.getinfo(f'{TOP}/notes')                  # what zipfile makes of it
+            assert info.orig_filename == f'{TOP}/notes\x00evil.txt'
+        before = env.state()
+        error, text = env.refused(path)
+        assert text.startswith(I8A) and 'has a NUL in its name' in text, text
+        assert env.state() == before
+
     @pytest.mark.parametrize('name', ['cançó.wav', 'i̇.wav'])
     def test_9_accented_and_combining_names_are_accepted(self, env, name):
         data = os.urandom(2000)
@@ -1312,7 +1391,52 @@ class TestSanitisedNames:
         assert not os.path.exists(os.path.join(env.media_dir, 'clip_001.mp4'))
 
 
+class TestNameLength:
+    """Change review R12: a library name must leave room for the ``-NNN`` that
+    ``new()`` may add and for the longest name the library derives from it,
+    the loop period's temporary file ``.<name>.period.XXXXXXXX``
+    (``media_sidecars.write_period``): 255 - 4 - 17 = 234 bytes in UTF-8. A
+    longer one is refused before any write (I8a), not found by the move or a
+    sidecar after earlier files were added."""
+
+    def test_9_the_longest_library_name_is_registered_even_as_001(self, env):
+        name = 'a' * 230 + '.wav'                            # 234 bytes
+        env.put_media(name, os.urandom(500))                 # another file: the import makes -001
+        data = os.urandom(2000)
+        report = env.run(env.zip(_one(name, data)))
+        lib = 'a' * 230 + '-001.wav'                         # 238 bytes
+        assert report['media']['added'] == [lib]
+        assert report['sidecars_failed'] == []
+        assert open(os.path.join(env.media_dir, lib), 'rb').read() == data
+        assert ms.read_period(os.path.join(env.media_dir, lib)) is not None   # 255 bytes, written
+
+    @pytest.mark.parametrize('name', ['a' * 231 + '.wav', 'ç' * 115 + 'a.wav'],
+                             ids=['235_bytes', '235_bytes_in_utf8'])
+    def test_9_a_library_name_one_byte_longer_is_refused_before_any_write(self, env, name):
+        assert len(name.encode('utf-8')) == 235
+        path = env.zip(_names('still.png', name))            # the long one is the second file
+        before = env.state()
+        error, text = env.refused(path)
+        assert text.startswith(I8A) and repr(name) in text and 'more than 234 bytes' in text, text
+        assert env.state() == before
+        assert env.lists == []
+
+
 class TestTheScript:
+    @pytest.mark.parametrize('root', [b'<cms:CuemsProject %s></cms:CuemsProject>',
+                                      b'<cms:CuemsScript %s><name>x</name></cms:CuemsScript>'],
+                             ids=['project_with_no_script', 'script_as_the_root'])
+    def test_10_a_document_with_no_cuemsscript_is_refused_by_the_schema(self, env, root):
+        """Change review R14: the schema's one global element is ``CuemsProject``
+        and its ``CuemsScript`` is required, so such a document never reaches the
+        parse: it is I8b, and no "holds no CuemsScript" check is reachable."""
+        script = (b"<?xml version='1.0' encoding='utf-8'?>\n"
+                  + root % _NS.encode('utf-8'))
+        before = env.state()
+        error, text = env.refused(env.zip(export_entries(script=script, media={})))
+        assert text.startswith(I8B_HEAD()) and text.endswith(I8B_TAIL), text
+        assert env.state() == before
+
     def test_10_a_script_with_an_entity_is_refused(self, env):
         build = {i: b for i, b, _ in HOSTILE}['script_with_an_entity']
         before = env.state()
@@ -1465,6 +1589,26 @@ class TestFailures:
         report = env.run(path)
         assert sorted(report['media']['reused']) == sorted(MEDIA)
         assert Project.get(Project.unix_name == TOP)
+
+    def test_13_a_failure_after_the_project_was_created_is_a_warning_and_a_success(
+            self, env, monkeypatch):
+        """Change review R10: once ``import_project`` committed, the project
+        exists: what follows is best effort. A failure there is logged and
+        warned, ``project_list`` still goes out, and the import is a success
+        (an I9 would make the operator retry and get a second copy)."""
+        imp = _imp()
+
+        def note(*a, **kw):
+            raise RuntimeError('database is locked')
+
+        monkeypatch.setattr(imp, '_note_not_carried', note)
+        report = env.run(env.zip(export_entries()))
+        proj = Project.get(Project.unix_name == TOP)
+        assert report['project']['uuid'] == str(proj.uuid)
+        assert sorted(report['media']['added']) == sorted(MEDIA)
+        assert any('database is locked' in w for w in report['warnings']), report['warnings']
+        assert 'project_list' in env.lists
+        assert Project.select().where(Project.name == NAME).count() == 1
 
     def test_13_a_stop_between_the_move_and_the_row_leaves_a_file_the_retry_stores_as_001(
             self, env, monkeypatch):

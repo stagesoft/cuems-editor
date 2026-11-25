@@ -127,8 +127,9 @@ existed, and takes nothing out of the trash); a failure leaves what was added an
    (`size` equal to the guard's, `ticket` one use, void unused after 60 s; without `type` the frame is a media upload as
    always) `[code]` `CuemsUpload.process_upload_message` → `ImportSession.run`. Then, as for a media upload: the editor
    answers `{"ready": true}`, each binary frame (at most 500 000 bytes, the socket's limit being 1 048 576) is answered
-   `{"ready": true}`, and `{"action":"finished","value":"<md5 hex of the whole zip>"}` ends the transfer. The editor
-   compares the size and the MD5 (I7), asks the rule of D3 again (D4), and imports.
+   `{"ready": true}`, and `{"action":"finished","value":"<md5 hex of the whole zip>"}` ends the transfer; any other text
+   frame during the transfer is I7 (`_receive`). The editor compares the size and the MD5 (I7), asks the rule of D3 again
+   (D4), and imports.
 
 While it works the editor sends `{"progress":{"phase","done","total","name"}}` (`phase` is `check` in bytes, `media` in
 files or `project`) at least every 5 s (`HEARTBEAT_S`, a timer of the session's own). It ends with
@@ -144,10 +145,11 @@ All of it is `import_archive` → `_check` and what it calls; a refusal is I8a (
 | Check | Rule | `[code]` |
 |---|---|---|
 | The zip's directory | the byte size the end record gives (`MAX_DIRECTORY_BYTES`, 4 MiB) and the real number of records (`MAX_ENTRIES`, 10 000) are bounded **before** `ZipFile` builds anything, whatever count the end record declares | `open_archive`, `_read_directory`, `_count_records` |
-| Entries | one top folder named as the library's sanitiser would keep it; `<top>/script.xml` once; `<top>/media/<name>` for each name the script lists; a name with `..`, an absolute name or a backslash, a symlink, an encrypted entry or a method other than Stored (0) or Deflated (8) refuses the whole archive; sizes that overlap or add up to more than the zip, and a CRC32 that fails (every used entry is read to its end), refuse it | `_check_entry`, `_check_sizes`, `_top_folder`, `_copy_entry` |
+| Entries | one top folder named as the library's sanitiser would keep it; `<top>/script.xml` once; `<top>/media/<name>` for each name the script lists; a name with `..`, an absolute name, a backslash or a NUL (read in the name as the archive
+writes it, `ZipInfo.orig_filename`: `zipfile` cuts `filename` at the NUL), a symlink, an encrypted entry or a method other than Stored (0) or Deflated (8) refuses the whole archive; sizes that overlap or add up to more than the zip, and a CRC32 that fails (every used entry is read to its end), refuse it | `_check_entry`, `_check_sizes`, `_top_folder`, `_copy_entry` |
 | Ignored, and listed in the report | directory entries, `__MACOSX/`, `.DS_Store`, `Thumbs.db` and any entry the script does not name | `_is_noise`, `report["ignored"]` |
 | The script | one file, at most `MAX_SCRIPT_BYTES` (64 MiB), read through the defused parser (a `DOCTYPE` or an entity is I8a), validated by the box's schema (cuems-utils; a schema failure is I8b with the version and the reason), parsed and serialised once; the save-time gates (zero fade, media cue without a file) are **not** applied: what they would refuse is listed under `warnings` | `_read_script`, `_gate_warnings` |
-| Media names | refused: empty, `.`, `..`, a separator, a control character, more than 255 bytes in UTF-8, or a name with no known media type. A name with capitals is **accepted** and taken to the name the library holds (as the upload does: `CuemsUpload.py:129`), reported as a rename; a name already lower-case and made of alphanumerics, `.`, `_`, `-` and U+0307 is kept. The archive is refused if the library name is empty, `.` or `..`, or if two used names share one (`A.wav` + `a.wav`) | `media_name_problem`, `library_name`, `_match_media` |
+| Media names | refused: empty, `.`, `..`, a separator, a control character, more than 255 bytes in UTF-8, or a name with no known media type. A name with capitals is **accepted** and taken to the name the library holds (as the upload does: `CuemsUpload.py:129`), reported as a rename; a name already lower-case and made of alphanumerics, `.`, `_`, `-` and U+0307 is kept. The archive is refused if the library name is empty, `.` or `..`, or if two used names share one (`A.wav` + `a.wav`), or if the library name of a file the archive carries is longer than `MAX_LIBRARY_NAME_BYTES` (234 bytes in UTF-8: 255 less the `-NNN` that `new()` adds on a taken name and the 17 bytes the longest name built from it adds, the loop period's temporary `.<name>.period.XXXXXXXX`) | `media_name_problem`, `library_name`, `_match_media` |
 | Space | the exact bytes to be added against the library's filesystem and the reserve (I2) | `_check_space` |
 
 ### 8.3 What it does
@@ -159,7 +161,8 @@ Per media file named by the script (`_decide`, D8; `_register`):
 | the archive carries it and the library has no file of that name | registered through `CuemsDBMedia.new` (moved into `media/`, sidecars built, row created) | `media.added` |
 | the library has a live file of that name with the same size and MD5 (or, under that name with the `-NNN` that `new()` adds) | reused, nothing written; a row with no `file_md5` is compared by hashing the library's file once, read only | `media.reused` |
 | the library has another file of that name, or the name is only in the trash | registered under the free name `new()` picks; the script's `file_name` and `id` follow | `media.added` and `media.renamed` `{from, to}` |
-| the script names it and the archive does not carry it | the project gets a relation with **no media** (the state a delete for good leaves, healed by a later upload of that name); if the library has a file of that name it is linked | `media.missing`, `media.from_library` |
+| the script names it and the archive does not carry it | the project gets a relation with **no media** (the state a delete for good leaves, healed by a later upload of that name); if the library has a live file of that name it is linked | `media.missing`, `media.from_library` |
+| the script names it, the archive does not carry it, and the library has it only in the media trash | linked to the trashed row, as a delete of a used media leaves it: restoring the file from the trash heals the project; nothing is taken out of the trash (a name has one row, live or trashed: `name` and `unix_name` are unique) | `media.missing` and a line in `warnings` saying the file is in the media trash |
 
 Then the project (`CuemsDBProject.import_project`, D10): a **new uuid**, the dates of now, and the first free pair
 `<unix_name>` / `<name>` (a taken pair gets `-NNN` and ` (N)`, the name cut to the schema's 60 characters); the probes
@@ -177,7 +180,9 @@ for `project_list` at the end (and after a relink changed a project).
 The staging folder (`<library>/.import/import-<hex>/`, 0700, on the library's filesystem) is removed in a `finally` and
 swept at editor start (`cli.sweep_import_staging`); the slot is freed in a `finally`. A failure after the first file was
 registered is I9 with the report so far: **what was added stays** (the files, their rows and sidecars) and the project is
-not created; importing the same archive again reuses what was added. A show that starts, or a project that is loaded
+not created; importing the same archive again reuses what was added. Once the project is created
+(`import_project` committed) the import is a success: a failure in what follows (the report of the files not carried,
+`project_list`, the last progress frame) is logged and listed under `warnings` (`_after_creation`). A show that starts, or a project that is loaded
 without the operator's acceptance, between two files stops the import at the next check (D4). A hard kill of the editor
 in the move-to-row window of `CuemsDBMedia.new` leaves a file with no row (the documented limit of ClickUp 1amfwm7kcwk):
 the next import stores it again as `<base>-001<ext>`.
@@ -192,7 +197,7 @@ the next import stores it again as `<base>-001<ext>`.
 | I4 | the engine does not answer | `Cannot check whether a show is running (the engine does not answer): nothing was imported` (`I4`) |
 | I5 | `loaded` and no `accept_loaded: true` | `A project is loaded and waiting for GO: an import writes the whole project to disk and builds its previews, and can make the next GO late. Accept the warning in the import dialog to go on` (`I5`) |
 | I6 | no valid ticket on `/upload` | `Import refused: start it again from the project list` (`I6`) |
-| I7 | the upload is not what was announced | `The upload is not complete or does not match: import again` (`I7`) |
+| I7 | the upload is not what was announced, or a text frame other than `finished` arrives during it | `The upload is not complete or does not match: import again` (`I7`) |
 | I8a | the archive is refused | `Not a project archive made by Export: <reason>` (`I8A`, `_refused`) |
 | I8b | the script is refused by the schema | `This project's script is not valid for this controller (cuems-utils <version>): <reason>. If the archive comes from a newer version, update this controller first` (`schema_text`) |
 | I9 | a later check refuses, or a failure while adding | `Import interrupted: <the text of I3, I4 or I5, or the failure>. Nothing that existed was changed; media added: <names, or none>` (`interrupted_text`) |

@@ -522,6 +522,25 @@ class TestUploadSession:
         assert os.listdir(env.staging_root) == []
         assert env.state() == before
 
+    @pytest.mark.parametrize('frame', ['{"action": "ping"}', 'not json',
+                                       '{"action": "finished", "value": 5}'],
+                             ids=['another_action', 'not_json', 'finished_without_an_md5'])
+    def test_16_a_text_frame_that_is_not_finished_is_I7(self, env, frame):
+        """Change review R11: the browser sends nothing but binary frames and
+        ``finished`` on this socket; any other text frame ends the import (I7)
+        instead of being ignored and holding the one slot."""
+        data = the_zip(env)
+        parts = chunks(data)
+        before = env.state()
+        server, sock, owner = run_upload(
+            env, lambda t: [first_frame(len(data), t), parts[0], frame, *parts[1:],
+                            finished(md5(data))], size=len(data))
+        assert [f['error'] for f in errors(sock)] == [I7]
+        assert not any('imported' in f for f in sock.frames())
+        assert os.listdir(env.staging_root) == []
+        assert env.state() == before
+        assert not server.import_slot.busy
+
     def test_16_the_socket_closed_before_finished_drops_the_import(self, env):
         data = the_zip(env)
         before = env.state()
@@ -589,7 +608,9 @@ class TestUploadSession:
 class TestLaterChecks:
     def test_17_a_show_that_starts_at_the_second_file_stops_the_import_I9(self, env):
         data = the_zip(env)
-        owner = FakeOwner('none', 'none', 'running')          # end of upload, file 1, file 2
+        # end of upload; file 1 before its extraction and before its registration (R1);
+        # file 2 before its extraction
+        owner = FakeOwner('none', 'none', 'none', 'running')
         server, sock, owner = run_upload(
             env, lambda t: [first_frame(len(data), t), *chunks(data), finished(md5(data))],
             owner=owner, size=len(data))

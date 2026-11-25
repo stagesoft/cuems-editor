@@ -279,10 +279,12 @@ def _is_noise(name):
 def _check_entry(info):
     """The whole-archive refusals, for every entry, used or not (D7)."""
     name = info.filename
+    if '\x00' in info.orig_filename:
+        # zipfile cuts ``filename`` at the first NUL; ``orig_filename`` is the
+        # name as the archive writes it (change review R9).
+        raise _refused(f'entry {_q(info.orig_filename)} has a NUL in its name')
     if '\\' in name:
         raise _refused(f'entry {_q(name)} has a backslash in its name')
-    if '\x00' in name:
-        raise _refused(f'entry {_q(name)} has a NUL in its name')
     if name.startswith('/'):
         raise _refused(f'entry {_q(name)} is an absolute name')
     parts = name[:-1].split('/') if name.endswith('/') else name.split('/')
@@ -360,6 +362,19 @@ def media_name_problem(name):
     except UnicodeError:
         return 'a character that is not UTF-8'
     return None
+
+
+#: The longest library name an archive may carry, in UTF-8 bytes (change review
+#: R12): a file name may have 255, and the library makes longer ones from it:
+#: the ``-NNN`` that ``new()`` adds on a taken name, then the longest name built
+#: from that, the loop period's temporary file ``.<name>.period.XXXXXXXX``
+#: (``media_sidecars.write_period``, mkstemp's 8 characters); the video index's
+#: ``<name>.idx.tmp`` (cuems-videoindexer) and the thumbnail and waveform
+#: (``<stem>_<ext>.png``, ``.dat``) are shorter. 255 - 4 - 17 = 234.
+_NNN_BYTES = len('-001')
+_SIDECAR_GROWTH = max(len('.' + media_sidecars.SIDECAR_EXT + '.') + 8,
+                      len(media_sidecars.INDEX_EXT + '.tmp'), len('_.png'), len('_.dat'))
+MAX_LIBRARY_NAME_BYTES = 255 - _NNN_BYTES - _SIDECAR_GROWTH
 
 
 #: What a library's media names are made of: what the sanitiser keeps
@@ -467,8 +482,9 @@ def _read_script(path, schema_name):
         raise ProjectImportError(schema_text(e.reason or e))
     except Exception as e:
         raise ProjectImportError(schema_text(f'{type(e).__name__}: {e}'))
-    if not isinstance(data, dict) or not isinstance(data.get('CuemsScript'), dict):
-        raise _refused('script.xml holds no CuemsScript')
+    # No "holds no CuemsScript" check (change review R14): the schema's one
+    # global element is CuemsProject and its CuemsScript is required, so a
+    # document without one is refused by ``reader.read()`` above (I8b).
     return data
 
 
@@ -515,8 +531,8 @@ def _check(zf, zip_size, db, staging, plan, report, progress):
         by_name.setdefault(info.filename, []).append(info)
     script_info = _read_script_entry(zf, by_name, db, staging, plan, report)
     _match_media(by_name, db, plan)
-    used = [script_info] + list(plan.entries.values())
-    report['ignored'] = [i.filename for i in infos if not any(i is u for u in used)]
+    used = {id(script_info)} | {id(info) for info in plan.entries.values()}
+    report['ignored'] = [i.filename for i in infos if id(i) not in used]
     _read_media_entries(zf, plan, progress)
     _note_stale_md5(plan, report)
 
@@ -571,6 +587,10 @@ def _match_media(by_name, db, plan):
             continue
         if db.media.get_type(lib) is None:
             raise _refused(f'the media file {_q(name)} has no known media type')
+        if len(lib.encode('utf-8')) > MAX_LIBRARY_NAME_BYTES:
+            raise _refused(f'the media name {_q(name)} is refused (more than '
+                           f'{MAX_LIBRARY_NAME_BYTES} bytes in UTF-8 as the library holds it: '
+                           'no room for the -NNN of a taken name and its sidecars)')
         plan.entries[name] = entries[0]
 
 
@@ -743,13 +763,17 @@ def _after_registration(db, lib_name, report, list_update):
 
 
 def _register(zf, db, plan, staging, report, status, accept_loaded, progress, list_update):
-    """Step 2 (b): each file to add, after the rule is asked again."""
+    """Step 2 (b): each file to add, the rule asked again before its
+    extraction and again right before its registration (D4)."""
     for i, name in enumerate(plan.add):
         _ask(status, accept_loaded)
         if progress:
             progress('media', i, len(plan.add), name)
         staged = os.path.join(staging, f'media-{i}')
         _extract(zf, plan.entries[name], staged, plan.md5[name])
+        # Asked again right before the registration: a big file takes a while
+        # to extract, and a show may start meanwhile (change review R1).
+        _ask(status, accept_loaded)
         lib_name = db.media.new(staged, plan.library[name], plan.md5[name])
         plan.reuse[name] = lib_name
         report['media']['added'].append(lib_name)
@@ -781,13 +805,19 @@ def _remap(plan):
 def _note_not_carried(plan, project_uuid, report):
     """D9, after the creation: a file the script names and the archive lacks
     is ``missing`` (a row with no media) or ``from_library`` (linked to the
-    library's file of that name), under the name the library would hold
-    (D7), with a rename when that differs from the script's. When ``new()``
-    gave one of this import's files that very name, it is a warning instead
-    (D8)."""
+    library's live file of that name), under the name the library would
+    hold (D7), with a rename when that differs from the script's. When
+    ``new()`` gave one of this import's files that very name, it is a warning
+    instead (D8). A name whose row is in the media trash keeps its link to
+    that row, as a delete of a used media leaves it, so a restore heals the
+    project; it is reported ``missing``, with a warning that says where the
+    file is (Ion, 2026-11-25; change review R4). ``name`` and ``unix_name``
+    are unique in the library: a name has one row, live or trashed."""
     registered = set(report['media']['added'])
     links = {r.media_filename: r.media_id for r in
              ProjectMedia.select().where(ProjectMedia.project == project_uuid)}
+    trashed = {str(m.uuid) for m in Media.select(Media.uuid).where(
+        Media.uuid.in_([v for v in links.values() if v is not None]) & (Media.in_trash == True))}  # noqa: E712
     for source in plan.missing:
         name = plan.library[source]
         if name != source:
@@ -800,10 +830,34 @@ def _note_not_carried(plan, project_uuid, report):
         elif links.get(name) is None:
             report['media']['missing'].append(name)
             Logger.info(f'import: missing {name}')
+        elif str(links[name]) in trashed:
+            report['media']['missing'].append(name)
+            report['warnings'].append(
+                f'{name}: not in the archive, and the library has it only in the media trash: '
+                'restoring it from the trash brings it back to this project')
+            Logger.info(f'import: missing {name}, linked to its row in the media trash')
         else:
             report['media']['from_library'].append(name)
             Logger.info(f'import: {name} not in the archive, linked to the library\'s file '
                         '(its content was not compared)')
+
+
+def _after_creation(plan, project_uuid, report, progress, list_update):
+    """What follows the creation, each step on its own: a failure is logged
+    and warned, never raised (change review R10)."""
+    steps = (('the report of the files the archive does not carry',
+              lambda: _note_not_carried(plan, project_uuid, report)),
+             ('the project list update', lambda: list_update and list_update('project_list')),
+             ('the progress frame', lambda: progress and progress('project', 1, 1,
+                                                                 report['project']['unix_name'])))
+    for what, step in steps:
+        try:
+            step()
+        except Exception as e:
+            Logger.error(f'import: the project {report["project"]["unix_name"]} was created, '
+                         f'{what} failed: {type(e).__name__}: {e}')
+            report['warnings'].append(f'The project was created, but {what} failed: '
+                                      f'{type(e).__name__}: {one_line(e)}')
 
 
 def _create(db, plan, report, status, accept_loaded, progress, list_update):
@@ -815,13 +869,12 @@ def _create(db, plan, report, status, accept_loaded, progress, list_update):
     if progress:
         progress('project', 0, 1, plan.top)
     project_uuid, unix_name, name = db.project.import_project(plan.data, plan.top, script['name'])
+    # The project exists from here: what follows is best effort, and the import
+    # is a success whatever happens (an I9 would make the operator import again
+    # and get a second copy; change review R10).
     report['project'] = {'uuid': project_uuid, 'name': name, 'unix_name': unix_name,
                          'renamed': (unix_name, name) != (plan.top, plan.source_name)}
-    _note_not_carried(plan, project_uuid, report)
-    if list_update:
-        list_update('project_list')
-    if progress:
-        progress('project', 1, 1, unix_name)
+    _after_creation(plan, project_uuid, report, progress, list_update)
     media = report['media']
     Logger.info(f'imported {unix_name} ({project_uuid}): added {len(media["added"])}, reused '
                 f'{len(media["reused"])}, renamed {len(media["renamed"])}, missing '
@@ -959,7 +1012,8 @@ class ImportSession:
         """The zip, frame by frame, each answered ``ready``; ``True`` once
         ``finished`` brought the MD5 of what was received, ``False`` when the
         socket closed before (the import is dropped). I7 on more bytes than
-        announced, fewer, another MD5, or no frame for :data:`UPLOAD_STALL_S`."""
+        announced, fewer, another MD5, a text frame that is not ``finished``,
+        or no frame for :data:`UPLOAD_STALL_S`."""
         digest = hashlib.md5()
         got = 0
         with open(path, 'xb') as sink:
@@ -980,8 +1034,14 @@ class ImportSession:
                     await self._send({'ready': True})
                     continue
                 received = _finished_md5(message)
-                if received is not None:
-                    break
+                if received is None:
+                    # Only binary frames and ``finished`` belong here; anything
+                    # else would hold the one slot while resetting the stall
+                    # timer (change review R11).
+                    Logger.warning('import: a text frame that is not finished during the '
+                                   f'upload: {one_line(message)[:200]!r}')
+                    raise ProjectImportError(I7)
+                break
         if got != size or received.lower() != digest.hexdigest():
             raise ProjectImportError(I7)
         return True
