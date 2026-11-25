@@ -462,19 +462,48 @@ class TestPublishing:
         _assert_complete(os.path.join(env.folder, 'proj1.zip'), env)
 
     def test_6_the_replace_is_atomic_the_name_never_points_at_a_partial_zip(self, env, monkeypatch):
-        env.export()
+        """The published name changes hands in one rename: it is never removed,
+        and never written into. Each assertion catches a publish that looks the
+        same afterwards: a copy over the name, or a remove before the rename."""
         path = os.path.join(env.folder, 'proj1.zip')
-        seen = []
-        real_replace = os.replace
+        # the previous export, unlike the new one: two exports of an unchanged
+        # project are equal, and a copy over the name would not show
+        with zipfile.ZipFile(path, 'w') as z:
+            z.writestr('previous.txt', b'the previous export')
+        with open(path, 'rb') as f:
+            old_bytes = f.read()
+        old_inode = os.stat(path).st_ino
+        renames, removed = [], []
+        real_replace, real_remove, real_unlink = os.replace, os.remove, os.unlink
 
-        def spy(src, dst):
-            # at the instant of the replace the name still holds the whole old zip
-            seen.append(zipfile.is_zipfile(path))
-            return real_replace(src, dst)
+        def spy_replace(src, dst, *args, **kwargs):
+            if os.fspath(dst) == path:
+                # the instant before: the name still holds the OLD zip, untouched
+                with open(path, 'rb') as f:
+                    untouched = f.read() == old_bytes
+                renames.append((os.fspath(src), os.stat(src).st_ino, os.stat(path).st_ino,
+                                zipfile.is_zipfile(src), untouched))
+            return real_replace(src, dst, *args, **kwargs)
 
-        monkeypatch.setattr(os, 'replace', spy)
+        def spy_remove(real):
+            def remove(target, *args, **kwargs):
+                removed.append(os.fspath(target))
+                return real(target, *args, **kwargs)
+            return remove
+
+        monkeypatch.setattr(os, 'replace', spy_replace)
+        monkeypatch.setattr(os, 'remove', spy_remove(real_remove))
+        monkeypatch.setattr(os, 'unlink', spy_remove(real_unlink))
         env.export()
-        assert seen == [True]
+
+        assert len(renames) == 1, 'the name must be published by one os.replace'
+        src, part_inode, inode_before, part_whole, untouched = renames[0]
+        assert os.path.dirname(src) == env.folder and src.endswith('.part')
+        assert part_whole
+        assert inode_before == old_inode and untouched, 'the name was written before the rename'
+        # the file written as .part is the one that owns the name: nothing was copied
+        assert os.stat(path).st_ino == part_inode != old_inode
+        assert path not in removed
         _assert_complete(path, env)
 
     def test_the_info_line_names_the_file_its_size_and_the_seconds(self, env):

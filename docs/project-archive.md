@@ -60,6 +60,7 @@ From the released code (`shutil.copy` into `<tmp>/<unix_name>/`, then `shutil.ma
 | | |
 |---|---|
 | Written to | `/var/lib/cuems/exports/<unix_name>.zip`. A new export of a project **replaces** the previous one with an atomic `os.replace` (Ion, 2026-11-24): one zip per project, no `-001`, no `-002`. A download that already has the old file open finishes it |
+| Downloading across a replace | Only **one continuous `GET`** is promised to give one whole zip. A resumed or multi-range download that spans a replace can join bytes of two zips: with `If-Range` apache should answer `200` with the whole new file (inferred, not tested on a rig), without it the ranges come from whatever owns the name. A client that resumes sends `If-Range`, or starts again |
 | Served at | `/exports/<unix_name>.zip`, HTTP 80 and HTTPS 443, `application/zip`, ranges honoured (`206`). A missing file is `404`, the folder listing `403`, an unfinished `.<name>.XXXX.part` `403` `[rig]` |
 | Kept | removed by a systemd-tmpfiles rule after one day (a zip goes one to two days after it was last touched); cuems-common installs the folder, the rule and the apache snippet; the editor refuses to export without them (E1) |
 | Written how | one pass from the library, under a private `.<unix_name>.XXXX.part` (mode `0600`), then `0644` and the replace |
