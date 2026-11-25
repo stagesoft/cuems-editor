@@ -858,6 +858,12 @@ class CuemsWsUser():
         refusal = import_refusal(status, accept_loaded)
         if refusal is not None:
             return refusal
+        # A held slot is answered before the space (R3): the running import's
+        # claim counts in that check, and "No space" beside the free room it
+        # prints would send the operator deleting media instead of waiting.
+        # ``take`` below stays the atomic one (no await between them).
+        if self.server.import_slot.busy:
+            return CuemsProjectImport.I1
         try:
             root = CuemsProjectImport.ensure_staging_root(self.server.settings_dict)
         except ProjectImportError as e:

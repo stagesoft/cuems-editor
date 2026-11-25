@@ -322,6 +322,19 @@ class TestGuard:
         assert frames == [_error(I1)]
         assert f'import refused: {I1}' in warned
 
+    def test_15_a_held_slot_answers_I1_even_when_the_space_would_not_fit(self, tmp_path, disk):
+        """The running import's claim counts in the space check (R3), so the
+        space was answered first: "No space", with the free room printed beside
+        it, would send the operator deleting media when the answer is to wait
+        (the export session's review of R3)."""
+        server = _guard_server(tmp_path)
+        _ticket_of(guard(tmp_path, 'none', server=server)[0])
+        disk.total = 20 * GIB
+        disk.free = 1 * GIB                          # nothing would fit
+        frames, server, user, st, warned = guard(tmp_path, 'none', server=server)
+        assert frames == [_error(I1)]
+        assert f'import refused: {I1}' in warned
+
     def test_15_the_space_at_the_guard_at_its_edge(self, tmp_path, disk):
         disk.total = 20 * GIB
         size = 3 * GIB

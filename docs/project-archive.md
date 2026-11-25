@@ -119,7 +119,7 @@ existed, and takes nothing out of the trash); a failure leaves what was added an
    (`accept_loaded` optional; only the JSON `true` accepts) `[code]` `CuemsWsUser.request_import_project`. The editor
    asks the engine (`_engine_status()`, the export's, unchanged) and applies the rule of D3 (`import_refusal`):
    `running` is refused (also with the acceptance), no usable answer is refused, `loaded` needs `accept_loaded: true`,
-   `none` goes on. Then it checks the space (`space_refusal`: the staging folder's filesystem keeps the export's
+   `none` goes on. Then a held slot answers I1 (before the space, whose check counts the running import's own claim). Then it checks the space (`space_refusal`: the staging folder's filesystem keeps the export's
    reserve, the larger of 5 GiB and a tenth, the bytes claimed by running exports and imports counted; it claims
    nothing, see "Space shared with the export" below) and takes the one import slot (`CuemsWsServer.ImportSlot.take`). Answer:
    `{"type":"project_import","value":{"ticket":"<32 hex>","expires_s":60}}`; a refusal is the existing action error
