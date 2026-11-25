@@ -120,12 +120,15 @@ existed, and takes nothing out of the trash); a failure leaves what was added an
    asks the engine (`_engine_status()`, the export's, unchanged) and applies the rule of D3 (`import_refusal`):
    `running` is refused (also with the acceptance), no usable answer is refused, `loaded` needs `accept_loaded: true`,
    `none` goes on. Then it checks the space (`space_refusal`: the staging folder's filesystem keeps the export's
-   reserve, the larger of 5 GiB and a tenth) and takes the one import slot (`CuemsWsServer.ImportSlot.take`). Answer:
+   reserve, the larger of 5 GiB and a tenth, the bytes claimed by running exports and imports counted; it claims
+   nothing, see "Space shared with the export" below) and takes the one import slot (`CuemsWsServer.ImportSlot.take`). Answer:
    `{"type":"project_import","value":{"ticket":"<32 hex>","expires_s":60}}`; a refusal is the existing action error
    `{"type":"error","action":"project_import","value":<text>}`.
 2. **The upload**, on `/upload`: first frame `{"action":"upload","value":{"name","size","type":"PROJECT","ticket"}}`
    (`size` equal to the guard's, `ticket` one use, void unused after 60 s; without `type` the frame is a media upload as
-   always) `[code]` `CuemsUpload.process_upload_message` → `ImportSession.run`. Then, as for a media upload: the editor
+   always) `[code]` `CuemsUpload.process_upload_message` → `ImportSession.run`. The editor claims the zip's size on the
+   staging folder's filesystem (`claim_space`): when a running export took that room since the guard, the answer is
+   I2 as a fatal error and no byte is taken. Then, as for a media upload: the editor
    answers `{"ready": true}`, each binary frame (at most 500 000 bytes, the socket's limit being 1 048 576) is answered
    `{"ready": true}`, and `{"action":"finished","value":"<md5 hex of the whole zip>"}` ends the transfer; any other text
    frame during the transfer is I7 (`_receive`). The editor compares the size and the MD5 (I7), asks the rule of D3 again
@@ -150,7 +153,17 @@ writes it, `ZipInfo.orig_filename`: `zipfile` cuts `filename` at the NUL), a sym
 | Ignored, and listed in the report | directory entries, `__MACOSX/`, `.DS_Store`, `Thumbs.db` and any entry the script does not name | `_is_noise`, `report["ignored"]` |
 | The script | one file, at most `MAX_SCRIPT_BYTES` (64 MiB), read through the defused parser (a `DOCTYPE` or an entity is I8a), validated by the box's schema (cuems-utils; a schema failure is I8b with the version and the reason), parsed and serialised once; the save-time gates (zero fade, media cue without a file) are **not** applied: what they would refuse is listed under `warnings` | `_read_script`, `_gate_warnings` |
 | Media names | refused: empty, `.`, `..`, a separator, a control character, more than 255 bytes in UTF-8, or a name with no known media type. A name with capitals is **accepted** and taken to the name the library holds (as the upload does: `CuemsUpload.py:129`), reported as a rename; a name already lower-case and made of alphanumerics, `.`, `_`, `-` and U+0307 is kept. The archive is refused if the library name is empty, `.` or `..`, or if two used names share one (`A.wav` + `a.wav`), or if the library name of a file the archive carries is longer than `MAX_LIBRARY_NAME_BYTES` (234 bytes in UTF-8: 255 less the `-NNN` that `new()` adds on a taken name and the 17 bytes the longest name built from it adds, the loop period's temporary `.<name>.period.XXXXXXXX`) | `media_name_problem`, `library_name`, `_match_media` |
-| Space | the exact bytes to be added against the library's filesystem and the reserve (I2) | `_check_space` |
+| Space | the exact bytes to be added against the library's filesystem and the reserve (I2), claimed | `_claim_space` |
+
+**Space shared with the export** (change review R3) `[code]` `CuemsSpace`. A running export or import writes for
+minutes, and the free space shows its bytes only as they land. Each registers what it will write (`CuemsSpace.claim`:
+the check and the registration are one hold of one lock), and every space check of either, the export's E2 included,
+subtracts from the free space the bytes the others **on the same filesystem** (`st_dev`) still have to write: what each
+claimed less what is already on disk, never below zero. The import claims the zip's size from the start of the upload,
+and, after the checks, the bytes of the files it adds: on one filesystem a file counts as written once extracted (its
+move into `media/` is a rename), on two the library's claim shrinks as each file is registered and the staging's holds
+the largest file. Every claim is released on every exit path (`finally`). The texts keep the filesystem's real free
+space; a single export or import alone is checked exactly as before.
 
 ### 8.3 What it does
 
@@ -192,7 +205,7 @@ the next import stores it again as `<base>-001<ext>`.
 | Code | When | Text (symbol) |
 |---|---|---|
 | I1 | another import holds the slot | `Another import is in progress: wait for it to end` (`I1`) |
-| I2 | the reserve would be broken, at the guard or after the checks | `No space to import: needs <X> GiB, <Y> GiB free in <folder>, <R> GiB kept in reserve` (`no_space_text`) |
+| I2 | the reserve would be broken, at the guard, when the upload starts or after the checks | `No space to import: needs <X> GiB, <Y> GiB free in <folder>, <R> GiB kept in reserve` (`no_space_text`) |
 | I3 | the engine says `running` | `A show is running: stop it before importing a project` (`I3`) |
 | I4 | the engine does not answer | `Cannot check whether a show is running (the engine does not answer): nothing was imported` (`I4`) |
 | I5 | `loaded` and no `accept_loaded: true` | `A project is loaded and waiting for GO: an import writes the whole project to disk and builds its previews, and can make the next GO late. Accept the warning in the import dialog to go on` (`I5`) |

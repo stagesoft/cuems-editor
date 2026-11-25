@@ -4,7 +4,6 @@
 import contextlib
 import os
 import tempfile
-import threading
 import time
 import traceback
 import shutil
@@ -22,6 +21,7 @@ from cuemsutils.log import logged, Logger
 from cuemsutils.tools import media_sidecars
 
 
+from cuemseditor import CuemsSpace
 from cuemseditor.CuemsErrors import *
 from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia
 from cuemseditor.CuemsDBMedia import (
@@ -42,10 +42,13 @@ EXPORT_CONF_PATH = '/etc/apache2/conf-enabled/cuems-exports.conf'
 _GIB = 1024 ** 3
 #: The longest name a script may carry (``script.xsd``, 1 to 60 characters, N3).
 SCRIPT_NAME_MAX = 60
-#: Exports running in this process: token -> [bytes to write, its .part path].
-#: They take room the filesystem has not yet lost, so the refusal counts them.
-_exports_lock = threading.Lock()
-_exports_running = {}
+# Exports and imports running in this process take room the filesystem has not
+# yet lost: both register it in ``CuemsSpace`` and both refusals count it (R3).
+
+
+def export_reserve(usage):
+    """D14: the larger of :data:`EXPORT_MIN_RESERVE` and a tenth of the filesystem."""
+    return max(EXPORT_MIN_RESERVE, usage.total // EXPORT_RESERVE_FRACTION)
 
 
 def _copy_stream(src, dst):
@@ -1288,7 +1291,7 @@ class CuemsDBProject(StringSanitizer):
         """
         started = time.monotonic()
         part = None
-        token = object()
+        space = None
         try:
             try:
                 project = Project.get(Project.uuid == uuid)
@@ -1324,21 +1327,19 @@ class CuemsDBProject(StringSanitizer):
             sizes = {name: os.path.getsize(os.path.join(self.media_path, name))
                      for name in media_names}
             need = os.path.getsize(project_path) + sum(sizes.values())
-            usage = shutil.disk_usage(folder)
-            reserve = max(EXPORT_MIN_RESERVE, usage.total // EXPORT_RESERVE_FRACTION)
-            with _exports_lock:
-                others = sum(max(0, other[0] - self._export_written(other[1]))
-                             for other in _exports_running.values())
-                if usage.free - others - need < reserve:
-                    self._refuse_export(
-                        f'No space to export "{project.name}": needs {need / _GIB:.1f} GiB, '
-                        f'{usage.free / _GIB:.1f} GiB free in {folder}, '
-                        f'{reserve / _GIB:.1f} GiB kept in reserve')
-                _exports_running[token] = [need, None]
+            try:
+                # What is written is what the .part holds: ``part`` is set
+                # below, and the closure reads it when an other check asks.
+                space = CuemsSpace.claim(folder, need, export_reserve,
+                                         written=lambda: self._export_written(part))
+            except CuemsSpace.NoSpace as e:
+                self._refuse_export(
+                    f'No space to export "{project.name}": needs {need / _GIB:.1f} GiB, '
+                    f'{e.free / _GIB:.1f} GiB free in {folder}, '
+                    f'{e.reserve / _GIB:.1f} GiB kept in reserve')
 
             fd, part = tempfile.mkstemp(dir=folder, prefix='.{}.'.format(unix_name), suffix='.part')
             os.close(fd)
-            _exports_running[token][1] = part
             Logger.debug('exporting project {} to {}'.format(unix_name, part))
 
             with zipfile.ZipFile(part, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
@@ -1372,8 +1373,7 @@ class CuemsDBProject(StringSanitizer):
             Logger.error("error: {} {}; exporting project".format(type(e), e))
             raise e
         finally:
-            with _exports_lock:
-                _exports_running.pop(token, None)
+            CuemsSpace.release(space)
             if part is not None and os.path.lexists(part):
                 try:
                     os.remove(part)

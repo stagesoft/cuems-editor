@@ -47,6 +47,7 @@ from cuemsutils.tools.StringSanitizer import StringSanitizer
 from cuemsutils.xml.Parsers import CuemsParser
 from cuemsutils.xml.XmlReaderWriter import XmlReaderWriter
 
+from cuemseditor import CuemsSpace
 from cuemseditor.CuemsErrors import ProjectImportError
 from cuemseditor.CuemsDBModel import Media, Project, ProjectMedia
 from cuemseditor.CuemsDBMedia import MediaType, is_indexed_video
@@ -144,12 +145,25 @@ def reserve_of(usage):
 
 def space_refusal(folder, need):
     """I2 when writing *need* bytes into *folder*'s filesystem would leave less
-    than the reserve; else ``None``."""
-    usage = shutil.disk_usage(folder)
-    reserve = reserve_of(usage)
-    if usage.free - need < reserve:
-        return no_space_text(need, usage.free, folder, reserve)
+    than the reserve, the bytes running exports and imports on that
+    filesystem have claimed and not yet written counted (R3); else ``None``.
+    Registers nothing: the guard's check, whose ticket may never be used."""
+    try:
+        CuemsSpace.check(folder, need, reserve_of)
+    except CuemsSpace.NoSpace as e:
+        return no_space_text(need, e.free, folder, e.reserve)
     return None
+
+
+def claim_space(folder, need, written=None):
+    """:func:`space_refusal` and the registration of *need* bytes in one step
+    (``CuemsSpace.claim``): the :class:`CuemsSpace.Reservation`, which the
+    caller releases on every exit path; ``ProjectImportError`` (I2) when
+    they do not fit. ``written()`` says how many of them are on disk."""
+    try:
+        return CuemsSpace.claim(folder, need, reserve_of, written)
+    except CuemsSpace.NoSpace as e:
+        raise ProjectImportError(no_space_text(need, e.free, folder, e.reserve))
 
 
 def staging_root(settings_dict):
@@ -669,16 +683,54 @@ def _note_reused(report, name, lib_name):
         Logger.info(f'import: reused {name}')
 
 
-def _check_space(db, plan, staging):
+class _Landed:
+    """The bytes of this import's files already on disk: what its
+    reservations count as written, so that what they still claim shrinks as
+    the files land (R3). ``current`` is the staged file while it is being
+    extracted, ``None`` otherwise.
+
+    Read from other threads with no lock: each value only grows while a file
+    is in hand, and ``_register`` clears ``current`` before it adds the file
+    to ``extracted``, so a reader may count a byte as not yet written (refuses
+    a little early) but never one twice (which would overfill the disk)."""
+
+    def __init__(self):
+        self.extracted = 0      # files extracted whole
+        self.registered = 0     # files ``new()`` put in media/
+        self.current = None
+
+    def on_one_filesystem(self):
+        """The staging and media/ on one filesystem: a file's bytes land once,
+        while it is extracted; ``new()`` renames it, which takes no room."""
+        return self.extracted + CuemsSpace.size_of(self.current)
+
+    def in_media(self):
+        """media/ on its own filesystem: ``new()`` copies the file there,
+        counted when it returns."""
+        return self.registered
+
+    def in_staging(self):
+        """The staging on its own filesystem: the largest file is claimed for
+        the whole import, less the file being extracted."""
+        return CuemsSpace.size_of(self.current)
+
+
+def _claim_space(db, plan, staging, landed):
     """D6 after the checks: the bytes of the files that will really be added,
     on the library's filesystem; on two filesystems the staging is asked
-    for the largest one, which it holds while it is extracted."""
+    for the largest one, which it holds while it is extracted. Each is
+    claimed (R3): the reservations returned are the caller's to release."""
     sizes = [plan.entries[name].file_size for name in plan.add]
-    refusal = space_refusal(db.media.media_path, sum(sizes))
-    if refusal is None and sizes and os.stat(staging).st_dev != os.stat(db.media.media_path).st_dev:
-        refusal = space_refusal(staging, max(sizes))
-    if refusal is not None:
-        raise ProjectImportError(refusal)
+    media = db.media.media_path
+    if not sizes or CuemsSpace.device_of(staging) == CuemsSpace.device_of(media):
+        return [claim_space(media, sum(sizes), landed.on_one_filesystem)]
+    held = [claim_space(media, sum(sizes), landed.in_media)]
+    try:
+        held.append(claim_space(staging, max(sizes), landed.in_staging))
+    except BaseException:
+        CuemsSpace.release(*held)
+        raise
+    return held
 
 
 # --- The writes (D12): the files one by one, then the project ------------
@@ -762,19 +814,29 @@ def _after_registration(db, lib_name, report, list_update):
         Logger.error(f'import: checking the sidecars of {lib_name} failed: {type(e).__name__}: {e}')
 
 
-def _register(zf, db, plan, staging, report, status, accept_loaded, progress, list_update):
+def _register(zf, db, plan, staging, report, status, accept_loaded, progress, list_update,
+              landed=None):
     """Step 2 (b): each file to add, the rule asked again before its
-    extraction and again right before its registration (D4)."""
+    extraction and again right before its registration (D4). *landed*
+    follows the bytes on disk for the reservations of D6 (R3)."""
+    landed = landed or _Landed()
     for i, name in enumerate(plan.add):
         _ask(status, accept_loaded)
         if progress:
             progress('media', i, len(plan.add), name)
         staged = os.path.join(staging, f'media-{i}')
-        _extract(zf, plan.entries[name], staged, plan.md5[name])
+        size = plan.entries[name].file_size
+        landed.current = staged
+        try:
+            _extract(zf, plan.entries[name], staged, plan.md5[name])
+        finally:
+            landed.current = None           # first: never counted twice (``_Landed``)
+        landed.extracted += size
         # Asked again right before the registration: a big file takes a while
         # to extract, and a show may start meanwhile (change review R1).
         _ask(status, accept_loaded)
         lib_name = db.media.new(staged, plan.library[name], plan.md5[name])
+        landed.registered += size
         plan.reuse[name] = lib_name
         report['media']['added'].append(lib_name)
         if lib_name != name:
@@ -899,26 +961,33 @@ def import_archive(zip_path, db, staging, *, status, accept_loaded=False, progre
     """
     report = new_report()
     plan = _Plan()
-    with open_archive(zip_path) as zf:
-        try:
-            _check(zf, os.path.getsize(zip_path), db, staging, plan, report, progress)
-            _decide(db, plan, report)
-            _check_space(db, plan, staging)
-        except ProjectImportError:
-            raise
-        except Exception as e:
-            Logger.error(f'import: the check failed: {type(e).__name__}: {e}')
-            raise ProjectImportError(interrupted_text(f'{type(e).__name__}: {e}', []))
-        try:
-            _register(zf, db, plan, staging, report, status, accept_loaded, progress, list_update)
-            _create(db, plan, report, status, accept_loaded, progress, list_update)
-        except _Stop as e:
-            raise _interrupted(str(e), report)
-        except ProjectImportError as e:
-            raise _interrupted(str(e), report)
-        except Exception as e:
-            Logger.error(f'import: failed while adding: {type(e).__name__}: {e}')
-            raise _interrupted(str(e) or type(e).__name__, report)
+    landed = _Landed()
+    held = []
+    try:
+        with open_archive(zip_path) as zf:
+            try:
+                _check(zf, os.path.getsize(zip_path), db, staging, plan, report, progress)
+                _decide(db, plan, report)
+                held = _claim_space(db, plan, staging, landed)
+            except ProjectImportError:
+                raise
+            except Exception as e:
+                Logger.error(f'import: the check failed: {type(e).__name__}: {e}')
+                raise ProjectImportError(interrupted_text(f'{type(e).__name__}: {e}', []))
+            try:
+                _register(zf, db, plan, staging, report, status, accept_loaded, progress,
+                          list_update, landed)
+                _create(db, plan, report, status, accept_loaded, progress, list_update)
+            except _Stop as e:
+                raise _interrupted(str(e), report)
+            except ProjectImportError as e:
+                raise _interrupted(str(e), report)
+            except Exception as e:
+                Logger.error(f'import: failed while adding: {type(e).__name__}: {e}')
+                raise _interrupted(str(e) or type(e).__name__, report)
+    finally:
+        # R3: every file has landed, or the import stopped: nothing more to claim.
+        CuemsSpace.release(*held)
     return report
 
 
@@ -970,8 +1039,14 @@ class ImportSession:
             return
         self.owner = record.owner
         staging = None
+        space = None
         try:
             staging = make_staging(self.server.settings_dict)
+            # R3: the zip's bytes are claimed from here, when they start to
+            # arrive, to the end of the import; the guard registers nothing,
+            # as its ticket may never be used.
+            space = claim_space(os.path.dirname(staging), record.size,
+                                functools.partial(CuemsSpace.size_of, _zip_path(staging)))
             await self._import(record, staging, value.get('name'))
         except ProjectImportError as e:
             await self._fail(e)
@@ -980,13 +1055,14 @@ class ImportSession:
             await self._fail(ProjectImportError(interrupted_text(f'{type(e).__name__}: {e}', [])))
         finally:
             self.ended = True
+            CuemsSpace.release(space)
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=False, onerror=_log_rmtree_error)
             slot.release(record.ticket)
 
     async def _import(self, record, staging, name):
         Logger.info(f'import of {name!r} ({record.size} bytes) started')
-        zip_path = os.path.join(staging, 'archive.zip')
+        zip_path = _zip_path(staging)
         await self._send({'ready': True})
         if not await self._receive(zip_path, record.size):
             return
@@ -1104,6 +1180,11 @@ class ImportSession:
             await self.websocket.send(json.dumps(frame))
         except ws.exceptions.ConnectionClosed as e:
             Logger.debug(f'import: frame not sent, the socket is closed ({e})')
+
+
+def _zip_path(staging):
+    """Where the session writes the uploaded zip."""
+    return os.path.join(staging, 'archive.zip')
 
 
 def _write_chunk(sink, digest, data):
