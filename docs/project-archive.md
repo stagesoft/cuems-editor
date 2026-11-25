@@ -181,8 +181,9 @@ Then the project (`CuemsDBProject.import_project`, D10): a **new uuid**, the dat
 `<unix_name>` / `<name>` (a taken pair gets `-NNN` and ` (N)`, the name cut to the schema's 60 characters); the probes
 that fill the media durations run before the one short transaction that writes the row, the folder, the relations and
 `script.xml`. Other projects whose dangling relation a new file satisfies are relinked first, best effort, as an upload
-does (`_relink`, `report.relinked`). The other sessions get `list_update` for `file_list` after each registration and
-for `project_list` at the end (and after a relink changed a project).
+does (`_relink`, `report.relinked`). The other sessions get `list_update` for `file_list` after each registration, and
+at the end for `project_list` (also after a relink changed a project) and for `file_list` again: the media list names
+each file's projects, the reused files' too.
 
 **The report**, in `{"imported": ...}` and beside a fatal error:
 `{"project":{"uuid","name","unix_name","renamed"},"media":{"added":[],"reused":[],"renamed":[{"from","to"}],"missing":[],"from_library":[]},"sidecars_failed":[{"name","what"}],"relinked":[{"project","name"}],"ignored":[],"warnings":[]}`;

@@ -935,7 +935,23 @@ class TestPerFile:
         assert sorted(f for f in os.listdir(env.media_dir) if '-0' in f) == []
         ids = media_ids_in(env.script_of(TOP))
         assert ids == {n: uuids[n] for n in MEDIA}
-        assert 'file_list' not in env.lists                 # nothing was registered
+        assert env.lists.count('file_list') == 1            # none registered: the one after the creation
+
+    def test_3_the_media_list_is_announced_once_the_project_holds_the_files(self, env):
+        """The media tab names each file's projects, so the sessions must ask
+        again after the project exists, also when every file was reused."""
+        for n, data in MEDIA.items():
+            env.put_media(n, data)
+        links_when_told = []
+
+        class Told(list):
+            def append(self, list_type):
+                links_when_told.append((list_type, ProjectMedia.select().count()))
+                super().append(list_type)
+
+        env.lists = Told()
+        env.run(env.zip(export_entries()))
+        assert ('file_list', len(MEDIA)) in links_when_told
 
     def test_3_importing_again_gives_a_second_project_and_reuses_all(self, env):
         path = env.zip(export_entries())

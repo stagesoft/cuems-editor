@@ -910,6 +910,8 @@ def _after_creation(plan, project_uuid, report, progress, list_update):
     steps = (('the report of the files the archive does not carry',
               lambda: _note_not_carried(plan, project_uuid, report)),
              ('the project list update', lambda: list_update and list_update('project_list')),
+             # The media list names each file's projects: it changed for the reused ones too.
+             ('the media list update', lambda: list_update and list_update('file_list')),
              ('the progress frame', lambda: progress and progress('project', 1, 1,
                                                                  report['project']['unix_name'])))
     for what, step in steps:
