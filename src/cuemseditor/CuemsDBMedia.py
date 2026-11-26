@@ -325,7 +325,7 @@ class CuemsDBMedia(StringSanitizer):
             candidate = base + "-{:03d}".format(i) + ext
         return candidate
 
-    def new(self, tmp_file_path, filename, md5=None):
+    def new(self, tmp_file_path, filename, md5=None, stop=None):
         """Intake a newly uploaded file: move it into the media library and create sidecars.
 
         Steps performed atomically:
@@ -346,6 +346,11 @@ class CuemsDBMedia(StringSanitizer):
             filename: Sanitised target filename (no directory component).
             md5: the file's MD5 as the upload verified it (``None`` when the
                 caller has none); stored as ``file_md5`` (869fat84r, D18).
+            stop: called between the steps, never after the row is written; it
+                raises to give the file up, and the rollback and clean-up below
+                run as on any failure. An import passes it so that a GO ends the
+                registration (1amfwm7kcjp, D19); it also kills the program in
+                hand, whose failure alone is only logged here.
 
         Returns:
             The actual destination filename (may differ from *filename* if
@@ -359,6 +364,8 @@ class CuemsDBMedia(StringSanitizer):
             try:
                 dest_filename = None
                 dest_filename = CopyMoveVersioned.move(tmp_file_path, self.media_path, self._free_filename(filename))
+                stop = stop or (lambda: None)
+                stop()
 
                 try:
                     _type = self.get_type(dest_filename)
@@ -375,6 +382,7 @@ class CuemsDBMedia(StringSanitizer):
                 except Exception as e:
                     Logger.warning(f'could not get media duration; error : {e}')
                     media_duration = None
+                stop()
 
                 try:
                     if _type is MediaType.MOVIE:
@@ -398,9 +406,11 @@ class CuemsDBMedia(StringSanitizer):
                 except Exception as e:
                     Logger.error(f'could not generate {_type} thumbnail or waveform; error : {e}')
                     media_thumbnail_binary_data = None
+                stop()
 
                 if _type in (MediaType.MOVIE, MediaType.AUDIO):
                     self.create_loop_period(dest_filename)   # never raises
+                stop()
 
                 # Stored like the duration (869fat84r): a movie's pixel size, so
                 # the engine does not probe the file when it arms a cue (a
@@ -415,6 +425,7 @@ class CuemsDBMedia(StringSanitizer):
                 file_size = media_file_size(dest_path)
                 file_md5 = md5.lower() if isinstance(md5, str) and len(md5) == 32 else None
 
+                stop()
                 media_uuid = new_uuid()
                 Media.create(uuid=str(media_uuid), name=dest_filename, unix_name=dest_filename, created=new_datetime(), modified=new_datetime(), duration=media_duration, media_type=_type.name, in_trash=False, pixel_width=pixel_width, pixel_height=pixel_height, file_size=file_size, file_md5=file_md5)
                 Logger.debug(f'new media created: {media_uuid} {dest_filename}')
@@ -440,6 +451,13 @@ class CuemsDBMedia(StringSanitizer):
                 period_path = media_sidecars.sidecar_path(self.get_file_path(dest_filename))
                 if os.path.exists(period_path):
                     os.remove(period_path)
+
+                # The video index, and the temporary file of an indexer that was
+                # killed while it wrote it.
+                index_path = media_sidecars.video_index_path(self.get_file_path(dest_filename))
+                for path in (index_path, index_path + '.tmp'):
+                    if os.path.exists(path):
+                        os.remove(path)
 
                 raise e
 

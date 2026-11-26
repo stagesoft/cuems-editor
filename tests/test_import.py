@@ -859,8 +859,8 @@ class TestRoundTrip:
         real_extract = imp._extract
         extracted = []
 
-        def extract(zf, info, path, md5_hex):
-            real_extract(zf, info, path, md5_hex)
+        def extract(zf, info, path, md5_hex, stop=None):
+            real_extract(zf, info, path, md5_hex, stop)
             extracted.append(info.filename)
             words[0] = 'running'                             # GO pressed during the extraction
 

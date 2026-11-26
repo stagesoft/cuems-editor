@@ -20,16 +20,18 @@ Two parts:
 
 The guard that hands out the ticket is ``CuemsWsUser.request_import_project``;
 the one import slot is ``CuemsWsServer.ImportSlot``. Design: cuems-RELATIONS
-``Plans/2026-11-24-project-import-from-zip.md`` (Spec rev 3); the archive's
+``Plans/2026-11-24-project-import-from-zip.md`` (Spec rev 5); the archive's
 layout: ``docs/project-archive.md``.
 """
 import asyncio
+import contextlib
 import copy
 import functools
 import hashlib
 import json
 import os
 import shutil
+import signal
 import stat
 import struct
 import subprocess
@@ -68,9 +70,11 @@ MAX_DIRECTORY_BYTES = 4 * 1024 ** 2
 MAX_ENTRIES = 10_000
 #: A ``progress`` frame at least this often while the editor works (review row 7).
 HEARTBEAT_S = 5
-#: D19: how often the engine is asked while the zip is received and checked, so
-#: that a GO does not wait for the end of a long upload.
-WATCH_S = 5
+#: D19: a GO has total priority. The engine is asked this often for as long as the
+#: import runs; once it refuses, the program the import is waiting for is killed,
+#: and again every :data:`KILL_S` until the import is over.
+WATCH_S = 1
+KILL_S = 0.1
 #: D19: the import's own work, and the programs it starts, run at the lowest
 #: priority: CPU niceness 19, and the last level of the best-effort I/O class
 #: (not ``idle``: a starved builder runs into its timeout and leaves a media
@@ -429,11 +433,12 @@ def library_name(name):
 
 # --- Reading entries ------------------------------------------------------
 
-def _copy_entry(zf, info, sink=None, cap=None, progress=None, label=None):
+def _copy_entry(zf, info, sink=None, cap=None, progress=None, label=None, stop=None):
     """Read *info* to its end in :data:`CHUNK` pieces, ``zipfile`` checking its
     CRC32 at the end; write each piece to *sink* when given. Returns its MD5
     (hex). A defect of the archive is I8a with the entry's name; a failure of
-    the sink (the staging's disk) is not caught here."""
+    the sink (the staging's disk) is not caught here. ``stop()`` is called before
+    each piece and raises to end the read (D19)."""
     digest = hashlib.md5()
     got = 0
     try:
@@ -442,6 +447,8 @@ def _copy_entry(zf, info, sink=None, cap=None, progress=None, label=None):
         raise _refused(f'entry {_q(info.filename)} cannot be read ({type(e).__name__}: {e})')
     with src:
         while True:
+            if stop:
+                stop()
             try:
                 chunk = src.read(CHUNK)
             except _READ_ERRORS as e:
@@ -462,11 +469,13 @@ def _copy_entry(zf, info, sink=None, cap=None, progress=None, label=None):
     return digest.hexdigest()
 
 
-def _hash_file(path):
+def _hash_file(path, stop=None):
     """The MD5 of a library file, read only (D8: a row with no ``file_md5``)."""
     digest = hashlib.md5()
     with open(path, 'rb') as f:
         for chunk in iter(lambda: f.read(CHUNK), b''):
+            if stop:
+                stop()
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -646,7 +655,7 @@ def _note_stale_md5(plan, report):
                 report['warnings'].append(text)
 
 
-def _same_file(row, path, size, md5_hex):
+def _same_file(row, path, size, md5_hex, stop=None):
     """D8: the library's file under that name is the archive's: same size on
     disk (and in the row when it has one) and same MD5 (the row's, or the
     file's own when the row has none)."""
@@ -659,15 +668,16 @@ def _same_file(row, path, size, md5_hex):
     if not stat.S_ISREG(st.st_mode) or st.st_size != size:
         return False
     held = row.file_md5.lower() if isinstance(row.file_md5, str) and row.file_md5 else None
-    return (held or _hash_file(path)) == md5_hex
+    return (held or _hash_file(path, stop)) == md5_hex
 
 
-def _decide(db, plan, report):
+def _decide(db, plan, report, cut):
     """D8 per file: its library name (D7), then ``<base>-NNN<ext>`` as
     ``new()`` would try them, up to the first free one. A live file of the
     same content on the way is reused; the trash is never taken from; else
     the file is added."""
     for name, info in plan.entries.items():
+        cut.check()
         base, ext = os.path.splitext(plan.library[name])
         candidate, i = plan.library[name], 0
         while True:
@@ -678,7 +688,7 @@ def _decide(db, plan, report):
                 plan.add.append(name)
                 break
             if row is not None and not row.in_trash and _same_file(row, path, info.file_size,
-                                                                   plan.md5[name]):
+                                                                   plan.md5[name], cut.check):
                 plan.reuse[name] = candidate
                 _note_reused(report, name, candidate)
                 break
@@ -758,11 +768,62 @@ class _Stop(Exception):
     """A later check refused: the import stops there (D4)."""
 
 
-def _extract(zf, info, path, md5_hex):
+def _children_of(tid):
+    """The processes one thread of this process started and has not reaped (Linux)."""
+    try:
+        with open(f'/proc/self/task/{tid}/children') as f:
+            return [int(pid) for pid in f.read().split()]
+    except OSError as e:
+        Logger.warning(f'import: cannot list the programs to stop ({type(e).__name__}: {e})')
+        return []
+
+
+class _Cut:
+    """D19: the refusal that ends the import as soon as it is seen (a GO has total
+    priority), and the two ways to end the work in hand: :meth:`check`, called
+    between steps and between pieces, and :meth:`kill_programs`, for the program
+    the import's thread is waiting for. Only inside :meth:`programs` is anything
+    killed, and only what that thread started: never another upload's builder."""
+
+    def __init__(self):
+        self.reason = None
+        self._thread = None
+        self._lock = threading.Lock()
+
+    def check(self):
+        if self.reason is not None:
+            raise _Stop(self.reason)
+
+    @contextlib.contextmanager
+    def programs(self):
+        """While inside, what the calling thread starts may be killed. The code
+        run inside must call :meth:`check` before it commits: a killed builder
+        only logs its failure."""
+        with self._lock:
+            self._thread = threading.get_native_id()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._thread = None
+
+    def kill_programs(self):
+        with self._lock:
+            if self._thread is None:
+                return
+            for pid in _children_of(self._thread):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    continue
+                Logger.info(f'import: killed the program {pid}')
+
+
+def _extract(zf, info, path, md5_hex, stop=None):
     """The entry, extracted under a generated name of the staging folder (a
     name in the archive is never a path); its MD5 must be the check's."""
     with open(path, 'xb') as sink:
-        got = _copy_entry(zf, info, sink=sink)
+        got = _copy_entry(zf, info, sink=sink, stop=stop)
     if got != md5_hex:
         raise RuntimeError(f'{info.filename} changed after it was checked')
 
@@ -827,11 +888,11 @@ def _after_registration(db, lib_name, report, list_update):
 
 
 def _register(zf, db, plan, staging, report, status, accept_loaded, progress, list_update,
-              landed=None):
+              landed, cut):
     """Step 2 (b): each file to add, the rule asked again before its
     extraction and again right before its registration (D4). *landed*
-    follows the bytes on disk for the reservations of D6 (R3)."""
-    landed = landed or _Landed()
+    follows the bytes on disk for the reservations of D6 (R3). *cut* ends the
+    file in hand, extraction or registration, leaving nothing of it (D19)."""
     for i, name in enumerate(plan.add):
         _ask(status, accept_loaded)
         if progress:
@@ -840,14 +901,15 @@ def _register(zf, db, plan, staging, report, status, accept_loaded, progress, li
         size = plan.entries[name].file_size
         landed.current = staged
         try:
-            _extract(zf, plan.entries[name], staged, plan.md5[name])
+            _extract(zf, plan.entries[name], staged, plan.md5[name], cut.check)
         finally:
             landed.current = None           # first: never counted twice (``_Landed``)
         landed.extracted += size
         # Asked again right before the registration: a big file takes a while
         # to extract, and a show may start meanwhile (change review R1).
         _ask(status, accept_loaded)
-        lib_name = db.media.new(staged, plan.library[name], plan.md5[name])
+        with cut.programs():
+            lib_name = db.media.new(staged, plan.library[name], plan.md5[name], stop=cut.check)
         landed.registered += size
         plan.reuse[name] = lib_name
         report['media']['added'].append(lib_name)
@@ -936,7 +998,7 @@ def _after_creation(plan, project_uuid, report, progress, list_update):
                                       f'{type(e).__name__}: {one_line(e)}')
 
 
-def _create(db, plan, report, status, accept_loaded, progress, list_update):
+def _create(db, plan, report, status, accept_loaded, progress, list_update, cut):
     """Step 2 (c), (d): the remap, the last question, the project."""
     _remap(plan)
     _ask(status, accept_loaded)
@@ -944,7 +1006,9 @@ def _create(db, plan, report, status, accept_loaded, progress, list_update):
     source_uuid = script.get('id')
     if progress:
         progress('project', 0, 1, plan.top)
-    project_uuid, unix_name, name = db.project.import_project(plan.data, plan.top, script['name'])
+    with cut.programs():
+        project_uuid, unix_name, name = db.project.import_project(plan.data, plan.top,
+                                                                  script['name'], stop=cut.check)
     # The project exists from here: what follows is best effort, and the import
     # is a success whatever happens (an I9 would make the operator import again
     # and get a second copy; change review R10).
@@ -958,7 +1022,7 @@ def _create(db, plan, report, status, accept_loaded, progress, list_update):
 
 
 def import_archive(zip_path, db, staging, *, status, accept_loaded=False, progress=None,
-                   list_update=None):
+                   list_update=None, cut=None):
     """Import the project archive *zip_path* into the library (synchronous:
     the session runs it in the executor).
 
@@ -967,7 +1031,8 @@ def import_archive(zip_path, db, staging, *, status, accept_loaded=False, progre
     (the caller removes it). ``status()`` gives the engine's word and is asked
     before each file is registered and before the project is created (D4);
     ``progress(phase, done, total, name)`` and ``list_update(list_type)`` tell
-    the socket and the other sessions.
+    the socket and the other sessions. *cut* is how a GO seen elsewhere ends the
+    work in hand (D19).
 
     Returns the report ("The messages"). Raises ``ProjectImportError``: I8a,
     I8b or I2 before anything is written; I9 once something may have been,
@@ -977,11 +1042,12 @@ def import_archive(zip_path, db, staging, *, status, accept_loaded=False, progre
     plan = _Plan()
     landed = _Landed()
     held = []
+    cut = cut or _Cut()
     try:
         with open_archive(zip_path) as zf:
             try:
                 _check(zf, os.path.getsize(zip_path), db, staging, plan, report, progress)
-                _decide(db, plan, report)
+                _decide(db, plan, report, cut)
                 held = _claim_space(db, plan, staging, landed)
             except ProjectImportError:
                 raise
@@ -992,8 +1058,8 @@ def import_archive(zip_path, db, staging, *, status, accept_loaded=False, progre
                 raise ProjectImportError(interrupted_text(f'{type(e).__name__}: {e}', []))
             try:
                 _register(zf, db, plan, staging, report, status, accept_loaded, progress,
-                          list_update, landed)
-                _create(db, plan, report, status, accept_loaded, progress, list_update)
+                          list_update, landed, cut)
+                _create(db, plan, report, status, accept_loaded, progress, list_update, cut)
             except _Stop as e:
                 raise _interrupted(str(e), report)
             except ProjectImportError as e:
@@ -1057,11 +1123,11 @@ class ImportSession:
     runs in the executor, every later check going through the server's
     communicator with no socket of the user's (N9), while a timer of the
     session's own sends a ``progress`` frame at least every
-    :data:`HEARTBEAT_S` seconds (review row 7). While the zip is received and
-    checked the engine is also asked every :data:`WATCH_S` seconds, so a GO
-    stops the import there too; :func:`import_archive` runs in a thread of its
-    own at the lowest priority (D19). The slot is freed and the staging
-    removed whatever happens.
+    :data:`HEARTBEAT_S` seconds (review row 7). For as long as the import runs
+    the engine is also asked every :data:`WATCH_S` seconds, and a GO ends at
+    once the work in hand (``_watch``, ``_Cut``); :func:`import_archive` runs
+    in a thread of its own at the lowest priority (D19). The slot is freed and
+    the staging removed whatever happens.
     """
 
     def __init__(self, server, websocket):
@@ -1072,7 +1138,7 @@ class ImportSession:
         self.ended = False
         self.latest = None
         self._last_key = None
-        self.halt = None        # the refusal seen while receiving or checking (D19)
+        self.cut = _Cut()       # what a GO ends the import with (D19)
 
     async def run(self, value):
         self.loop = asyncio.get_running_loop()
@@ -1124,7 +1190,7 @@ class ImportSession:
             report = await self._at_lowest_priority(functools.partial(
                 import_archive, zip_path, self.server.db, staging, status=self._status,
                 accept_loaded=record.accept_loaded, progress=self._progress,
-                list_update=self._list_update))
+                list_update=self._list_update, cut=self.cut))
         finally:
             watch_over.set()
             if heartbeat is not None:
@@ -1136,28 +1202,35 @@ class ImportSession:
         await self._send({'close': True})
 
     async def _watch(self, record, over):
-        """D19: asks the engine while the upload and the archive's check go on,
-        and keeps the first refusal in :attr:`halt`; from the first media on,
-        :func:`import_archive` asks before each write. No answer stops nothing
-        here: the next check asks again. Ended by *over*, never cancelled in
+        """D19: asks the engine every :data:`WATCH_S` seconds for as long as the
+        import runs. At the first refusal (a GO; a load that was not accepted)
+        it ends the work in hand: the receive and the import's thread see
+        :attr:`cut` at their next check, and the program that thread waits for
+        is killed, again every :data:`KILL_S` until the import is over (a
+        registration starts more than one). No answer stops nothing here: the
+        check before each write asks again. Ended by *over*, never cancelled in
         the middle of a question."""
+        wait = WATCH_S
         while True:
             try:
-                await asyncio.wait_for(over.wait(), WATCH_S)
+                await asyncio.wait_for(over.wait(), wait)
                 return
             except asyncio.TimeoutError:
                 pass
-            if self.latest is not None and self.latest['progress']['phase'] != 'check':
-                return
-            try:
-                status = await record.owner._engine_status()
-            except Exception as e:
-                Logger.warning(f'import: no answer from the engine ({type(e).__name__}: {e})')
-                continue
-            if status is not None:
-                self.halt = import_refusal(status, record.accept_loaded)
-                if self.halt is not None:
-                    return
+            if self.cut.reason is None:
+                try:
+                    status = await record.owner._engine_status()
+                except Exception as e:
+                    Logger.warning(f'import: no answer from the engine ({type(e).__name__}: {e})')
+                    continue
+                if status is None or over.is_set():
+                    continue
+                self.cut.reason = import_refusal(status, record.accept_loaded)
+                if self.cut.reason is None:
+                    continue
+                Logger.info(f'import: stopping now: {self.cut.reason}')
+                wait = KILL_S
+            self.cut.kill_programs()
 
     async def _at_lowest_priority(self, work):
         """*work* in a thread made for it, at the lowest priority (D19); the
@@ -1187,8 +1260,8 @@ class ImportSession:
                 except ws.exceptions.ConnectionClosed:
                     Logger.warning('import dropped: the upload socket closed before the end')
                     return False
-                if self.halt is not None:
-                    raise ProjectImportError(interrupted_text(self.halt, []))
+                if self.cut.reason is not None:
+                    raise ProjectImportError(interrupted_text(self.cut.reason, []))
                 if isinstance(message, bytes):
                     got += len(message)
                     if got > size:
@@ -1241,8 +1314,8 @@ class ImportSession:
             return None
 
     def _progress(self, phase, done, total, name):
-        if phase == 'check' and self.halt is not None:      # D19: in the import's thread
-            raise _Stop(self.halt)
+        if phase == 'check':
+            self.cut.check()        # D19: in the import's thread
         frame = {'progress': {'phase': phase, 'done': int(done or 0), 'total': int(total or 0),
                               'name': name or ''}}
         self.latest = frame

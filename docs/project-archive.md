@@ -135,11 +135,22 @@ existed, and takes nothing out of the trash); a failure leaves what was added an
    frame during the transfer is I7 (`_receive`). The editor compares the size and the MD5 (I7), asks the rule of D3 again
    (D4), and imports.
 
-**A GO stops the import at any stage** (D19). While the zip is received and checked the editor asks the engine every 5 s
-(`WATCH_S`, `_watch`): a show running, or a project loaded without the operator's acceptance, ends the import there with
-I9 (in the middle of the upload the answer to a frame is the fatal error); no answer from the engine stops nothing at
-this stage. From the first media on, the question is asked before each write (D4). The file being registered at that
-moment is finished, not cut: a builder killed half way would leave a media without its sidecars. Nothing after it starts.
+**A GO has total priority** (D19). For as long as the import runs the editor asks the engine every second (`WATCH_S`,
+`_watch`): a show running, or a project loaded without the operator's acceptance, ends the import **at once**, with I9
+(in the middle of the upload the answer to a frame is the fatal error). The work in hand is cut, not finished:
+
+| Work in hand | How it ends |
+|---|---|
+| the upload | no further piece is taken |
+| reading the archive, hashing a library file, extracting a media | at the next piece of 1 MiB (`_Cut.check`) |
+| a file's registration | the program it waits for (`ffmpeg`, `ffprobe`, `audiowaveform`, the video indexer) is killed, again every 0.1 s (`KILL_S`) for the ones that follow; `CuemsDBMedia.new` asks between its steps, and gives the file up with its usual rollback: no file, no sidecar, no row. Only what the import's own thread started is killed (`/proc/self/task/<tid>/children`), never the builder of a media upload running beside it |
+| preparing the project | its probes are killed and no project is created (`import_project` asks right before its transaction) |
+| after the project exists | nothing is cut: the import has succeeded (8.4) |
+
+What stays is what was **wholly** added before (D12). Importing the same archive again adds the file that was cut. No
+answer from the engine cuts nothing; from the first media on, the question is also asked before each write, and there no
+answer stops the import (I4, D4). One step cannot be cut: when `media/` is on another filesystem than the staging, the
+move into it is a copy, and the cut takes effect when it ends.
 
 **Lowest priority** (D19). `import_archive` runs in a thread made for each import, at CPU niceness 19 and the last level
 of the best-effort I/O class (`_at_lowest_priority`); `ffmpeg`, `ffprobe`, `audiowaveform` and the video indexer
@@ -208,8 +219,7 @@ registered is I9 with the report so far: **what was added stays** (the files, th
 not created; importing the same archive again reuses what was added. Once the project is created
 (`import_project` committed) the import is a success: a failure in what follows (the report of the files not carried,
 `project_list`, the last progress frame) is logged and listed under `warnings` (`_after_creation`). A show that starts, or a project that is loaded
-without the operator's acceptance, between two files stops the import at the next check (D4; during the upload and the
-archive's check, within `WATCH_S`, D19). A hard kill of the editor
+without the operator's acceptance, stops the import within about `WATCH_S` (D19, 8.1). A hard kill of the editor
 in the move-to-row window of `CuemsDBMedia.new` leaves a file with no row (the documented limit of ClickUp 1amfwm7kcwk):
 the next import stores it again as `<base>-001<ext>`.
 

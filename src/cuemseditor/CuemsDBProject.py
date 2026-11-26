@@ -1206,7 +1206,7 @@ class CuemsDBProject(StringSanitizer):
         except DoesNotExist:
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
 
-    def import_project(self, data, unix_name, name):
+    def import_project(self, data, unix_name, name, stop=None):
         """Create the project of an imported archive (1amfwm7kcjp, D10, D11).
 
         *data* is the archive's script as read and checked by
@@ -1215,7 +1215,8 @@ class CuemsDBProject(StringSanitizer):
         the script's name. Unlike :meth:`new`, a taken pair is not an error:
         the first free one of ``<unix_name>-NNN`` / ``<name> (N)`` is taken, as
         :meth:`duplicate` does, the name cut to fit the script's 60 characters
-        (N3). The project gets a new uuid and the dates of now; the save gates
+        (N3). ``stop()`` is called after the duration fill, before the
+        transaction, and raises to create nothing (D19). The project gets a new uuid and the dates of now; the save gates
         are not applied (the importer reports what they would refuse), and a
         file the library does not have is a relation with no media (D9).
 
@@ -1235,6 +1236,8 @@ class CuemsDBProject(StringSanitizer):
         script['created'] = now
         script['modified'] = now
         self._fix_media_durations(data)
+        if stop:
+            stop()
 
         folder = None
         with self.db.atomic() as transaction:

@@ -28,6 +28,8 @@ from unittest import mock
 import pytest
 import websockets as ws
 
+from cuemsutils.tools import media_sidecars as ms
+
 import cuemseditor.CuemsWsServer as srv
 import cuemseditor.CuemsWsUser as wsu
 from cuemseditor.cli import get_settings
@@ -620,7 +622,8 @@ class TestUploadSession:
 # ---------------------------------------------------------------------------
 
 class TestLaterChecks:
-    def test_17_a_show_that_starts_at_the_second_file_stops_the_import_I9(self, env):
+    def test_17_a_show_that_starts_at_the_second_file_stops_the_import_I9(self, env, monkeypatch):
+        monkeypatch.setattr(_imp(), 'WATCH_S', 3600)         # only the checks before each write
         data = the_zip(env)
         # end of upload; file 1 before its extraction and before its registration (R1);
         # file 2 before its extraction
@@ -732,8 +735,9 @@ async def _asked_again(owner):
 
 
 class TestStopsOnGo:
-    def test_d19_the_engine_is_asked_every_few_seconds(self):
-        assert 0 < _imp().WATCH_S <= 5
+    def test_d19_the_engine_is_asked_every_second(self):
+        assert 0 < _imp().WATCH_S <= 1
+        assert 0 < _imp().KILL_S <= 0.2
 
     @pytest.mark.parametrize('word,accept,reason', [('running', False, I3), ('running', True, I3),
                                                     ('loaded', False, I5)],
@@ -808,6 +812,158 @@ class TestStopsOnGo:
         assert i9_parts(errs[0]['error']) == (I3, [])
         assert env.state() == before
         assert os.listdir(env.staging_root) == []
+
+
+# A GO while a file is being added: what the import waits for is ended at once and
+# nothing of that file stays (D19, "a GO has total priority").
+
+def _sleeper(pids):
+    """A builder that takes a minute, as a real program of the calling thread."""
+    proc = subprocess.Popen(['sleep', '60'])
+    pids.append(proc.pid)
+    try:
+        return proc.wait()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def _alive(pid):
+    try:
+        with open(f'/proc/{pid}/stat') as f:
+            return f.read().rsplit(')', 1)[1].split()[0] != 'Z'
+    except FileNotFoundError:
+        return False
+
+
+class TestAGoCutsTheFileInHand:
+    @pytest.mark.parametrize('word,accept,reason', [('running', True, I3), ('loaded', False, I5)],
+                             ids=['go', 'loaded_not_accepted'])
+    def test_d19_its_programs_are_killed_and_nothing_of_it_stays(self, env, monkeypatch, word,
+                                                                 accept, reason):
+        _watching(monkeypatch)
+        owner = SaysNow()
+        names = list(MEDIA)
+        pids, codes = [], []
+        cut_name = []
+
+        def thumbnail(filename, duration=None):
+            env.builders.thumbnail(filename)                  # what a real one has half written
+            if len(env.media_files_added) == 1 and not cut_name:
+                cut_name.append(filename)
+                index = ms.video_index_path(env.media.get_file_path(filename))
+                env.builders._write(index)
+                env.builders._write(index + '.tmp')
+                owner.word = word                             # the GO, with a program in hand
+                codes.append(_sleeper(pids))                  # the thumbnail
+                codes.append(_sleeper(pids))                  # and the one that follows it
+            env.media_files_added.append(filename)
+
+        env.media_files_added = []
+        monkeypatch.setattr(env.media, 'create_video_thumbnail', thumbnail)
+        monkeypatch.setattr(env.media, 'create_audio_thubnail', thumbnail)
+        # another thread's builder, as a media upload running beside the import has
+        other = subprocess.Popen(['sleep', '60'])
+        data = the_zip(env)
+        started = time.monotonic()
+        try:
+            server, sock, _ = run_upload(
+                env, lambda t: [first_frame(len(data), t), *chunks(data), finished(md5(data))],
+                size=len(data), owner=owner, accept_loaded=accept, wait_s=40)
+            took = time.monotonic() - started
+            assert other.poll() is None, 'a program the import did not start was killed'
+        finally:
+            other.kill()
+            other.wait()
+        errs = errors(sock)
+        assert len(errs) == 1 and errs[0]['fatal'] is True
+        said, added = i9_parts(errs[0]['error'])
+        assert said == reason
+        assert codes == [-9, -9] and not any(_alive(pid) for pid in pids)
+        assert took < 20, took
+        assert cut_name and len(added) == 1 and cut_name[0] not in added
+        assert env.row(cut_name[0]) is None
+        left = [os.path.join(base, n) for base, _, found in os.walk(env.media_dir) for n in found
+                if n.startswith(cut_name[0])]
+        assert left == []
+        assert env.row(added[0]) is not None                  # what was in before stays (D12)
+        assert Project.get_or_none(Project.unix_name == TOP) is None
+        assert os.listdir(env.staging_root) == []
+        assert not server.import_slot.busy
+        assert len(MEDIA) == len(names)
+
+    @pytest.mark.parametrize('call', [1, 2, 3, 4, 5])
+    def test_d19_a_registration_given_up_at_any_step_leaves_nothing(self, env, call):
+        before = env.state()
+        calls = []
+
+        class GivenUp(Exception):
+            pass
+
+        def stop():
+            calls.append(1)
+            if len(calls) == call:
+                raise GivenUp()
+
+        for name, data in MEDIA.items():
+            calls.clear()
+            tmp = os.path.join(env.zips, 'incoming')
+            with open(tmp, 'wb') as f:
+                f.write(data)
+            with pytest.raises(GivenUp):
+                env.media.new(tmp, name, md5(data), stop=stop)
+        files, rows = env.state()
+        assert rows == before[1]
+        assert [f[0] for f in files] == [f[0] for f in before[0]]
+
+    def test_d19_a_go_while_a_file_is_extracted_ends_before_its_registration(self, env, monkeypatch):
+        imp = _imp()
+        cut = imp._Cut()
+        registered = []
+        monkeypatch.setattr(env.media, 'new', lambda *a, **kw: registered.append(a))
+        before = env.state()
+
+        def progress(phase, done, total, name):
+            if phase == 'media':                              # right before the extraction
+                cut.reason = I3
+
+        with pytest.raises(Exception) as ei:
+            imp.import_archive(env.zip(export_entries()), env.db, env.stage(),
+                               status=lambda: 'none', progress=progress, cut=cut)
+        assert i9_parts(str(ei.value)) == (I3, [])
+        assert registered == [] and env.state() == before
+
+    def test_d19_a_go_while_the_project_is_prepared_creates_no_project(self, env, monkeypatch):
+        imp = _imp()
+        cut = imp._Cut()
+        real_fill = env.project._fix_media_durations
+
+        def fill(data):
+            real_fill(data)
+            cut.reason = I3
+
+        monkeypatch.setattr(env.project, '_fix_media_durations', fill)
+        with pytest.raises(Exception) as ei:
+            imp.import_archive(env.zip(export_entries()), env.db, env.stage(),
+                               status=lambda: 'none', cut=cut)
+        said, added = i9_parts(str(ei.value))
+        assert said == I3 and len(added) == len(MEDIA)
+        assert Project.get_or_none(Project.unix_name == TOP) is None
+        assert not os.path.exists(os.path.join(env.project.projects_path, TOP))
+
+    def test_d19_a_go_after_the_project_exists_changes_nothing(self, env):
+        imp = _imp()
+        cut = imp._Cut()
+
+        def told(kind):
+            if kind == 'project_list':
+                cut.reason = I3
+
+        report = imp.import_archive(env.zip(export_entries()), env.db, env.stage(),
+                                    status=lambda: 'none', list_update=told, cut=cut)
+        assert report['project']['unix_name'] == TOP
+        assert Project.get(Project.unix_name == TOP)
 
 
 def _priority_of(tid):
