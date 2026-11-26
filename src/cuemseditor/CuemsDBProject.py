@@ -2,11 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import contextlib
+import fcntl
 import os
+import tempfile
+import threading
 import time
 import traceback
 import shutil
 import xml.etree.ElementTree as ET
+import zipfile
 from peewee import DoesNotExist, IntegrityError, prefetch
 
 from cuemsutils.tools.StringSanitizer import StringSanitizer
@@ -24,6 +28,73 @@ from cuemseditor.CuemsDBModel import Project, Media, ProjectMedia
 from cuemseditor.CuemsDBMedia import (
     INDEX_STALE, INDEX_VALID, PROBE_FAILED, PROBE_OK, is_indexed_video,
     probe_dimensions, probe_media, video_index_state)
+
+
+#: Chunk of the one-pass export copy (1amfwm7kana, N6): 1 MiB is three times
+#: faster than ``ZipFile.write``'s 8 KiB.
+EXPORT_CHUNK = 1 << 20
+#: The export refuses unless this much stays free on the exports filesystem
+#: afterwards: the larger of 5 GiB and a tenth of the filesystem (D14).
+EXPORT_MIN_RESERVE = 5 * 1024 ** 3
+EXPORT_RESERVE_FRACTION = 10
+#: A ``.part`` is ``.<name>.<random>.part``, 15 bytes longer than the name: the
+#: name is cut here, so a project whose zip name fits also gets its ``.part``.
+EXPORT_PART_NAME_BYTES = 200
+#: The apache conf that serves ``/exports`` (cuems-common); D21.
+EXPORT_CONF_PATH = '/etc/apache2/conf-enabled/cuems-exports.conf'
+
+_GIB = 1024 ** 3
+#: Exports running in this process: token -> [bytes to write, its .part path].
+#: They take room the filesystem has not yet lost, so the refusal counts them.
+_exports_lock = threading.Lock()
+_exports_running = {}
+
+
+def _copy_stream(src, dst, size):
+    """Copy ``src`` to ``dst`` in :data:`EXPORT_CHUNK` pieces, never more than ``size`` bytes.
+
+    ``size`` is what the free-space check booked: a source that grew must not eat
+    the reserve. Returns the bytes copied, or ``size + 1`` when the source holds
+    more (that byte is not written), so any other value than ``size`` means it changed.
+    """
+    copied = 0
+    while copied < size:
+        chunk = src.read(min(EXPORT_CHUNK, size - copied))
+        if not chunk:
+            return copied
+        dst.write(chunk)
+        copied += len(chunk)
+    return copied + len(src.read(1))
+
+
+def _zip_add_file(zf, path, arcname, size):
+    """Add ``path`` to ``zf`` as a stored entry of ``arcname``, in one pass.
+
+    ``size`` is what was measured for the refusal; it is the hint the entry's
+    header starts with (zip64 or not) and the most that is written. Returns what
+    :func:`_copy_stream` does: anything but ``size`` means the file changed.
+    """
+    with open(path, 'rb') as src:
+        zinfo = zipfile.ZipInfo.from_file(path, arcname)
+        zinfo.compress_type = zipfile.ZIP_STORED
+        zinfo.file_size = size
+        with zf.open(zinfo, 'w') as dst:
+            return _copy_stream(src, dst, size)
+
+
+def _publish(part, folder, unix_name):
+    """Give the finished ``part`` the name ``<unix_name>.zip``, replacing the project's previous export; return the name.
+
+    ``os.replace`` is atomic on one filesystem (the part lives in the exports
+    folder), so the name always points at a complete zip. A download that
+    already has the old file open keeps reading it (the old inode lives until
+    it is closed). Two exports of one project at once both complete and the
+    last one to finish owns the name. One zip per project, no ``-001``, ``-002``:
+    Ion, 2026-11-24, "an export replaces the previous one" (1amfwm7kana).
+    """
+    name = f'{unix_name}.zip'
+    os.replace(part, os.path.join(folder, name))
+    return name
 
 
 class DurationFixStats:
@@ -1142,64 +1213,144 @@ class CuemsDBProject(StringSanitizer):
             raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
 
     def export(self, uuid):
-        tmp_project_path = None
-        output_filename = None
+        """Write a project and its media into one stored zip in the exports folder.
+
+        One pass, from the library straight to ``<exports>/.<unix_name>.XXXX.part``
+        (``mkstemp``, ``0600`` while written, locked while the export runs, the
+        name cut to :data:`EXPORT_PART_NAME_BYTES`), then ``0644`` and published with
+        ``os.replace`` as ``<unix_name>.zip``, which replaces the project's
+        previous export. Nothing is copied to ``tmp_path`` and each run has its
+        own file, so two exports of one project at once both complete (1amfwm7kana).
+
+        Returns:
+            ``exports/<file>.zip``: relative to the site root, no leading slash.
+
+        Raises:
+            NonExistentItemError: No project with *uuid*.
+            ExportError: The exports folder or its apache conf is missing (E1),
+                the disk would keep less than the reserve (E2) or a media file
+                changed while it was zipped (E6). Each text is one line.
+        """
+        started = time.monotonic()
+        part = None
+        part_lock = None
+        token = object()
         try:
             try:
-                project = Project.get(Project.uuid==uuid)
+                project = Project.get(Project.uuid == uuid)
             except DoesNotExist:
                 raise NonExistentItemError("item with uuid: {} does not exist".format(uuid))
 
             unix_name = project.unix_name
             project_path = os.path.join(self.projects_path, unix_name, self.script_file_name)
             project_medias = ProjectMedia.select().where(ProjectMedia.project == project)
-            tmp_project_path = os.path.join(self.tmp_path, unix_name)
-            if not os.path.exists(tmp_project_path):
-                os.makedirs(tmp_project_path)
-            Logger.debug('exporting project {} to {}'.format(unix_name, tmp_project_path))
-            shutil.copy(project_path, tmp_project_path)
-
             project_medias = prefetch(project_medias, Media)
-            if project_medias:
-                Logger.debug('project {} has media relations, exporting them'.format(unix_name))
-                tmp_media_path = os.path.join(tmp_project_path, 'media')
-                os.makedirs(tmp_media_path)
-                for media in project_medias:
-                    if media.media is None:
-                        # A file deleted for good, still named by the project
-                        # until it is re-uploaded (869fat84r D20).
-                        Logger.warning(f'project {unix_name} uses {media.media_filename}, which '
-                                       'is no longer in the library: not exported')
-                        continue
-                    media_path = os.path.join(self.media_path, media.media.unix_name)
-                    try:
-                        shutil.copy(media_path, tmp_media_path)
-                        Logger.debug('copying media {} to {}'.format(media.media.unix_name, tmp_media_path))
-                    except Exception as e:
-                        Logger.error("error: {} {}; copying media to project export dir".format(type(e), e))
-                        raise e
-            else:
-                Logger.debug('project {} has no media relations, skipping media export'.format(unix_name))
 
-            shutil.make_archive(tmp_project_path, 'zip', self.tmp_path, unix_name)
-            output_filename = unix_name + '.zip'
-            server_export_path = os.path.join(self.settings_dict['html_root_path'], self.settings_dict['export_folder_name'])
-            try:
-                dest_filename = CopyMoveVersioned.move(os.path.join(self.tmp_path, output_filename), server_export_path, output_filename)
-                return os.path.join(self.settings_dict['export_folder_name'], dest_filename)
-            except Exception as e:
-                Logger.error("error: {} {}; moving exported project to exports folder".format(type(e), e))
-                raise e
+            # One entry per file, first row wins (D23); a file deleted for good
+            # is left out with a warning (869fat84r D20).
+            media_names = []
+            for media in project_medias:
+                if media.media is None:
+                    Logger.warning(f'project {unix_name} uses {media.media_filename}, which '
+                                   'is no longer in the library: not exported')
+                    continue
+                if media.media.unix_name not in media_names:
+                    media_names.append(media.media.unix_name)
+
+            folder = os.path.join(self.settings_dict['html_root_path'],
+                                  self.settings_dict['export_folder_name'])
+            conf = self.settings_dict.get('export_conf_path', EXPORT_CONF_PATH)
+            if not (os.path.isdir(folder) and os.access(folder, os.W_OK | os.X_OK)):
+                self._refuse_export(f'Export folder {folder} is missing or not writable '
+                                    '(cuems-common installs it)')
+            if not os.path.exists(conf):
+                self._refuse_export('Export is not served on this box: the apache conf '
+                                    'cuems-exports is not enabled (cuems-common installs it)')
+
+            sizes = {name: os.path.getsize(os.path.join(self.media_path, name))
+                     for name in media_names}
+            script_size = os.path.getsize(project_path)
+            need = script_size + sum(sizes.values())
+            with _exports_lock:
+                # The others first, then the free space: a byte they write in
+                # between is counted twice (refuses a little early), never not at all.
+                others = sum(max(0, other[0] - self._export_written(other[1]))
+                             for other in _exports_running.values())
+                usage = shutil.disk_usage(folder)
+                reserve = max(EXPORT_MIN_RESERVE, usage.total // EXPORT_RESERVE_FRACTION)
+                if usage.free - others - need < reserve:
+                    self._refuse_export(
+                        f'No space to export "{project.name}": needs {need / _GIB:.1f} GiB, '
+                        f'{usage.free / _GIB:.1f} GiB free in {folder}, '
+                        f'{reserve / _GIB:.1f} GiB kept in reserve')
+                _exports_running[token] = [need, None]
+
+            stem = unix_name.encode()[:EXPORT_PART_NAME_BYTES].decode('utf-8', 'ignore')
+            # Locked until this export ends: the start-up sweep of another editor
+            # (one started by hand) leaves a locked .part alone. A sweep may take
+            # the file before the lock does: then make another one.
+            while True:
+                part_lock, part = tempfile.mkstemp(dir=folder, prefix='.{}.'.format(stem),
+                                                   suffix='.part')
+                fcntl.flock(part_lock, fcntl.LOCK_EX)
+                if os.fstat(part_lock).st_nlink:
+                    break
+                os.close(part_lock)
+                part_lock = None
+            _exports_running[token][1] = part
+            Logger.debug('exporting project {} to {}'.format(unix_name, part))
+
+            with zipfile.ZipFile(part, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+                zf.mkdir(unix_name)
+                copied = _zip_add_file(zf, project_path,
+                                       '{}/{}'.format(unix_name, self.script_file_name), script_size)
+                if copied != script_size:
+                    self._refuse_export('The project script changed while it was exported: export again')
+                zf.mkdir('{}/media'.format(unix_name))
+                for name in media_names:
+                    Logger.debug('copying media {}'.format(name))
+                    copied = _zip_add_file(zf, os.path.join(self.media_path, name),
+                                           '{}/media/{}'.format(unix_name, name), sizes[name])
+                    if copied != sizes[name]:
+                        self._refuse_export(f'Media file {name} changed while it was exported: '
+                                            'export again')
+
+            os.chmod(part, 0o644)
+            size = os.path.getsize(part)
+            dest_filename = _publish(part, folder, unix_name)
+            result = os.path.join(self.settings_dict['export_folder_name'], dest_filename)
+            Logger.info('exported {} -> {} ({} bytes, {:.1f} s)'.format(
+                unix_name, result, size, time.monotonic() - started))
+            return result
+        except ExportError:
+            raise                      # already logged, with its text
         except Exception as e:
             Logger.error("error: {} {}; exporting project".format(type(e), e))
             raise e
         finally:
-            if tmp_project_path is not None and os.path.exists(tmp_project_path):
-                shutil.rmtree(tmp_project_path)
-                Logger.debug('cleaning tmp project export folder: {}'.format(tmp_project_path))
-            if output_filename is not None and os.path.exists(os.path.join(self.tmp_path, output_filename)):
-                os.remove(os.path.join(self.tmp_path, output_filename))
-                Logger.debug('cleaning tmp project export file: {}'.format(os.path.join(self.tmp_path, output_filename)))
+            with _exports_lock:
+                _exports_running.pop(token, None)
+            if part is not None and os.path.lexists(part):
+                try:
+                    os.remove(part)
+                    Logger.debug('cleaning export part file: {}'.format(part))
+                except OSError as e:
+                    Logger.error("error: {} {}; removing {}".format(type(e), e, part))
+            if part_lock is not None:
+                os.close(part_lock)
+
+    @staticmethod
+    def _export_written(part):
+        """Bytes a running export's ``.part`` already holds."""
+        try:
+            return os.path.getsize(part) if part else 0
+        except OSError:
+            return 0
+
+    @staticmethod
+    def _refuse_export(text):
+        Logger.error(text)
+        raise ExportError(text)
 
     def delete(self, uuid):
         """Soft-delete a project by moving it to the trash directory.

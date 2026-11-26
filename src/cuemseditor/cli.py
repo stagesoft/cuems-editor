@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Stagelab Coop SCCL
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 """
 CLI entry point for cuems-editor WebSocket server.
 
@@ -14,6 +17,7 @@ Example systemd service:
 
 import sys
 import os
+import fcntl
 import uuid
 import json
 import argparse
@@ -48,8 +52,12 @@ def get_settings():
     settings_dict['waveform_extension'] = '.dat'
     settings_dict['thumbnail_size'] = (240, 240)
     settings_dict['editor_ipc'] = '/tmp/editor.ipc'
-    settings_dict['html_root_path'] = '/var/www/cuems'
+    # Parent of the exports folder (cuems-common creates, serves and cleans
+    # /var/lib/cuems/exports); not a web root any more (1amfwm7kana).
+    settings_dict['html_root_path'] = '/var/lib/cuems'
     settings_dict['export_folder_name'] = 'exports'
+    # Present only while apache serves /exports; export() refuses without it.
+    settings_dict['export_conf_path'] = '/etc/apache2/conf-enabled/cuems-exports.conf'
     return settings_dict
 
 
@@ -70,6 +78,46 @@ def ensure_directories(settings_dict):
     except Exception as e:
         Logger.error(f"Error creating tmp folder: {type(e).__name__}: {e}")
         raise
+    sweep_export_parts(settings_dict)
+
+
+def sweep_export_parts(settings_dict):
+    """Remove the ``.part`` files an export killed in mid-write left behind.
+
+    Lists the exports folder with ``os.scandir`` (a glob does not see the
+    dot-files every ``.<name>.XXXX.part`` is). Never creates the folder:
+    cuems-common owns it, and the export refuses (E1) when it is missing.
+    A running export holds a lock on its ``.part``: this runs before the port is
+    bound, so a second editor started by hand must not remove that one.
+    """
+    folder = os.path.join(settings_dict['html_root_path'], settings_dict['export_folder_name'])
+    try:
+        if not os.path.isdir(folder):
+            return
+        with os.scandir(folder) as entries:
+            parts = [e.path for e in entries if e.name.endswith('.part') and e.is_file(follow_symlinks=False)]
+        for path in parts:
+            _remove_unfinished_export(path)
+    except Exception as e:
+        Logger.error(f"Error sweeping the exports folder {folder}: {type(e).__name__}: {e}")
+
+
+def _remove_unfinished_export(path):
+    """Remove one ``.part`` unless a running export holds its lock."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.remove(path)
+            Logger.info(f"Removed unfinished export: {path}")
+        finally:
+            os.close(fd)
+    except FileNotFoundError:
+        pass                       # its export published or removed it meanwhile
+    except BlockingIOError:
+        Logger.info(f"Export still being written by another editor, left alone: {path}")
+    except OSError as e:
+        Logger.error(f"Error removing the unfinished export {path}: {type(e).__name__}: {e}")
 
 
 def run_manual(port=9092):
