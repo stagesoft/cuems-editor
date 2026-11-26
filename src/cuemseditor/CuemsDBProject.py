@@ -201,7 +201,7 @@ def db_dimensions_resolver(file_name):
     return dimensions_of_row(media)
 
 
-def fix_media_durations_in_contents(contents, resolver, dimensions_resolver=None):
+def fix_media_durations_in_contents(contents, resolver, dimensions_resolver=None, stop=None):
     """Overwrite each cue ``Media``'s duration, and VideoCues' stored size,
     from the resolvers, in place.
 
@@ -230,12 +230,14 @@ def fix_media_durations_in_contents(contents, resolver, dimensions_resolver=None
             ``KeyError`` for a media file absent from the DB.
         dimensions_resolver: optional callable ``file_name -> dict | None``
             (see :func:`db_dimensions_resolver`); ``KeyError`` for an orphan.
+        stop: called before each cue and when a block fails; raises to give
+            the walk up (an import cut by a GO, D19 of 1amfwm7kcjp).
 
     Returns:
         :class:`DurationFixStats`.
     """
     stats = DurationFixStats()
-    _walk_media_durations(contents, resolver, dimensions_resolver, stats)
+    _walk_media_durations(contents, resolver, dimensions_resolver, stats, stop)
     return stats
 
 
@@ -262,7 +264,7 @@ def _set_dimensions(media, values, cue_type='VideoCue'):
             media[key] = value
 
 
-def _fix_one_media(cue_type, media, resolver, dimensions_resolver, stats):
+def _fix_one_media(cue_type, media, resolver, dimensions_resolver, stats, stop=None):
     file_name = media.get('file_name')
     before = _dimensions_snapshot(media)
     try:
@@ -298,6 +300,8 @@ def _fix_one_media(cue_type, media, resolver, dimensions_resolver, stats):
                 return
             _set_dimensions(media, values, cue_type)
     except Exception as e:
+        if stop:
+            stop()              # the walk given up is not a failed block
         stats.errors.append(file_name)
         Logger.warning(f'media metadata fix skipped for {file_name!r}: '
                        f'{type(e).__name__}: {e}')
@@ -306,7 +310,7 @@ def _fix_one_media(cue_type, media, resolver, dimensions_resolver, stats):
             stats.dimension_changes += 1
 
 
-def _walk_media_durations(contents, resolver, dimensions_resolver, stats):
+def _walk_media_durations(contents, resolver, dimensions_resolver, stats, stop=None):
     if not contents:
         return
     for item in contents:
@@ -315,7 +319,7 @@ def _walk_media_durations(contents, resolver, dimensions_resolver, stats):
         # Handle nested CueLists
         if 'CueList' in item:
             _walk_media_durations(item['CueList'].get('contents', []), resolver,
-                                  dimensions_resolver, stats)
+                                  dimensions_resolver, stats, stop)
 
         # Check for AudioCue or VideoCue wrappers
         if 'AudioCue' in item:
@@ -327,7 +331,9 @@ def _walk_media_durations(contents, resolver, dimensions_resolver, stats):
 
         media = cue_data.get('Media') if isinstance(cue_data, dict) else None
         if media and isinstance(media, dict):
-            _fix_one_media(cue_type, media, resolver, dimensions_resolver, stats)
+            if stop:
+                stop()
+            _fix_one_media(cue_type, media, resolver, dimensions_resolver, stats, stop)
 
 
 def _fade_duration_ms(duration):
@@ -908,7 +914,7 @@ class CuemsDBProject(StringSanitizer):
     # SAFETY NET (see update()): overwrite frontend-sent Media durations from
     # the DB. Delegates to the module-level fix_media_durations_in_contents so
     # the repair script and this path share one walk.
-    def _fix_media_durations(self, data):
+    def _fix_media_durations(self, data, stop=None):
         """Overwrite each cue's ``Media.duration``, and each VideoCue's stored
         pixel size and file size, from the database.
 
@@ -916,19 +922,23 @@ class CuemsDBProject(StringSanitizer):
         legacy frontend behaviour of sending ``00:00:00.000``. Orphaned media
         references (no ``Media`` row) are logged, not modified. The frontend
         never sends the stored size, so it is always added here (869fat84r).
+        ``stop()`` raises to give the fill up (D19 of 1amfwm7kcjp).
         """
         try:
             cuelist = data.get('CuemsScript', {}).get('CueList', {})
             contents = cuelist.get('contents', [])
-            stats = fix_media_durations_in_contents(contents, *self._save_resolvers())
+            stats = fix_media_durations_in_contents(contents, *self._save_resolvers(stop),
+                                                    stop=stop)
             if stats.orphans:
                 Logger.warning(
                     f"media duration fix: {len(stats.orphans)} cue(s) reference "
                     f"media not in DB (duration left as-is): {stats.orphans}")
         except Exception as e:
+            if stop:
+                stop()
             Logger.warning(f"Could not fix media durations: {e}")
 
-    def _save_resolvers(self):
+    def _save_resolvers(self, stop=None):
         """The save path's resolvers, ``(duration, stored values)``, for one
         save (869fat84r).
 
@@ -954,7 +964,7 @@ class CuemsDBProject(StringSanitizer):
                     media = Media.get(Media.unix_name == file_name)
                 except DoesNotExist:
                     raise KeyError(file_name)
-                media = self._verify_row_for_save(media, deadline)
+                media = self._verify_row_for_save(media, deadline, stop)
                 rows[file_name] = media
             return rows[file_name]
 
@@ -979,7 +989,7 @@ class CuemsDBProject(StringSanitizer):
 
         return duration, stored_values
 
-    def _verify_row_for_save(self, media, deadline):
+    def _verify_row_for_save(self, media, deadline, stop=None):
         """Measure a row's file before a save writes its values, when the row
         has no stored size yet (legacy) or its file no longer matches it (a
         file replaced by hand): so a save writes the file's real values
@@ -992,8 +1002,11 @@ class CuemsDBProject(StringSanitizer):
         if check is None or check.state not in ('legacy', 'changed'):
             return media
         try:
-            self._verify_media_row(media, check.path, legacy=(check.state == 'legacy'))
+            self._verify_media_row(media, check.path, legacy=(check.state == 'legacy'),
+                                   stop=stop)
         except Exception as e:
+            if stop:
+                stop()
             Logger.error(f'could not verify {media.unix_name}: {type(e).__name__}: {e}')
             return media
         return Media.get_or_none(Media.uuid == media.uuid) or media
@@ -1226,8 +1239,10 @@ class CuemsDBProject(StringSanitizer):
         the script's name. Unlike :meth:`new`, a taken pair is not an error:
         the first free one of ``<unix_name>-NNN`` / ``<name> (N)`` is taken, as
         :meth:`duplicate` does, the name cut to fit the script's 60 characters
-        (N3). ``stop()`` is called after the duration fill, before the
-        transaction, and raises to create nothing (D19). The project gets a new uuid and the dates of now; the save gates
+        (N3). ``stop()`` raises to create nothing (D19): it is called through
+        the duration fill, before the transaction and between the steps inside
+        it, which then rolls back; the step in hand ends, the write of the
+        script included. The project gets a new uuid and the dates of now; the save gates
         are not applied (the importer reports what they would refuse), and a
         file the library does not have is a relation with no media (D9).
 
@@ -1246,27 +1261,42 @@ class CuemsDBProject(StringSanitizer):
         script['id'] = project_uuid
         script['created'] = now
         script['modified'] = now
-        self._fix_media_durations(data)
-        if stop:
-            stop()
+        self._fix_media_durations(data, stop=stop)
+        given_up = []
+
+        def go_on():
+            if stop:
+                try:
+                    stop()
+                except BaseException:
+                    given_up.append(True)
+                    raise
+
+        go_on()
 
         folder = None
         with self.db.atomic() as transaction:
             try:
                 unix_name, name = self._free_import_pair(unix_name, name)
                 script['name'] = name
+                go_on()
                 project_object = CuemsParser(data).parse()
+                go_on()
                 project = Project.create(uuid=project_uuid, unix_name=unix_name, name=name,
                                          description=StringSanitizer.sanitize_text_size(script.get('description')),
                                          created=now, modified=now)
                 os.mkdir(os.path.join(self.projects_path, unix_name))
                 folder = os.path.join(self.projects_path, unix_name)
                 self.add_media_relations(project, project_object, allow_missing=True)
+                go_on()
                 self.save_xml(unix_name, project_object)
                 return project_uuid, unix_name, name
             except Exception as e:
                 transaction.rollback()
-                Logger.error("error: {} {}; trying to import a project, rolling back database insert".format(type(e), e))
+                if given_up:
+                    Logger.info('the project to import was given up inside its creation: rolled back')
+                else:
+                    Logger.error("error: {} {}; trying to import a project, rolling back database insert".format(type(e), e))
                 if folder is not None and os.path.isdir(folder):
                     shutil.rmtree(folder)
                 raise e
@@ -1627,7 +1657,7 @@ class CuemsDBProject(StringSanitizer):
             _NOT_REACHED.pop(plan.project_uuid, None)
         return report
 
-    def _verify_media_row(self, row, path, legacy, report=None):
+    def _verify_media_row(self, row, path, legacy, report=None, stop=None):
         """Probe *path* once and make *row* match it. Returns ``True`` when the
         row was written.
 
@@ -1650,6 +1680,8 @@ class CuemsDBProject(StringSanitizer):
         except OSError as e:
             Logger.warning(f'could not check {name}: {e}')
             return False
+        if stop:
+            stop()      # a probe a GO killed says nothing about the file: no mark, no write (D19)
         if (st1.st_size, st1.st_mtime_ns) != (st2.st_size, st2.st_mtime_ns):
             report.setdefault('in_copy', []).append(name)
             Logger.warning(f'{name} changed while it was being checked (still being '

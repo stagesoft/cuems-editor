@@ -30,6 +30,8 @@ import websockets as ws
 
 from cuemsutils.tools import media_sidecars as ms
 
+import cuemseditor.CuemsDBMedia as m
+import cuemseditor.CuemsDBProject as p
 import cuemseditor.CuemsWsServer as srv
 import cuemseditor.CuemsWsUser as wsu
 from cuemseditor.cli import get_settings
@@ -939,8 +941,8 @@ class TestAGoCutsTheFileInHand:
         cut = imp._Cut()
         real_fill = env.project._fix_media_durations
 
-        def fill(data):
-            real_fill(data)
+        def fill(data, **kw):
+            real_fill(data, **kw)
             cut.reason = I3
 
         monkeypatch.setattr(env.project, '_fix_media_durations', fill)
@@ -999,6 +1001,239 @@ class TestLowestPriority:
         for thread in threads:
             thread.join(10)
             assert not thread.is_alive()
+
+
+# ---------------------------------------------------------------------------
+# (D19) after the external change review (X2 to X5)
+# ---------------------------------------------------------------------------
+
+def _spied(monkeypatch, module, name, calls, then=None):
+    """*name* of *module* noted in *calls* when it runs; ``then()`` after it."""
+    real = getattr(module, name)
+
+    def spy(*a, **kw):
+        calls.append(name)
+        out = real(*a, **kw)
+        if then:
+            then()
+        return out
+
+    monkeypatch.setattr(module, name, spy)
+
+
+class TestAGoBetweenTheStepsOfTheScript:
+    """X2: the step in hand ends; the next one never starts."""
+
+    def test_d19_a_go_before_the_script_is_copied_ends_before_it_is_read(self, env, monkeypatch):
+        imp = _imp()
+        cut = imp._Cut()
+        cut.reason = I3
+        calls = []
+        _spied(monkeypatch, imp, '_read_script', calls)
+        before = env.state()
+        with pytest.raises(Exception) as ei:
+            imp.import_archive(env.zip(export_entries()), env.db, env.stage(),
+                               status=lambda: 'none', cut=cut)
+        assert i9_parts(str(ei.value)) == (I3, [])
+        assert calls == [] and env.state() == before
+
+    @pytest.mark.parametrize('after', ['read', 'parse', 'validate'])
+    def test_d19_no_step_of_the_check_starts_after_a_go(self, env, monkeypatch, after):
+        imp = _imp()
+        cut = imp._Cut()
+        done = []
+
+        def go(step):
+            def then():
+                done.append(step)
+                if step == after:
+                    cut.reason = I3
+            return then
+
+        real_reader = imp.XmlReaderWriter
+
+        class Reader(real_reader):
+            def read(self, **kw):
+                out = super().read(**kw)
+                go('read')()
+                return out
+
+            def validate_object(self, project_object):
+                out = super().validate_object(project_object)
+                go('validate')()
+                return out
+
+        class Parser(imp.CuemsParser):
+            def parse(self):
+                out = super().parse()
+                go('parse')()
+                return out
+
+        monkeypatch.setattr(imp, 'XmlReaderWriter', Reader)
+        monkeypatch.setattr(imp, 'CuemsParser', Parser)
+        gates = []
+        _spied(monkeypatch, imp, '_gate_warnings', gates)
+        before = env.state()
+        with pytest.raises(Exception) as ei:
+            imp.import_archive(env.zip(export_entries()), env.db, env.stage(),
+                               status=lambda: 'none', cut=cut)
+        assert i9_parts(str(ei.value)) == (I3, [])
+        steps = ['read', 'parse', 'validate']
+        assert done == steps[:steps.index(after) + 1]
+        assert gates == [] and env.state() == before
+
+    @pytest.mark.parametrize('during', ['parse', 'relations'])
+    def test_d19_a_go_inside_the_creation_writes_no_script_and_creates_nothing(
+            self, env, monkeypatch, during):
+        imp = _imp()
+        cut = imp._Cut()
+        saved, errors_logged = [], []
+        real_parser = p.CuemsParser
+
+        class Parser(real_parser):
+            def parse(self):
+                out = super().parse()
+                if during == 'parse':
+                    cut.reason = I3
+                return out
+
+        real_relations = env.project.add_media_relations
+
+        def relations(*a, **kw):
+            real_relations(*a, **kw)
+            if during == 'relations':
+                cut.reason = I3
+
+        monkeypatch.setattr(p, 'CuemsParser', Parser)
+        monkeypatch.setattr(env.project, 'add_media_relations', relations)
+        monkeypatch.setattr(env.project, 'save_xml', lambda *a: saved.append(a))
+        monkeypatch.setattr(p.Logger, 'error', lambda text, *a, **kw: errors_logged.append(text))
+        with pytest.raises(Exception) as ei:
+            imp.import_archive(env.zip(export_entries()), env.db, env.stage(),
+                               status=lambda: 'none', cut=cut)
+        said, added = i9_parts(str(ei.value))
+        assert said == I3 and len(added) == len(MEDIA)
+        assert saved == []
+        assert Project.get_or_none(Project.unix_name == TOP) is None
+        assert not os.path.exists(os.path.join(env.project.projects_path, TOP))
+        assert not [e for e in errors_logged if 'trying to import' in e], errors_logged
+
+
+class TestAGoDuringTheProbesOfThePreparation:
+    """X3: the probe the cut killed is not the library file's failure."""
+
+    def test_d19_a_killed_probe_marks_no_file_and_no_other_file_is_probed(self, env, monkeypatch):
+        imp = _imp()
+        cut = imp._Cut()
+        for n, data in MEDIA.items():
+            env.put_media(n, data, with_size=False)          # legacy rows: the preparation probes them
+        p.reset_refresh_marks()
+        probed, logged = [], []
+
+        def killed(path, timeout=None):
+            probed.append(os.path.basename(path))
+            cut.reason = I3                                  # the GO; its kill is what the probe sees
+            return m.MediaProbe()
+
+        monkeypatch.setattr(p, 'probe_media', killed)
+        monkeypatch.setattr(p.Logger, 'error', lambda text, *a, **kw: logged.append(text))
+        before = env.state()
+        with pytest.raises(Exception) as ei:
+            imp.import_archive(env.zip(export_entries()), env.db, env.stage(),
+                               status=lambda: 'none', cut=cut)
+        assert i9_parts(str(ei.value)) == (I3, [])
+        assert len(probed) == 1, probed
+        assert not p._FAILED_MARKS, p._FAILED_MARKS
+        assert not [e for e in logged if 'could not read the duration' in e], logged
+        assert env.state() == before                         # no row was written, no project
+
+    def test_d19_without_a_go_a_failed_probe_is_still_marked(self, env, monkeypatch):
+        for n, data in MEDIA.items():
+            env.put_media(n, data, with_size=False)
+        p.reset_refresh_marks()
+        monkeypatch.setattr(p, 'probe_media', lambda path, timeout=None: m.MediaProbe())
+        report = env.run(env.zip(export_entries()))
+        assert report['project']['unix_name'] == TOP
+        assert p._FAILED_MARKS
+
+
+class TestThePriorityOfTheUpload:
+    """X4: the whole import works at the lowest priority, the upload included."""
+
+    def test_d19_the_upload_is_written_in_the_imports_own_thread_at_the_lowest_priority(
+            self, env, monkeypatch):
+        imp = _imp()
+        mine = _priority_of(threading.get_native_id())
+        writes, registrations = [], []
+        real_write, real_new = imp._write_chunk, env.media.new
+
+        def write(*a):
+            writes.append((_priority_of(threading.get_native_id()), threading.current_thread()))
+            return real_write(*a)
+
+        def new(*a, **kw):
+            registrations.append(threading.current_thread())
+            return real_new(*a, **kw)
+
+        monkeypatch.setattr(imp, '_write_chunk', write)
+        monkeypatch.setattr(env.media, 'new', new)
+        data = the_zip(env)
+        server, sock, owner = run_upload(
+            env, lambda t: [first_frame(len(data), t), *chunks(data), finished(md5(data))],
+            size=len(data))
+        assert errors(sock) == []
+        assert writes and registrations
+        assert {own for own, _ in writes} == {(19, 'best-effort: prio 7')}
+        assert {t for _, t in writes} == set(registrations)  # one thread for the whole import
+        assert _priority_of(threading.get_native_id()) == mine
+        thread = writes[0][1]
+        thread.join(10)
+        assert not thread.is_alive()
+
+
+class TestTheHeartbeatToTheEnd:
+    """X5: a question still out when the work ends keeps the progress frames coming."""
+
+    def test_progress_goes_on_while_the_last_question_is_answered(self, env, monkeypatch):
+        imp = _watching(monkeypatch)
+        monkeypatch.setattr(imp, 'HEARTBEAT_S', 0.25)
+        real_import = imp.import_archive
+        ended = {}
+
+        class SlowAtTheEnd(FakeOwner):
+            slow = False
+            stuck = False
+
+            async def _engine_status(self):
+                self.calls += 1
+                if self.slow:
+                    self.stuck = True
+                    await asyncio.sleep(2)
+                return 'none'
+
+        owner = SlowAtTheEnd()
+
+        def archive(*a, **kw):
+            report = real_import(*a, **kw)
+            owner.slow = True
+            deadline = time.monotonic() + 10
+            while not owner.stuck:                           # the watcher's question is out
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            ended['at'] = time.monotonic()
+            return report
+
+        monkeypatch.setattr(imp, 'import_archive', archive)
+        data = the_zip(env)
+        server, sock, _ = run_upload(
+            env, lambda t: [first_frame(len(data), t), *chunks(data), finished(md5(data))],
+            size=len(data), owner=owner)
+        assert errors(sock) == []
+        report_at = next(at for at, f in sock.sent if 'imported' in f)
+        assert report_at - ended['at'] > 1.5                 # the answer was waited for
+        times = [ended['at']] + [at for at, f in sock.sent
+                                 if 'progress' in f and ended['at'] < at < report_at] + [report_at]
+        assert max(b - a for a, b in zip(times, times[1:])) < 0.8, times
 
 
 # ---------------------------------------------------------------------------

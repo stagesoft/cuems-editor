@@ -15,8 +15,9 @@ Two parts:
 * :class:`ImportSession` owns the ``/upload`` socket after a first frame with
   ``type: "PROJECT"`` and a valid ticket (D1): it receives the zip into the
   staging folder, checks its size and MD5 (D2), asks the engine again (D4),
-  runs :func:`import_archive` in the executor while a timer of its own sends a
-  ``progress`` frame, and answers with the report.
+  runs :func:`import_archive` while a timer of its own sends a ``progress``
+  frame, and answers with the report. The zip's writes and the import run in one
+  thread made for the import, at the lowest priority (D19).
 
 The guard that hands out the ticket is ``CuemsWsUser.request_import_project``;
 the one import slot is ``CuemsWsServer.ImportSlot``. Design: cuems-RELATIONS
@@ -495,23 +496,35 @@ def _media_blocks(node):
             yield from _media_blocks(value)
 
 
-def _read_script(path, schema_name):
+def _read_script(path, schema_name, stop=None):
     """The script dict, read through a defused resource (N5): an entity or a
     file that is not XML is I8a; what the box's schema refuses is I8b. It is
-    then parsed and serialised once, as the creation will (D12)."""
+    then parsed and serialised once, as the creation will (D12). ``stop()``
+    is called before each of these steps and after the last, and raises to
+    end there (D19): a step in hand is Python in this thread and ends."""
+    go_on = stop or (lambda: None)
+    go_on()
     try:
         resource = xmlschema.XMLResource(path, defuse='always')
     except Exception as e:
         raise _refused(f'script.xml cannot be read ({type(e).__name__}: {e})')
     reader = XmlReaderWriter(schema_name=schema_name, xmlfile=resource)
+    go_on()
     try:
         data = reader.read()
     except xmlschema.XMLSchemaValidationError as e:
         raise ProjectImportError(schema_text(e.reason or e))
     except Exception as e:
         raise ProjectImportError(schema_text(f'{type(e).__name__}: {e}'))
+    go_on()
     try:
         project_object = CuemsParser(copy.deepcopy(data)).parse()
+    except xmlschema.XMLSchemaValidationError as e:
+        raise ProjectImportError(schema_text(e.reason or e))
+    except Exception as e:
+        raise ProjectImportError(schema_text(f'{type(e).__name__}: {e}'))
+    go_on()
+    try:
         reader.validate_object(project_object)
     except xmlschema.XMLSchemaValidationError as e:
         raise ProjectImportError(schema_text(e.reason or e))
@@ -520,6 +533,7 @@ def _read_script(path, schema_name):
     # No "holds no CuemsScript" check (change review R14): the schema's one
     # global element is CuemsProject and its CuemsScript is required, so a
     # document without one is refused by ``reader.read()`` above (I8b).
+    go_on()
     return data
 
 
@@ -554,7 +568,7 @@ class _Plan:
         self.missing = []        # names the archive does not carry (D9)
 
 
-def _check(zf, zip_size, db, staging, plan, report, progress):
+def _check(zf, zip_size, db, staging, plan, report, progress, stop=None):
     """Step 2 (a): every check, with no write to the library."""
     infos = zf.infolist()
     for info in infos:
@@ -564,7 +578,7 @@ def _check(zf, zip_size, db, staging, plan, report, progress):
     by_name = {}
     for info in infos:
         by_name.setdefault(info.filename, []).append(info)
-    script_info = _read_script_entry(zf, by_name, db, staging, plan, report)
+    script_info = _read_script_entry(zf, by_name, db, staging, plan, report, stop)
     _match_media(by_name, db, plan)
     used = {id(script_info)} | {id(info) for info in plan.entries.values()}
     report['ignored'] = [i.filename for i in infos if id(i) not in used]
@@ -572,7 +586,7 @@ def _check(zf, zip_size, db, staging, plan, report, progress):
     _note_stale_md5(plan, report)
 
 
-def _read_script_entry(zf, by_name, db, staging, plan, report):
+def _read_script_entry(zf, by_name, db, staging, plan, report, stop=None):
     """``<top>/script.xml``, once and within :data:`MAX_SCRIPT_BYTES`, read to
     its end into the staging under a fixed name, then read as a script."""
     script_name = f'{plan.top}/script.xml'
@@ -585,8 +599,8 @@ def _read_script_entry(zf, by_name, db, staging, plan, report):
         raise _refused(f'{_q(script_name)} is more than {MAX_SCRIPT_BYTES} bytes')
     script_path = os.path.join(staging, 'script.xml')
     with open(script_path, 'xb') as sink:
-        _copy_entry(zf, entries[0], sink=sink, cap=MAX_SCRIPT_BYTES)
-    plan.data = _read_script(script_path, db.project.script_schema_name)
+        _copy_entry(zf, entries[0], sink=sink, cap=MAX_SCRIPT_BYTES, stop=stop)
+    plan.data = _read_script(script_path, db.project.script_schema_name, stop)
     plan.source_name = plan.data['CuemsScript'].get('name')
     report['warnings'].extend(_gate_warnings(plan.data))
     return entries[0]
@@ -1024,7 +1038,7 @@ def _create(db, plan, report, status, accept_loaded, progress, list_update, cut)
 def import_archive(zip_path, db, staging, *, status, accept_loaded=False, progress=None,
                    list_update=None, cut=None):
     """Import the project archive *zip_path* into the library (synchronous:
-    the session runs it in the executor).
+    the session runs it in the import's own thread).
 
     *db* has ``.project`` and ``.media``; *staging* is this import's own
     existing folder, the only place written outside the library's writers
@@ -1046,7 +1060,8 @@ def import_archive(zip_path, db, staging, *, status, accept_loaded=False, progre
     try:
         with open_archive(zip_path) as zf:
             try:
-                _check(zf, os.path.getsize(zip_path), db, staging, plan, report, progress)
+                _check(zf, os.path.getsize(zip_path), db, staging, plan, report, progress,
+                       cut.check)
                 _decide(db, plan, report, cut)
                 held = _claim_space(db, plan, staging, landed)
             except ProjectImportError:
@@ -1120,14 +1135,14 @@ class ImportSession:
     taken); the zip is written into this import's staging folder while its
     MD5 is computed (D2); the size and the MD5 must be what was announced
     (I7); the rule of D3 is asked again (D4); then :func:`import_archive`
-    runs in the executor, every later check going through the server's
+    runs, every later check going through the server's
     communicator with no socket of the user's (N9), while a timer of the
     session's own sends a ``progress`` frame at least every
     :data:`HEARTBEAT_S` seconds (review row 7). For as long as the import runs
     the engine is also asked every :data:`WATCH_S` seconds, and a GO ends at
-    once the work in hand (``_watch``, ``_Cut``); :func:`import_archive` runs
-    in a thread of its own at the lowest priority (D19). The slot is freed and
-    the staging removed whatever happens.
+    once the work in hand (``_watch``, ``_Cut``). The zip's writes and MD5, and
+    :func:`import_archive`, run in one thread made for the import, at the lowest
+    priority (D19). The slot is freed and the staging removed whatever happens.
     """
 
     def __init__(self, server, websocket):
@@ -1178,6 +1193,9 @@ class ImportSession:
         watch_over = asyncio.Event()
         watcher = asyncio.ensure_future(self._watch(record, watch_over))
         heartbeat = None
+        # D19: one thread for the whole import, made for it, at the lowest priority.
+        self.thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix='import',
+                                         initializer=_lowest_priority)
         try:
             if not await self._receive(zip_path, record.size):
                 return
@@ -1193,9 +1211,12 @@ class ImportSession:
                 list_update=self._list_update, cut=self.cut))
         finally:
             watch_over.set()
-            if heartbeat is not None:
-                heartbeat.cancel()
-            await watcher
+            try:
+                await watcher       # it may be inside a question: the frames go on
+            finally:
+                if heartbeat is not None:
+                    heartbeat.cancel()
+                self.thread.shutdown(wait=False)
         Logger.info(f'import report: {json.dumps(report, default=str)}')
         self.ended = True
         await self._send({'imported': report})
@@ -1233,14 +1254,9 @@ class ImportSession:
             self.cut.kill_programs()
 
     async def _at_lowest_priority(self, work):
-        """*work* in a thread made for it, at the lowest priority (D19); the
+        """*work* in the import's thread, at the lowest priority (D19); the
         editor's other threads keep theirs."""
-        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='import',
-                                      initializer=_lowest_priority)
-        try:
-            return await self.loop.run_in_executor(executor, _then_close_db, work)
-        finally:
-            executor.shutdown(wait=False)
+        return await self.loop.run_in_executor(self.thread, _then_close_db, work)
 
     async def _receive(self, path, size):
         """The zip, frame by frame, each answered ``ready``; ``True`` once
@@ -1266,7 +1282,7 @@ class ImportSession:
                     got += len(message)
                     if got > size:
                         raise ProjectImportError(I7)
-                    await self.loop.run_in_executor(self.server.executor,
+                    await self.loop.run_in_executor(self.thread,
                                                     _write_chunk, sink, digest, message)
                     await self._send({'ready': True})
                     continue

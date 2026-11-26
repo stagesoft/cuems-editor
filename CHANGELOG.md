@@ -14,6 +14,7 @@ Project import: the counterpart of the export (ClickUp 1amfwm7kcjp). Released to
 - `CuemsDBProject.import_project`, `add_media_relations(allow_missing=True)` (a file the library does not have becomes a relation with no media, healed by a later upload), `CuemsWsServer.ImportSlot` (one import at a time), `ProjectImportError`, and a staging folder `<library>/.import/` made 0700 and swept at start.
 
 ### Known limit
+- A GO cuts the import's work in hand, except a Python step on the script (reading, parsing, validating, writing it: it ends, the next does not start; its time grows with the script, ClickUp 1amfwm7kkpe) and a copy into a `media/` on another filesystem.
 - `CuemsDBMedia.new` holds one database transaction across a file's sidecars (ClickUp 1amfwm7kcwk): a save from another session that lands in that window makes the registration fail, as it already does for an upload. Measured on .111, 1.05 GB: a 4.7 s window.
 
 ## Unreleased — project export (1amfwm7kana)

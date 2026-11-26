@@ -144,18 +144,22 @@ existed, and takes nothing out of the trash); a failure leaves what was added an
 |---|---|
 | the upload | no further piece is taken |
 | reading the archive, hashing a library file, extracting a media | at the next piece of 1 MiB (`_Cut.check`) |
+| the script's check: its copy, then reading, parsing, validation | the copy at its next piece of 1 MiB. The other three are Python in the import's thread and cannot be cut: the one in hand ends, the next does not start (`_read_script`). Their time grows with the script, bounded only by `MAX_SCRIPT_BYTES` (64 MiB; ClickUp 1amfwm7kkpe). Measured on an N97: none above 0.2 s for 56 kB, up to 1.8 s for 1.1 MB, 8 to 11 s for 5.5 MB |
 | a file's registration | the program it waits for (`ffmpeg`, `ffprobe`, `audiowaveform`, the video indexer) is killed, again every 0.1 s (`KILL_S`) for the ones that follow; `CuemsDBMedia.new` asks between its steps, and gives the file up with its usual rollback: no file, no sidecar, no row. Only what the import's own thread started is killed (`/proc/self/task/<tid>/children`), never the builder of a media upload running beside it |
-| preparing the project | its probes are killed and no project is created (`import_project` asks right before its transaction) |
+| preparing the project | its probes are killed, no other file is probed and no project is created. A probe the cut killed marks nothing: the library file is checked again at the next load or save |
+| creating the project | asked between the steps inside the transaction (parse, relations, before the script's write), which rolls back and removes the folder; the step in hand ends, the script's write included (0.2 s for 56 kB on an N97, 2 s for 1.1 MB) |
 | after the project exists | nothing is cut: the import has succeeded (8.4) |
 
-What stays is what was **wholly** added before (D12). Importing the same archive again adds the file that was cut. No
-answer from the engine cuts nothing; from the first media on, the question is also asked before each write, and there no
-answer stops the import (I4, D4). One step cannot be cut: when `media/` is on another filesystem than the staging, the
-move into it is a copy, and the cut takes effect when it ends.
+What stays is what was **wholly** added before (D12). Importing the same archive again adds the file that was cut. The
+watcher takes no answer from the engine as nothing: it cuts no work in hand. The question of D3 is also asked when the
+upload ends, before each media file is registered and before the project is created (D4), and there no answer stops the
+import (I4). Besides the Python steps above, one step cannot be cut: when `media/` is on another filesystem than the
+staging, the move into it is a copy, and the cut takes effect when it ends.
 
-**Lowest priority** (D19). `import_archive` runs in a thread made for each import, at CPU niceness 19 and the last level
-of the best-effort I/O class (`_at_lowest_priority`); `ffmpeg`, `ffprobe`, `audiowaveform` and the video indexer
-inherit both. The editor's other threads, media uploads included, keep their priority.
+**Lowest priority** (D19). The upload's writes and MD5, and `import_archive`, run in one thread made for each import, at
+CPU niceness 19 and the last level of the best-effort I/O class (`_lowest_priority`); `ffmpeg`, `ffprobe`,
+`audiowaveform` and the video indexer inherit both. The editor's other threads, media uploads included, keep their
+priority.
 
 While it works the editor sends `{"progress":{"phase","done","total","name"}}` (`phase` is `check` in bytes, `media` in
 files or `project`) at least every 5 s (`HEARTBEAT_S`, a timer of the session's own). It ends with
