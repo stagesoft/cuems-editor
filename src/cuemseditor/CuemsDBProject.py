@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SPDX-FileContributor: Ion Reguera <ion@stagelab.coop>
 import contextlib
+import fcntl
 import os
 import tempfile
 import time
@@ -36,6 +37,9 @@ EXPORT_CHUNK = 1 << 20
 #: afterwards: the larger of 5 GiB and a tenth of the filesystem (D14).
 EXPORT_MIN_RESERVE = 5 * 1024 ** 3
 EXPORT_RESERVE_FRACTION = 10
+#: A ``.part`` is ``.<name>.<random>.part``, 15 bytes longer than the name: the
+#: name is cut here, so a project whose zip name fits also gets its ``.part``.
+EXPORT_PART_NAME_BYTES = 200
 #: The apache conf that serves ``/exports`` (cuems-common); D21.
 EXPORT_CONF_PATH = '/etc/apache2/conf-enabled/cuems-exports.conf'
 
@@ -51,29 +55,36 @@ def export_reserve(usage):
     return max(EXPORT_MIN_RESERVE, usage.total // EXPORT_RESERVE_FRACTION)
 
 
-def _copy_stream(src, dst):
-    """Copy ``src`` to ``dst`` in :data:`EXPORT_CHUNK` pieces; return the bytes copied."""
+def _copy_stream(src, dst, size):
+    """Copy ``src`` to ``dst`` in :data:`EXPORT_CHUNK` pieces, never more than ``size`` bytes.
+
+    ``size`` is what the free-space check booked: a source that grew must not eat
+    the reserve. Returns the bytes copied, or ``size + 1`` when the source holds
+    more (that byte is not written), so any other value than ``size`` means it changed.
+    """
     copied = 0
-    while True:
-        chunk = src.read(EXPORT_CHUNK)
+    while copied < size:
+        chunk = src.read(min(EXPORT_CHUNK, size - copied))
         if not chunk:
             return copied
         dst.write(chunk)
         copied += len(chunk)
+    return copied + len(src.read(1))
 
 
 def _zip_add_file(zf, path, arcname, size):
     """Add ``path`` to ``zf`` as a stored entry of ``arcname``, in one pass.
 
     ``size`` is what was measured for the refusal; it is the hint the entry's
-    header starts with (zip64 or not). Returns the bytes actually copied.
+    header starts with (zip64 or not) and the most that is written. Returns what
+    :func:`_copy_stream` does: anything but ``size`` means the file changed.
     """
     with open(path, 'rb') as src:
         zinfo = zipfile.ZipInfo.from_file(path, arcname)
         zinfo.compress_type = zipfile.ZIP_STORED
         zinfo.file_size = size
         with zf.open(zinfo, 'w') as dst:
-            return _copy_stream(src, dst)
+            return _copy_stream(src, dst, size)
 
 
 def _publish(part, folder, unix_name):
@@ -1278,7 +1289,8 @@ class CuemsDBProject(StringSanitizer):
         """Write a project and its media into one stored zip in the exports folder.
 
         One pass, from the library straight to ``<exports>/.<unix_name>.XXXX.part``
-        (``mkstemp``, ``0600`` while written), then ``0644`` and published with
+        (``mkstemp``, ``0600`` while written, locked while the export runs, the
+        name cut to :data:`EXPORT_PART_NAME_BYTES`), then ``0644`` and published with
         ``os.replace`` as ``<unix_name>.zip``, which replaces the project's
         previous export. Nothing is copied to ``tmp_path`` and each run has its
         own file, so two exports of one project at once both complete (1amfwm7kana).
@@ -1295,6 +1307,7 @@ class CuemsDBProject(StringSanitizer):
         started = time.monotonic()
         part = None
         space = None
+        part_lock = None
         try:
             try:
                 project = Project.get(Project.uuid == uuid)
@@ -1329,7 +1342,8 @@ class CuemsDBProject(StringSanitizer):
 
             sizes = {name: os.path.getsize(os.path.join(self.media_path, name))
                      for name in media_names}
-            need = os.path.getsize(project_path) + sum(sizes.values())
+            script_size = os.path.getsize(project_path)
+            need = script_size + sum(sizes.values())
             try:
                 # What is written is what the .part holds: ``part`` is set
                 # below, and the closure reads it when an other check asks.
@@ -1341,24 +1355,31 @@ class CuemsDBProject(StringSanitizer):
                     f'{e.free / _GIB:.1f} GiB free in {folder}, '
                     f'{e.reserve / _GIB:.1f} GiB kept in reserve')
 
-            fd, part = tempfile.mkstemp(dir=folder, prefix='.{}.'.format(unix_name), suffix='.part')
-            os.close(fd)
+            stem = unix_name.encode()[:EXPORT_PART_NAME_BYTES].decode('utf-8', 'ignore')
+            # Locked until this export ends: the start-up sweep of another editor
+            # (one started by hand) leaves a locked .part alone. A sweep may take
+            # the file before the lock does: then make another one.
+            while True:
+                part_lock, part = tempfile.mkstemp(dir=folder, prefix='.{}.'.format(stem),
+                                                   suffix='.part')
+                fcntl.flock(part_lock, fcntl.LOCK_EX)
+                if os.fstat(part_lock).st_nlink:
+                    break
+                os.close(part_lock)
+                part_lock = None
             Logger.debug('exporting project {} to {}'.format(unix_name, part))
 
             with zipfile.ZipFile(part, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
                 zf.mkdir(unix_name)
-                _zip_add_file(zf, project_path, '{}/{}'.format(unix_name, self.script_file_name),
-                              os.path.getsize(project_path))
+                copied = _zip_add_file(zf, project_path,
+                                       '{}/{}'.format(unix_name, self.script_file_name), script_size)
+                if copied != script_size:
+                    self._refuse_export('The project script changed while it was exported: export again')
                 zf.mkdir('{}/media'.format(unix_name))
                 for name in media_names:
                     Logger.debug('copying media {}'.format(name))
-                    try:
-                        copied = _zip_add_file(zf, os.path.join(self.media_path, name),
-                                               '{}/media/{}'.format(unix_name, name), sizes[name])
-                    except RuntimeError as e:
-                        # zipfile's own "File size unexpectedly exceeded ZIP64 limit" (N11)
-                        Logger.error("error: {} {}; copying media to the export".format(type(e), e))
-                        copied = None
+                    copied = _zip_add_file(zf, os.path.join(self.media_path, name),
+                                           '{}/media/{}'.format(unix_name, name), sizes[name])
                     if copied != sizes[name]:
                         self._refuse_export(f'Media file {name} changed while it was exported: '
                                             'export again')
@@ -1383,6 +1404,8 @@ class CuemsDBProject(StringSanitizer):
                     Logger.debug('cleaning export part file: {}'.format(part))
                 except OSError as e:
                     Logger.error("error: {} {}; removing {}".format(type(e), e, part))
+            if part_lock is not None:
+                os.close(part_lock)
 
     @staticmethod
     def _export_written(part):

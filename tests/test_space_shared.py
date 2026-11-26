@@ -103,11 +103,11 @@ def export_held(env, uuid, monkeypatch):
     real = p._copy_stream
     holder = []
 
-    def hold(src, dst):
+    def hold(src, dst, size):
         if threading.get_ident() in holder:
             entered.set()
             assert release.wait(30)
-        return real(src, dst)
+        return real(src, dst, size)
 
     monkeypatch.setattr(p, '_copy_stream', hold)
 
@@ -365,7 +365,7 @@ class TestRelease:
             disk.total = 20 * GIB
             disk.free = RESERVE + need - 1
         else:
-            def boom(src, dst):
+            def boom(src, dst, size):
                 raise OSError(28, 'No space left on device')
             monkeypatch.setattr(p, '_copy_stream', boom)
         with pytest.raises(Exception):
