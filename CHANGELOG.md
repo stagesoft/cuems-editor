@@ -13,7 +13,11 @@ Project import: the counterpart of the export (ClickUp 1amfwm7kcjp). Released to
 - `CuemsProjectImport`: checks the archive with no write to the library (the zip's directory bounded in bytes, the script through the defused parser and the box's schema, every entry read to its CRC), registers each media file through `CuemsDBMedia.new` (reusing a file of the same size and MD5, renaming on another content, taking a capital name to the library name as the upload does), creates the project under a new uuid and a free name, and answers with progress frames and a report. An import only adds; a failure keeps what was added and says so (I9).
 - `CuemsDBProject.import_project`, `add_media_relations(allow_missing=True)` (a file the library does not have becomes a relation with no media, healed by a later upload), `CuemsWsServer.ImportSlot` (one import at a time), `ProjectImportError`, and a staging folder `<library>/.import/` made 0700 and swept at start.
 
+### Fixed
+- A project whose save is a message above 1 MiB (about 700 DMX cues of 24 channels, 50 of 512) could not be saved: the editor closed the connection with 1009. The server now takes messages up to `MAX_PROJECT_BYTES` (8 MiB), the same limit as the `script.xml` an import takes (was 64 MiB).
+
 ### Known limit
+- A project saved from a message between about 5.3 and 8 MiB can have a `script.xml` above 8 MiB: it saves and exports, but its archive cannot be imported.
 - A GO cuts the import's work in hand, except a Python step on the script (reading, parsing, validating, writing it: it ends, the next does not start; its time grows with the script, ClickUp 1amfwm7kkpe) and a copy into a `media/` on another filesystem.
 - `CuemsDBMedia.new` holds one database transaction across a file's sidecars (ClickUp 1amfwm7kcwk): a save from another session that lands in that window makes the registration fail, as it already does for an upload. Measured on .111, 1.05 GB: a 4.7 s window.
 

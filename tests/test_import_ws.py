@@ -1237,6 +1237,53 @@ class TestTheHeartbeatToTheEnd:
 
 
 # ---------------------------------------------------------------------------
+# (D7 rev 6) one limit: the script an import takes, and the message a save sends
+# ---------------------------------------------------------------------------
+
+class TestOneLimitForTheProject:
+    def test_d7_the_editor_takes_messages_up_to_the_same_limit(self, monkeypatch):
+        """What ``run_async_server`` gives ``serve``, tried on a real server:
+        a 2 MiB message (a project of about 1000 DMX cues) arrives, one above
+        the limit closes the connection with 1009."""
+        imp = _imp()
+        real_serve = srv.serve
+        given = {}
+
+        class Listening(Exception):
+            pass
+
+        async def spy(handler, host, port, **kw):
+            given.update(kw)
+            raise Listening()
+
+        monkeypatch.setattr(srv, 'serve', spy)
+        monkeypatch.setattr(srv, 'CuemsDBManager', lambda settings: None)
+        server = object.__new__(srv.CuemsWsServer)
+        server.settings_dict, server.host, server.port = {}, 'localhost', 0
+
+        async def lengths(websocket):
+            async for message in websocket:
+                await websocket.send(str(len(message)))
+
+        async def main():
+            with pytest.raises(Listening):
+                await server.run_async_server()
+            server.executor.shutdown(wait=False)
+            async with real_serve(lengths, '127.0.0.1', 0, **given) as listening:
+                port = listening.sockets[0].getsockname()[1]
+                async with ws.connect(f'ws://127.0.0.1:{port}', max_size=None) as client:
+                    await client.send('x' * (2 * 1024 ** 2))
+                    assert await asyncio.wait_for(client.recv(), 10) == str(2 * 1024 ** 2)
+                    await client.send('x' * (imp.MAX_PROJECT_BYTES + 1))
+                    with pytest.raises(ws.exceptions.ConnectionClosed) as closed:
+                        await asyncio.wait_for(client.recv(), 10)
+                    assert closed.value.rcvd.code == 1009
+
+        asyncio.run(main())
+        assert given.get('max_size') == imp.MAX_PROJECT_BYTES == 8 * 1024 ** 2
+
+
+# ---------------------------------------------------------------------------
 # (18) a first frame without type: PROJECT is a media upload as before
 # ---------------------------------------------------------------------------
 

@@ -63,8 +63,14 @@ from cuemseditor.CuemsDBProject import (
 
 # --- Caps and timers: module constants, read at call time (tests patch them) --
 
-#: The largest ``script.xml`` read (D7); the largest real one is 45 KB (step 0).
-MAX_SCRIPT_BYTES = 64 * 1024 ** 2
+#: The one limit on a project's size (D7 rev 6): the biggest ``script.xml`` an
+#: import takes, and the biggest message the editor's server accepts
+#: (``max_size``; websockets' default, 1 MiB, closed the connection on a save of
+#: about 700 DMX cues of 24 channels). A save's JSON is smaller than its XML (0.66 to 0.75,
+#: measured), so what is imported can be saved. About 250 DMX cues of 512
+#: channels or 7000 video cues fit; reading and checking a script takes Python
+#: time and memory in proportion, here and on every node.
+MAX_PROJECT_BYTES = 8 * 1024 ** 2
 #: The zip's directory, in bytes as its end record says, and in records counted
 #: one by one: both bounded before ``ZipFile`` builds a ``ZipInfo`` (round 2, row 4).
 MAX_DIRECTORY_BYTES = 4 * 1024 ** 2
@@ -587,7 +593,7 @@ def _check(zf, zip_size, db, staging, plan, report, progress, stop=None):
 
 
 def _read_script_entry(zf, by_name, db, staging, plan, report, stop=None):
-    """``<top>/script.xml``, once and within :data:`MAX_SCRIPT_BYTES`, read to
+    """``<top>/script.xml``, once and within :data:`MAX_PROJECT_BYTES`, read to
     its end into the staging under a fixed name, then read as a script."""
     script_name = f'{plan.top}/script.xml'
     entries = by_name.get(script_name, [])
@@ -595,11 +601,11 @@ def _read_script_entry(zf, by_name, db, staging, plan, report, stop=None):
         raise _refused(f'it has no {_q(script_name)}')
     if len(entries) > 1:
         raise _refused(f'{_q(script_name)} is in it twice')
-    if entries[0].file_size > MAX_SCRIPT_BYTES:
-        raise _refused(f'{_q(script_name)} is more than {MAX_SCRIPT_BYTES} bytes')
+    if entries[0].file_size > MAX_PROJECT_BYTES:
+        raise _refused(f'{_q(script_name)} is more than {MAX_PROJECT_BYTES} bytes')
     script_path = os.path.join(staging, 'script.xml')
     with open(script_path, 'xb') as sink:
-        _copy_entry(zf, entries[0], sink=sink, cap=MAX_SCRIPT_BYTES, stop=stop)
+        _copy_entry(zf, entries[0], sink=sink, cap=MAX_PROJECT_BYTES, stop=stop)
     plan.data = _read_script(script_path, db.project.script_schema_name, stop)
     plan.source_name = plan.data['CuemsScript'].get('name')
     report['warnings'].extend(_gate_warnings(plan.data))

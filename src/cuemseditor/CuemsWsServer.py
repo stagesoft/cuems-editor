@@ -209,7 +209,10 @@ class CuemsWsServer():
 
         self.executor = concurrent.futures.ThreadPoolExecutor(thread_name_prefix='ws_ProjectManager_ThreadPoolExecutor', max_workers=5)  # TODO: adjust max workers
         #self.event_loop.set_exception_handler(self.exception_handler) ### TODO:UNCOMENT FOR PRODUCTION
-        self.project_server = await serve(self.connection_handler, self.host, self.port)
+        # max_size: a save is one message with the whole project; the same limit
+        # as the script an import takes (D7 rev 6 of 1amfwm7kcjp).
+        self.project_server = await serve(self.connection_handler, self.host, self.port,
+                                          max_size=CuemsProjectImport.MAX_PROJECT_BYTES)
         self.network_map_watcher_task = asyncio.create_task(self.watch_network_map())
         for sig in (signal.SIGINT, signal.SIGTERM):
             self.event_loop.add_signal_handler(sig, self.stop)

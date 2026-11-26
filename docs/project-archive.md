@@ -144,7 +144,7 @@ existed, and takes nothing out of the trash); a failure leaves what was added an
 |---|---|
 | the upload | no further piece is taken |
 | reading the archive, hashing a library file, extracting a media | at the next piece of 1 MiB (`_Cut.check`) |
-| the script's check: its copy, then reading, parsing, validation | the copy at its next piece of 1 MiB. The other three are Python in the import's thread and cannot be cut: the one in hand ends, the next does not start (`_read_script`). Their time grows with the script, bounded only by `MAX_SCRIPT_BYTES` (64 MiB; ClickUp 1amfwm7kkpe). Measured on an N97: none above 0.2 s for 56 kB, up to 1.8 s for 1.1 MB, 8 to 11 s for 5.5 MB |
+| the script's check: its copy, then reading, parsing, validation | the copy at its next piece of 1 MiB. The other three are Python in the import's thread and cannot be cut: the one in hand ends, the next does not start (`_read_script`). Their time grows with the script, bounded by `MAX_PROJECT_BYTES` (8 MiB). Measured on an N97: no step above 0.2 s for a 56 kB script, 1.8 s for 1.1 MB, 18 s for 6.4 MB of DMX cues; at the limit, about 23 s by extrapolation |
 | a file's registration | the program it waits for (`ffmpeg`, `ffprobe`, `audiowaveform`, the video indexer) is killed, again every 0.1 s (`KILL_S`) for the ones that follow; `CuemsDBMedia.new` asks between its steps, and gives the file up with its usual rollback: no file, no sidecar, no row. Only what the import's own thread started is killed (`/proc/self/task/<tid>/children`), never the builder of a media upload running beside it |
 | preparing the project | its probes are killed, no other file is probed and no project is created. A probe the cut killed marks nothing: the library file is checked again at the next load or save |
 | creating the project | asked between the steps inside the transaction (parse, relations, before the script's write), which rolls back and removes the folder; the step in hand ends, the script's write included (0.2 s for 56 kB on an N97, 2 s for 1.1 MB) |
@@ -167,6 +167,15 @@ files or `project`) at least every 5 s (`HEARTBEAT_S`, a timer of the session's 
 it once something was written. The socket serves one import and is closed after it. A frontend must treat `imported`,
 not `finished`, as the success.
 
+**One limit** (`MAX_PROJECT_BYTES`, 8 MiB). It bounds the `script.xml` an import takes and every message the editor's
+server accepts (`max_size`), a save above all: a save is one message with the whole project. Before, `max_size` was
+websockets' default, 1 MiB, and a save above it **closed the connection with 1009** and wrote nothing; reproduced with a
+1000-cue DMX project (1.46 MB message). A save's JSON is smaller than the XML it becomes (0.66 to 0.75 in the projects
+measured), so an imported project can be saved. About 250 DMX cues of 512 channels, 3900 of 24 channels or 7000 video
+cues fit. At the limit, extrapolated from 6.4 MiB of DMX cues on an N97: about 40 s to check, 25 s to create, 0.5 GB of
+memory. **Known limit:** the other direction does not hold. A save message between about 5.3 and 8 MiB can write a
+`script.xml` above 8 MiB: that project saves and exports, and its archive is refused at import.
+
 ### 8.2 What the reader checks (no write to the library up to the end of this list)
 
 All of it is `import_archive` → `_check` and what it calls; a refusal is I8a (`Not a project archive made by Export:
@@ -178,7 +187,7 @@ All of it is `import_archive` → `_check` and what it calls; a refusal is I8a (
 | Entries | one top folder named as the library's sanitiser would keep it; `<top>/script.xml` once; `<top>/media/<name>` for each name the script lists; a name with `..`, an absolute name, a backslash or a NUL (read in the name as the archive
 writes it, `ZipInfo.orig_filename`: `zipfile` cuts `filename` at the NUL), a symlink, an encrypted entry or a method other than Stored (0) or Deflated (8) refuses the whole archive; sizes that overlap or add up to more than the zip, and a CRC32 that fails (every used entry is read to its end), refuse it | `_check_entry`, `_check_sizes`, `_top_folder`, `_copy_entry` |
 | Ignored, and listed in the report | directory entries, `__MACOSX/`, `.DS_Store`, `Thumbs.db` and any entry the script does not name | `_is_noise`, `report["ignored"]` |
-| The script | one file, at most `MAX_SCRIPT_BYTES` (64 MiB), read through the defused parser (a `DOCTYPE` or an entity is I8a), validated by the box's schema (cuems-utils; a schema failure is I8b with the version and the reason), parsed and serialised once; the save-time gates (zero fade, media cue without a file) are **not** applied: what they would refuse is listed under `warnings` | `_read_script`, `_gate_warnings` |
+| The script | one file, at most `MAX_PROJECT_BYTES` (8 MiB, "One limit" below), read through the defused parser (a `DOCTYPE` or an entity is I8a), validated by the box's schema (cuems-utils; a schema failure is I8b with the version and the reason), parsed and serialised once; the save-time gates (zero fade, media cue without a file) are **not** applied: what they would refuse is listed under `warnings` | `_read_script`, `_gate_warnings` |
 | Media names | refused: empty, `.`, `..`, a separator, a control character, more than 255 bytes in UTF-8, or a name with no known media type. A name with capitals is **accepted** and taken to the name the library holds (as the upload does: `CuemsUpload.py:129`), reported as a rename; a name already lower-case and made of alphanumerics, `.`, `_`, `-` and U+0307 is kept. The archive is refused if the library name is empty, `.` or `..`, or if two used names share one (`A.wav` + `a.wav`), or if the library name of a file the archive carries is longer than `MAX_LIBRARY_NAME_BYTES` (234 bytes in UTF-8: 255 less the `-NNN` that `new()` adds on a taken name and the 17 bytes the longest name built from it adds, the loop period's temporary `.<name>.period.XXXXXXXX`) | `media_name_problem`, `library_name`, `_match_media` |
 | Space | the exact bytes to be added against the library's filesystem and the reserve (I2), claimed | `_claim_space` |
 

@@ -30,8 +30,8 @@ implements exactly this):
 * ``cuemseditor.CuemsProjectImport.open_archive(zip_path) -> zipfile.ZipFile``:
   bounds the directory's bytes from the end record and counts its records
   before ``ZipFile`` is built; raises ``ProjectImportError`` (I8a).
-* Module constants, read at call time (tests patch them): ``MAX_SCRIPT_BYTES``
-  (64 MiB), ``MAX_DIRECTORY_BYTES`` (4 MiB), ``MAX_ENTRIES`` (10 000),
+* Module constants, read at call time (tests patch them): ``MAX_PROJECT_BYTES``
+  (8 MiB), ``MAX_DIRECTORY_BYTES`` (4 MiB), ``MAX_ENTRIES`` (10 000),
   ``HEARTBEAT_S`` (5), ``UPLOAD_STALL_S`` (120), ``TICKET_TTL_S`` (60).
 * ``cuemseditor.CuemsErrors.ProjectImportError(text, report=None)``: ``str()``
   is the one-line text I1 to I9; ``.report`` the report so far (or ``None``).
@@ -1462,16 +1462,16 @@ class TestTheScript:
 
     def test_10_a_script_above_the_cap_is_refused(self, env, monkeypatch):
         imp = _imp()
-        monkeypatch.setattr(imp, 'MAX_SCRIPT_BYTES', 20_000)
+        monkeypatch.setattr(imp, 'MAX_PROJECT_BYTES', 20_000)
         script = script_bytes() + b'<!--' + b'x' * 20_000 + b'-->'
         before = env.state()
         error, text = env.refused(env.zip(export_entries(script=script)))
         assert text.startswith(I8A)
         assert env.state() == before
 
-    def test_10_the_cap_is_64_mib_and_the_directory_caps_are_the_plans(self):
+    def test_10_the_cap_is_8_mib_and_the_directory_caps_are_the_plans(self):
         imp = _imp()
-        assert imp.MAX_SCRIPT_BYTES == 64 * 1024 ** 2
+        assert imp.MAX_PROJECT_BYTES == 8 * 1024 ** 2
         assert imp.MAX_DIRECTORY_BYTES == 4 * 1024 ** 2
         assert imp.MAX_ENTRIES == 10_000
 
