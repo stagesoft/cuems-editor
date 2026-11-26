@@ -172,9 +172,14 @@ server accepts (`max_size`), a save above all: a save is one message with the wh
 websockets' default, 1 MiB, and a save above it **closed the connection with 1009** and wrote nothing; reproduced with a
 1000-cue DMX project (1.46 MB message). A save's JSON is smaller than the XML it becomes (0.66 to 0.75 in the projects
 measured), so an imported project can be saved. About 250 DMX cues of 512 channels, 3900 of 24 channels or 7000 video
-cues fit. At the limit, extrapolated from 6.4 MiB of DMX cues on an N97: about 40 s to check, 25 s to create, 0.5 GB of
-memory. **Known limit:** the other direction does not hold. A save message between about 5.3 and 8 MiB can write a
-`script.xml` above 8 MiB: that project saves and exports, and its archive is refused at import.
+cues fit. **Measured near the limit** on the installed editor (an AMD FP530 test box, logging at DEBUG, no show running;
+240 DMX cues of 512 channels, a script of 8.1 MB and a save message of 5.3 MB): **94 s** to import, **21 s** to open,
+**37 s** to save; the editor's memory high-water, since its start and over the whole run, **781 MB**. Not measured at that
+size on an installed N97. **Known limit:** the other direction does not hold. A save message between about 5.3 and 8 MiB
+can write a `script.xml` above 8 MiB: that project saves and exports, and its archive is refused at import.
+**Open** (ClickUp 1amfwm7knq9): a save above the limit still closes the connection with 1009, and by the frontend's code
+the operator gets no message for it; a save has none of the import's priority rules, and one beside a running show is not
+measured; a project near the limit has not been loaded into the engine or played.
 
 ### 8.2 What the reader checks (no write to the library up to the end of this list)
 
